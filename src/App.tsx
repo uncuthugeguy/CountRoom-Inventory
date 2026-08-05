@@ -18,6 +18,8 @@ export interface AppProps {
   /** Overridden in tests; defaults to the env-configured backend. */
   openRepository?: () => Promise<InventoryRepository>
   startCamera?: StartCameraScan
+  /** Present when Supabase auth is gating the app; renders a sign-out control. */
+  onSignOut?: () => void
 }
 
 type DialogState =
@@ -39,7 +41,7 @@ const defaultOpen = () =>
     VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
   })
 
-export function App({ openRepository = defaultOpen, startCamera }: AppProps) {
+export function App({ openRepository = defaultOpen, startCamera, onSignOut }: AppProps) {
   const inventory = useInventory(openRepository)
   const [tab, setTab] = useState<Tab>('dashboard')
   const [lastScan, setLastScan] = useState<string | null>(null)
@@ -77,7 +79,7 @@ export function App({ openRepository = defaultOpen, startCamera }: AppProps) {
     const result = await inventory.recordMovement(dialog.product.id, input)
     if (result.ok) {
       const { product, movement } = result.value
-      setToast(`${product.name}: ${movement.previousQuantity} → ${movement.newQuantity}.`)
+      setToast(`${product.name}: ${movement.previousQuantity} â ${movement.newQuantity}.`)
     }
     return result
   }
@@ -112,7 +114,7 @@ export function App({ openRepository = defaultOpen, startCamera }: AppProps) {
       <div className="boot">
         <h1>StockFlow</h1>
         <p className="muted" role="status">
-          Opening the inventory…
+          Opening the inventoryâ¦
         </p>
       </div>
     )
@@ -123,14 +125,19 @@ export function App({ openRepository = defaultOpen, startCamera }: AppProps) {
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            ▮▯▮
+            â®â¯â®
           </span>
           <h1>StockFlow</h1>
         </div>
         <div className="header-right">
           <span className="badge backend" data-testid="backend-badge">
-            {inventory.backend === 'supabase' ? 'Supabase — synced' : 'Offline — on this device'}
+            {inventory.backend === 'supabase' ? 'Supabase â synced' : 'Offline â on this device'}
           </span>
+          {onSignOut && (
+            <button type="button" className="button button-ghost" onClick={onSignOut}>
+              Sign out
+            </button>
+          )}
         </div>
       </header>
 
