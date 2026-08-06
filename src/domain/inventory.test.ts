@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Product } from './types'
 import {
-  findByBarcode,
+  findByScan,
   isLowStock,
   lowStockProducts,
   searchProducts,
@@ -14,8 +14,11 @@ const make = (overrides: Partial<Product> & { id: string }): Product => ({
   name: '',
   category: '',
   location: '',
+  variation: '',
   quantity: 0,
   reorderLevel: 0,
+  cost: 0,
+  price: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,
@@ -106,21 +109,43 @@ describe('summarise', () => {
   })
 })
 
-describe('findByBarcode', () => {
+describe('findByScan', () => {
   it('finds a product by exact barcode', () => {
-    expect(findByBarcode(catalogue, '0001112223334')?.id).toBe('p3')
+    expect(findByScan(catalogue, '0001112223334')?.id).toBe('p3')
   })
 
   it('trims scanner whitespace and carriage returns before matching', () => {
-    expect(findByBarcode(catalogue, ' 0001112223334\r\n')?.id).toBe('p3')
+    expect(findByScan(catalogue, ' 0001112223334\r\n')?.id).toBe('p3')
   })
 
-  it('returns undefined for an unknown barcode', () => {
-    expect(findByBarcode(catalogue, '404')).toBeUndefined()
+  it('finds a product by exact SKU when there is no barcode match', () => {
+    expect(findByScan(catalogue, 'DRL-18V')?.id).toBe('p3')
   })
 
-  it('returns undefined for an empty barcode rather than matching a blank field', () => {
-    expect(findByBarcode([make({ id: 'blank', barcode: '' })], '  ')).toBeUndefined()
+  it('matches SKU regardless of case', () => {
+    expect(findByScan(catalogue, 'drl-18v')?.id).toBe('p3')
+  })
+
+  it('finds a product with no barcode at all by its SKU', () => {
+    const noBarcode = make({ id: 'p5', barcode: '', sku: 'RAG-SET' })
+    expect(findByScan([...catalogue, noBarcode], 'RAG-SET')?.id).toBe('p5')
+  })
+
+  it('prefers a barcode match over a coincidental SKU match', () => {
+    // p3's barcode happens to equal p4's... contrived, but proves barcode wins when both could match.
+    const clash = [
+      make({ id: 'a', barcode: 'DUP', sku: 'ZZZ' }),
+      make({ id: 'b', barcode: 'YYY', sku: 'DUP' }),
+    ]
+    expect(findByScan(clash, 'DUP')?.id).toBe('a')
+  })
+
+  it('returns undefined for an unknown code', () => {
+    expect(findByScan(catalogue, '404')).toBeUndefined()
+  })
+
+  it('returns undefined for an empty code rather than matching a blank field', () => {
+    expect(findByScan([make({ id: 'blank', barcode: '', sku: '' })], '  ')).toBeUndefined()
   })
 })
 

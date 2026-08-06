@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react'
-import { emptyDraft, validateDraft } from '../../domain/products'
+import { emptyDraft, knownVariations, nextSku, validateDraft } from '../../domain/products'
 import type { Product, ProductDraft, Result } from '../../domain/types'
 import { Dialog } from './Dialog'
 
@@ -8,8 +8,16 @@ export interface ProductFormDialogProps {
   product?: Product
   /** Pre-fills the barcode field after a scan of an unknown code. */
   barcode?: string
+  /** The full catalogue, used to auto-generate the next SKU and to suggest variations. */
+  products: Product[]
   onClose: () => void
-  onSubmit: (draft: ProductDraft) => Promise<Result<Product>>
+  /**
+   * `autoSku` tells the caller this SKU was picked automatically rather than
+   * typed by hand, so if it turns out to collide with one added elsewhere
+   * since this dialog opened, the caller is free to regenerate and retry
+   * instead of just surfacing the error.
+   */
+  onSubmit: (draft: ProductDraft, opts: { autoSku: boolean }) => Promise<Result<Product>>
 }
 
 const toDraft = (product: Product): ProductDraft => ({
@@ -18,8 +26,11 @@ const toDraft = (product: Product): ProductDraft => ({
   name: product.name,
   category: product.category,
   location: product.location,
+  variation: product.variation,
   quantity: product.quantity,
   reorderLevel: product.reorderLevel,
+  cost: product.cost,
+  price: product.price,
 })
 
 /** Keeps the field empty rather than snapping to 0 while the user retypes. */
@@ -28,6 +39,7 @@ const toCount = (value: string): number => (value.trim() === '' ? Number.NaN : N
 export function ProductFormDialog({
   product,
   barcode,
+  products,
   onClose,
   onSubmit,
 }: ProductFormDialogProps) {
@@ -37,6 +49,7 @@ export function ProductFormDialog({
   )
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const variations = knownVariations(products)
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }))
@@ -45,14 +58,21 @@ export function ProductFormDialog({
     event.preventDefault()
     setError(null)
 
-    const validated = validateDraft(draft)
+    // A blank SKU on a new product picks up the next one in the SKU-NNN
+    // sequence rather than forcing the user to type it themselves. This is
+    // only a best guess based on the catalogue this dialog opened with — the
+    // caller may regenerate it if it turns out to be stale.
+    const autoSku = !product && draft.sku.trim() === ''
+    const withSku = autoSku ? { ...draft, sku: nextSku(products) } : draft
+
+    const validated = validateDraft(withSku)
     if (!validated.ok) {
       setError(validated.error)
       return
     }
 
     setSaving(true)
-    const result = await onSubmit(validated.value)
+    const result = await onSubmit(validated.value, { autoSku })
     setSaving(false)
     if (!result.ok) {
       setError(result.error)
@@ -67,7 +87,7 @@ export function ProductFormDialog({
     <Dialog title={product ? `Edit ${product.name}` : 'New product'} onClose={onClose}>
       <form className="form" onSubmit={submit} noValidate>
         <div className="field">
-          <label htmlFor={field('barcode')}>Barcode</label>
+          <label htmlFor={field('barcode')}>Barcode (optional)</label>
           <input
             id={field('barcode')}
             value={draft.barcode}
@@ -75,6 +95,7 @@ export function ProductFormDialog({
             autoComplete="off"
             onChange={(e) => set('barcode', e.target.value)}
           />
+          <p className="hint">Leave blank if this item has no manufacturer barcode.</p>
         </div>
 
         <div className="field-row">
@@ -84,6 +105,7 @@ export function ProductFormDialog({
               id={field('sku')}
               value={draft.sku}
               autoComplete="off"
+              placeholder={product ? undefined : 'Auto-generated if left blank'}
               onChange={(e) => set('sku', e.target.value)}
             />
           </div>
@@ -119,6 +141,23 @@ export function ProductFormDialog({
           </div>
         </div>
 
+        <div className="field">
+          <label htmlFor={field('variation')}>Variation (optional)</label>
+          <input
+            id={field('variation')}
+            value={draft.variation}
+            list={field('variation-options')}
+            autoComplete="off"
+            placeholder="Colour, size…"
+            onChange={(e) => set('variation', e.target.value)}
+          />
+          <datalist id={field('variation-options')}>
+            {variations.map((value) => (
+              <option key={value} value={value} />
+            ))}
+          </datalist>
+        </div>
+
         <div className="field-row">
           <div className="field">
             <label htmlFor={field('quantity')}>Quantity</label>
@@ -144,6 +183,35 @@ export function ProductFormDialog({
               onChange={(e) => set('reorderLevel', toCount(e.target.value))}
             />
             <p className="hint">0 turns low-stock alerts off for this line.</p>
+          </div>
+        </div>
+
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor={field('cost')}>Cost</label>
+            <input
+              id={field('cost')}
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={Number.isNaN(draft.cost) ? '' : draft.cost}
+              onChange={(e) => set('cost', toCount(e.target.value))}
+            />
+            <p className="hint">What this unit costs you — used to work out profit at checkout.</p>
+          </div>
+          <div className="field">
+            <label htmlFor={field('price')}>Price</label>
+            <input
+              id={field('price')}
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={Number.isNaN(draft.price) ? '' : draft.price}
+              onChange={(e) => set('price', toCount(e.target.value))}
+            />
+            <p className="hint">Default sale price — checkout lets you override it per sale.</p>
           </div>
         </div>
 

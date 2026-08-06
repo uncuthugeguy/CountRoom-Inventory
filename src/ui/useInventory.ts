@@ -5,6 +5,10 @@ import type {
   Product,
   ProductDraft,
   Result,
+  ReturnCase,
+  ReturnCaseInput,
+  Sale,
+  SaleInput,
   StockMovement,
 } from '../domain/types'
 import type { InventoryRepository } from '../data/repository'
@@ -17,13 +21,19 @@ export interface Inventory {
   backend: InventoryRepository['kind'] | null
   products: Product[]
   movements: StockMovement[]
+  sales: Sale[]
+  returns: ReturnCase[]
   /** Only set when the backend could not be opened at all. */
   error: string | null
   createProduct(draft: ProductDraft): Promise<Result<Product>>
   updateProduct(id: string, draft: ProductDraft): Promise<Result<Product>>
   deleteProduct(id: string): Promise<Result<true>>
   recordMovement(productId: string, input: MovementInput): Promise<Result<AppliedMovement>>
-  reload(): Promise<void>
+  recordSale(input: SaleInput): Promise<Result<Sale>>
+  recordReturn(input: ReturnCaseInput): Promise<Result<ReturnCase>>
+  /** Returns the freshly fetched catalogue, so callers can act on it directly
+   *  rather than reading `products` from a stale render closure. */
+  reload(): Promise<Product[]>
 }
 
 const message = (cause: unknown): string =>
@@ -45,15 +55,22 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
   const [backend, setBackend] = useState<InventoryRepository['kind'] | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [movements, setMovements] = useState<StockMovement[]>([])
+  const [sales, setSales] = useState<Sale[]>([])
+  const [returns, setReturns] = useState<ReturnCase[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async (repo: InventoryRepository) => {
-    const [nextProducts, nextMovements] = await Promise.all([
+  const refresh = useCallback(async (repo: InventoryRepository): Promise<Product[]> => {
+    const [nextProducts, nextMovements, nextSales, nextReturns] = await Promise.all([
       repo.listProducts(),
       repo.listMovements(),
+      repo.listSales(),
+      repo.listReturns(),
     ])
     setProducts(nextProducts)
     setMovements(nextMovements)
+    setSales(nextSales)
+    setReturns(nextReturns)
+    return nextProducts
   }, [])
 
   useEffect(() => {
@@ -113,21 +130,36 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     [run],
   )
 
-  const reload = useCallback(async () => {
+  const recordSale = useCallback(
+    (input: SaleInput) => run((repo) => repo.recordSale(input)),
+    [run],
+  )
+
+  const recordReturn = useCallback(
+    (input: ReturnCaseInput) => run((repo) => repo.recordReturn(input)),
+    [run],
+  )
+
+  const reload = useCallback(async (): Promise<Product[]> => {
     const repo = repoRef.current
-    if (repo) await refresh(repo)
-  }, [refresh])
+    if (!repo) return products
+    return refresh(repo)
+  }, [refresh, products])
 
   return {
     status,
     backend,
     products,
     movements,
+    sales,
+    returns,
     error,
     createProduct,
     updateProduct,
     deleteProduct,
     recordMovement,
+    recordSale,
+    recordReturn,
     reload,
   }
 }

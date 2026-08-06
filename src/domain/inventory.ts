@@ -28,11 +28,18 @@ export function summarise(products: Product[]): InventorySummary {
   }
 }
 
-/** Scanner input arrives with trailing Enter/whitespace, so normalise first. */
-export function findByBarcode(products: Product[], barcode: string): Product | undefined {
-  const needle = barcode.trim()
+/**
+ * Scanner input arrives with trailing Enter/whitespace, so normalise first.
+ * Matches on barcode or SKU — not every line has a manufacturer barcode, and
+ * a scanned or typed code may be either one.
+ */
+export function findByScan(products: Product[], code: string): Product | undefined {
+  const needle = code.trim()
   if (!needle) return undefined
-  return products.find((p) => p.barcode.trim() === needle)
+  const byBarcode = products.find((p) => p.barcode.trim() === needle)
+  if (byBarcode) return byBarcode
+  const needleLower = needle.toLowerCase()
+  return products.find((p) => p.sku.trim().toLowerCase() === needleLower)
 }
 
 const SEARCH_FIELDS: Array<keyof Product> = [

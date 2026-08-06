@@ -1,5 +1,7 @@
 import { isLowStock } from './inventory'
-import type { Product, StockMovement } from './types'
+import { returnImpact } from './returns'
+import { PAYMENT_METHOD_LABELS, RETURN_ACTION_LABELS } from './types'
+import type { Product, ReturnCase, Sale, StockMovement } from './types'
 
 const NEEDS_QUOTING = /[",\r\n]/
 const HAS_PADDING = /^\s|\s$/
@@ -44,8 +46,11 @@ const PRODUCT_COLUMNS: CsvColumn<Product>[] = [
   { label: 'Name', value: (p) => p.name },
   { label: 'Category', value: (p) => p.category },
   { label: 'Location', value: (p) => p.location },
+  { label: 'Variation', value: (p) => p.variation },
   { label: 'Quantity', value: (p) => p.quantity },
   { label: 'Reorder Level', value: (p) => p.reorderLevel },
+  { label: 'Cost', value: (p) => p.cost },
+  { label: 'Price', value: (p) => p.price },
   { label: 'Low Stock', value: (p) => (isLowStock(p) ? 'yes' : 'no') },
   { label: 'Updated', value: (p) => p.updatedAt },
 ]
@@ -69,4 +74,43 @@ export function movementsToCsv(
     { label: 'Reason', value: (m) => m.reason },
   ]
   return toCsv(columns, movements)
+}
+
+export function salesToCsv(sales: Sale[]): string {
+  const columns: CsvColumn<Sale>[] = [
+    { label: 'Timestamp', value: (s) => s.createdAt },
+    { label: 'Channel', value: (s) => s.channel },
+    { label: 'Payment Method', value: (s) => PAYMENT_METHOD_LABELS[s.paymentMethod] },
+    { label: 'Items', value: (s) => s.lines.map((l) => `${l.quantity}x ${l.sku}`).join('; ') },
+    { label: 'Subtotal', value: (s) => s.subtotal.toFixed(2) },
+    { label: 'Cost', value: (s) => s.totalCost.toFixed(2) },
+    { label: 'Profit', value: (s) => s.profit.toFixed(2) },
+  ]
+  return toCsv(columns, sales)
+}
+
+export function returnsToCsv(cases: ReturnCase[]): string {
+  const columns: CsvColumn<ReturnCase>[] = [
+    { label: 'Timestamp', value: (r) => r.createdAt },
+    { label: 'Channel', value: (r) => r.channel },
+    { label: 'Customer', value: (r) => r.customerRef },
+    { label: 'Actions', value: (r) => r.actions.map((a) => RETURN_ACTION_LABELS[a]).join('; ') },
+    {
+      label: 'Returned Items',
+      value: (r) => r.returnLines.map((l) => `${l.quantity}x ${l.sku} (${l.disposition})`).join('; '),
+    },
+    {
+      label: 'Replacement Items',
+      value: (r) => r.replacementLines.map((l) => `${l.quantity}x ${l.sku}`).join('; '),
+    },
+    { label: 'Refund Amount', value: (r) => r.refundAmount.toFixed(2) },
+    { label: 'Refund Method', value: (r) => (r.refundMethod ? PAYMENT_METHOD_LABELS[r.refundMethod] : '') },
+    { label: 'Goodwill Type', value: (r) => r.goodwillType },
+    { label: 'Goodwill Value', value: (r) => r.goodwillValue.toFixed(2) },
+    { label: 'Write-off Loss', value: (r) => returnImpact(r).writeOffLoss.toFixed(2) },
+    { label: 'Total Cost', value: (r) => returnImpact(r).totalCost.toFixed(2) },
+    { label: 'Reason', value: (r) => r.reason },
+    { label: 'Notes', value: (r) => r.notes },
+  ]
+  return toCsv(columns, cases)
 }

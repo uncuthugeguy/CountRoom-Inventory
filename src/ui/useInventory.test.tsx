@@ -11,8 +11,11 @@ const draft = {
   name: 'Widget',
   category: 'Hardware',
   location: 'A1',
+  variation: '',
   quantity: 10,
   reorderLevel: 4,
+  cost: 3,
+  price: 8,
 }
 
 const openLocal = () => {
@@ -116,6 +119,10 @@ describe('useInventory', () => {
       updateProduct: vi.fn(),
       deleteProduct: vi.fn(),
       recordMovement: vi.fn(),
+      listSales: async () => [],
+      recordSale: vi.fn(),
+      listReturns: async () => [],
+      recordReturn: vi.fn(),
     }
     const { result } = renderHook(() => useInventory(async () => repo))
     await waitFor(() => expect(result.current.status).toBe('ready'))
@@ -127,5 +134,35 @@ describe('useInventory', () => {
     })
 
     expect(result.current.status).toBe('ready')
+  })
+
+  it('loads returns alongside the rest of the catalogue', async () => {
+    const { open } = openLocal()
+    const { result } = renderHook(() => useInventory(open))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    expect(result.current.returns).toEqual([])
+  })
+
+  it('records a return and refreshes the products and returns lists', async () => {
+    const { open } = openLocal()
+    const { result } = renderHook(() => useInventory(open))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    let id = ''
+    await act(async () => {
+      const created = await result.current.createProduct(draft)
+      if (created.ok) id = created.value.id
+    })
+
+    await act(async () => {
+      const recorded = await result.current.recordReturn({
+        actions: ['return'],
+        returnLines: [{ productId: id, quantity: 2, disposition: 'restock' }],
+      })
+      expect(recorded.ok).toBe(true)
+    })
+
+    expect(result.current.products[0].quantity).toBe(12)
+    expect(result.current.returns).toHaveLength(1)
   })
 })

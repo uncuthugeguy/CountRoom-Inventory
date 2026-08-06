@@ -1,4 +1,13 @@
-export const TABS = ['dashboard', 'products', 'scan', 'history'] as const
+export const TABS = [
+  'dashboard',
+  'products',
+  'scan',
+  'checkout',
+  'returns',
+  'stocktake',
+  'history',
+  'settings',
+] as const
 
 export type Tab = (typeof TABS)[number]
 
@@ -6,14 +15,22 @@ const LABELS: Record<Tab, string> = {
   dashboard: 'Dashboard',
   products: 'Products',
   scan: 'Scan',
+  checkout: 'Checkout',
+  returns: 'Returns',
+  stocktake: 'Stocktake',
   history: 'History',
+  settings: 'Settings',
 }
 
 const ICONS: Record<Tab, string> = {
   dashboard: '▦',
   products: '☰',
   scan: '⬒',
+  checkout: '$',
+  returns: '↩',
+  stocktake: '☑',
   history: '↻',
+  settings: '⚙',
 }
 
 export interface NavProps {

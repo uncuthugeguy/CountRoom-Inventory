@@ -1,6 +1,6 @@
 import { isLowStock } from '../../domain/inventory'
 import type { MovementType, Product } from '../../domain/types'
-import { formatNumber } from '../format'
+import { formatDateTime, formatNumber } from '../format'
 import { StockActions } from './StockActions'
 
 export interface ProductRowProps {
@@ -8,9 +8,10 @@ export interface ProductRowProps {
   onMove: (product: Product, type: MovementType) => void
   onEdit: (product: Product) => void
   onDelete: (product: Product) => void
+  onPrintLabel: (product: Product) => void
 }
 
-export function ProductRow({ product, onMove, onEdit, onDelete }: ProductRowProps) {
+export function ProductRow({ product, onMove, onEdit, onDelete, onPrintLabel }: ProductRowProps) {
   const low = isLowStock(product)
 
   return (
@@ -19,10 +20,12 @@ export function ProductRow({ product, onMove, onEdit, onDelete }: ProductRowProp
         <h3 className="product-name">{product.name}</h3>
         <p className="product-meta">
           <span className="mono">{product.sku}</span>
-          <span className="mono">{product.barcode}</span>
+          {product.barcode && <span className="mono">{product.barcode}</span>}
           {product.category && <span className="chip">{product.category}</span>}
           {product.location && <span className="chip">{product.location}</span>}
+          {product.variation && <span className="chip">{product.variation}</span>}
         </p>
+        <p className="product-added muted">Added {formatDateTime(product.createdAt)}</p>
       </div>
 
       <div className="product-quantity">
@@ -38,6 +41,14 @@ export function ProductRow({ product, onMove, onEdit, onDelete }: ProductRowProp
       <div className="product-actions">
         <StockActions product={product} onMove={onMove} />
         <div className="row-admin">
+          <button
+            type="button"
+            className="button button-ghost"
+            aria-label={`Print label for ${product.name}`}
+            onClick={() => onPrintLabel(product)}
+          >
+            Print label
+          </button>
           <button
             type="button"
             className="button button-ghost"

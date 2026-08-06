@@ -11,6 +11,7 @@ export interface ProductsScreenProps {
   onEdit: (product: Product) => void
   onDelete: (product: Product) => void
   onCreate: () => void
+  onPrintLabel: (product: Product) => void
 }
 
 export function ProductsScreen({
@@ -19,6 +20,7 @@ export function ProductsScreen({
   onEdit,
   onDelete,
   onCreate,
+  onPrintLabel,
 }: ProductsScreenProps) {
   const searchId = useId()
   const [query, setQuery] = useState('')
@@ -71,6 +73,7 @@ export function ProductsScreen({
               onMove={onMove}
               onEdit={onEdit}
               onDelete={onDelete}
+              onPrintLabel={onPrintLabel}
             />
           ))}
         </ul>

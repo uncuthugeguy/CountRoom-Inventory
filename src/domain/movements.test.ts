@@ -9,8 +9,11 @@ const product: Product = {
   name: 'Widget',
   category: 'Hardware',
   location: 'A1',
+  variation: '',
   quantity: 10,
   reorderLevel: 4,
+  cost: 0,
+  price: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 }

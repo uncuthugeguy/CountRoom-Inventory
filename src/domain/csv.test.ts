@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Product, StockMovement } from './types'
-import { escapeCsvValue, movementsToCsv, productsToCsv, toCsv } from './csv'
+import type { Product, ReturnCase, Sale, StockMovement } from './types'
+import { escapeCsvValue, movementsToCsv, productsToCsv, returnsToCsv, salesToCsv, toCsv } from './csv'
 
 describe('escapeCsvValue', () => {
   it('leaves a plain value untouched', () => {
@@ -68,8 +68,11 @@ describe('productsToCsv', () => {
     name: 'M6 "hex" bolt',
     category: 'Fasteners',
     location: 'A1',
+    variation: '',
     quantity: 3,
     reorderLevel: 5,
+    cost: 1.2,
+    price: 4.5,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-02T00:00:00.000Z',
   }
@@ -77,16 +80,48 @@ describe('productsToCsv', () => {
   it('exports the catalogue columns with escaping applied', () => {
     const lines = productsToCsv([product]).split('\r\n')
     expect(lines[0]).toBe(
-      'Barcode,SKU,Name,Category,Location,Quantity,Reorder Level,Low Stock,Updated',
+      'Barcode,SKU,Name,Category,Location,Variation,Quantity,Reorder Level,Cost,Price,Low Stock,Updated',
     )
     expect(lines[1]).toBe(
-      '5012345678900,"SKU,1","M6 ""hex"" bolt",Fasteners,A1,3,5,yes,2026-01-02T00:00:00.000Z',
+      '5012345678900,"SKU,1","M6 ""hex"" bolt",Fasteners,A1,,3,5,1.2,4.5,yes,2026-01-02T00:00:00.000Z',
     )
   })
 
   it('flags a healthy product as not low stock', () => {
     const csv = productsToCsv([{ ...product, quantity: 10 }])
-    expect(csv.split('\r\n')[1]).toContain(',10,5,no,')
+    expect(csv.split('\r\n')[1]).toContain(',10,5,1.2,4.5,no,')
+  })
+})
+
+describe('salesToCsv', () => {
+  const sale: Sale = {
+    id: 's1',
+    channel: 'eBay',
+    paymentMethod: 'card',
+    subtotal: 25,
+    totalCost: 10,
+    profit: 15,
+    createdAt: '2026-02-02T10:00:00.000Z',
+    lines: [
+      {
+        id: 'l1',
+        saleId: 's1',
+        productId: 'p1',
+        sku: 'BLT-M6',
+        name: 'M6 Bolt',
+        quantity: 5,
+        unitPrice: 5,
+        unitCost: 2,
+        lineTotal: 25,
+        lineProfit: 15,
+      },
+    ],
+  }
+
+  it('exports the sale columns with items summarised', () => {
+    const lines = salesToCsv([sale]).split('\r\n')
+    expect(lines[0]).toBe('Timestamp,Channel,Payment Method,Items,Subtotal,Cost,Profit')
+    expect(lines[1]).toBe('2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,15.00')
   })
 })
 
@@ -122,5 +157,50 @@ describe('movementsToCsv', () => {
   it('leaves the reason blank when there is none', () => {
     const csv = movementsToCsv([{ ...movement, reason: undefined }], { p1: 'M6 Bolt' })
     expect(csv.split('\r\n')[1].endsWith(',8,')).toBe(true)
+  })
+})
+
+describe('returnsToCsv', () => {
+  const returnCase: ReturnCase = {
+    id: 'r1',
+    saleId: 's1',
+    channel: 'eBay',
+    customerRef: 'jane@example.com',
+    reason: 'Faulty',
+    notes: '',
+    actions: ['refund', 'return'],
+    refundAmount: 12.5,
+    refundMethod: 'card',
+    goodwillType: '',
+    goodwillValue: 0,
+    returnLines: [
+      {
+        id: 'l1',
+        returnId: 'r1',
+        productId: 'p1',
+        sku: 'BLT-M6',
+        name: 'M6 Bolt',
+        quantity: 2,
+        disposition: 'writeoff',
+        unitCost: 2,
+      },
+    ],
+    replacementLines: [],
+    createdAt: '2026-02-02T10:00:00.000Z',
+  }
+
+  it('exports the case columns with items and financial impact resolved', () => {
+    const lines = returnsToCsv([returnCase]).split('\r\n')
+    expect(lines[0]).toBe(
+      'Timestamp,Channel,Customer,Actions,Returned Items,Replacement Items,Refund Amount,Refund Method,Goodwill Type,Goodwill Value,Write-off Loss,Total Cost,Reason,Notes',
+    )
+    expect(lines[1]).toBe(
+      '2026-02-02T10:00:00.000Z,eBay,jane@example.com,Refund; Return,2x BLT-M6 (writeoff),,12.50,Card,,0.00,4.00,16.50,Faulty,',
+    )
+  })
+
+  it('leaves refund method blank when there is none', () => {
+    const csv = returnsToCsv([{ ...returnCase, refundMethod: null }])
+    expect(csv.split('\r\n')[1]).toContain(',12.50,,')
   })
 })

@@ -58,17 +58,24 @@ export function CameraScanner({ onDecode, start = defaultStart }: CameraScannerP
 
   return (
     <div className="camera">
-      <div className="camera-controls">
-        <button type="button" className="button" onClick={toggle}>
-          {active ? 'Stop camera' : 'Start camera'}
-        </button>
-        {active && <span className="camera-hint">Hold the barcode inside the frame.</span>}
-      </div>
+      {!active && (
+        <div className="camera-controls">
+          <button type="button" className="button" onClick={toggle}>
+            Start camera
+          </button>
+        </div>
+      )}
 
       {active && (
         <div className="camera-preview">
           <video ref={video} muted playsInline autoPlay aria-label="Camera preview" />
           <div className="camera-reticle" aria-hidden="true" />
+          <div className="camera-overlay-controls">
+            <button type="button" className="button" onClick={toggle}>
+              Stop camera
+            </button>
+            <span className="camera-hint">Hold the barcode inside the frame.</span>
+          </div>
         </div>
       )}
 

@@ -1,12 +1,20 @@
 import { lowStockProducts, summarise } from '../../domain/inventory'
-import { MOVEMENT_LABELS, type Product, type StockMovement } from '../../domain/types'
+import { salesSince, summariseSales } from '../../domain/sales'
+import { MOVEMENT_LABELS, type Product, type Sale, type StockMovement } from '../../domain/types'
 import { formatDateTime, formatDelta, formatNumber } from '../format'
 import type { Tab } from '../components/Nav'
 
 export interface DashboardScreenProps {
   products: Product[]
   movements: StockMovement[]
+  sales: Sale[]
   onNavigate: (tab: Tab) => void
+}
+
+/** Midnight, local time. */
+function startOfToday(): Date {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
 }
 
 interface StatProps {
@@ -25,11 +33,12 @@ function Stat({ id, label, value, tone }: StatProps) {
   )
 }
 
-export function DashboardScreen({ products, movements, onNavigate }: DashboardScreenProps) {
+export function DashboardScreen({ products, movements, sales, onNavigate }: DashboardScreenProps) {
   const summary = summarise(products)
   const low = lowStockProducts(products)
   const recent = movements.slice(0, 5)
   const names = Object.fromEntries(products.map((p) => [p.id, p.name]))
+  const today = summariseSales(salesSince(sales, startOfToday()))
 
   return (
     <div className="screen">
@@ -43,6 +52,17 @@ export function DashboardScreen({ products, movements, onNavigate }: DashboardSc
           value={summary.outOfStockCount}
           tone="danger"
         />
+      </section>
+
+      <section className="stats" aria-label="Today's sales">
+        <div className="stat" data-testid="stat-revenue-today">
+          <span className="stat-value">{today.revenue.toFixed(2)}</span>
+          <span className="stat-label">Revenue today</span>
+        </div>
+        <div className="stat" data-testid="stat-profit-today">
+          <span className="stat-value">{today.profit.toFixed(2)}</span>
+          <span className="stat-label">Profit today</span>
+        </div>
       </section>
 
       <section className="panel">
