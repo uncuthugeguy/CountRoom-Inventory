@@ -225,7 +225,7 @@ function AuthenticatedApp({
     const result = await inventory.recordMovement(dialog.product.id, input)
     if (result.ok) {
       const { product, movement } = result.value
-      setToast(`${product.name}: ${movement.previousQuantity} → ${movement.newQuantity}.`)
+      setToast(`${product.name}: ${movement.previousQuantity} â ${movement.newQuantity}.`)
     }
     return result
   }
@@ -313,7 +313,7 @@ function AuthenticatedApp({
       <div className="boot">
         <h1>StockFlow</h1>
         <p className="muted" role="status">
-          Opening the inventory…
+          Opening the inventoryâ¦
         </p>
       </div>
     )
@@ -324,13 +324,13 @@ function AuthenticatedApp({
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            ▮▯▮
+            â®â¯â®
           </span>
           <h1>StockFlow</h1>
         </div>
         <div className="header-right">
           <span className="badge backend" data-testid="backend-badge">
-            {inventory.backend === 'supabase' ? 'Supabase — synced' : 'Offline — on this device'}
+            {inventory.backend === 'supabase' ? 'Supabase â synced' : 'Offline â on this device'}
           </span>
           {onSignOut && (
             <>
