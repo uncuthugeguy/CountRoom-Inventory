@@ -458,4 +458,40 @@ describe('recordReturn', () => {
     const returns = await repo.listReturns()
     expect(returns.map((r) => r.goodwillType)).toEqual(['second', 'first'])
   })
+
+  describe('profile', () => {
+    it('starts with an empty profile', async () => {
+      const repo = createLocalRepository({ storage, seed: false })
+      const profile = await repo.getProfile()
+      expect(profile).toMatchObject({ fullName: '', birthday: '', address: '', employeeNumber: '', username: '' })
+    })
+
+    it('applies a profile edit immediately — local mode is always the manager, nobody to approve it', async () => {
+      const repo = createLocalRepository({ storage, seed: false })
+      const result = await repo.updateProfile({
+        fullName: 'Jane Doe',
+        birthday: '1990-01-01',
+        address: '1 High Street',
+        employeeNumber: 'EMP-1',
+        username: 'jane',
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.ok && result.value.status).toBe('applied')
+      expect(await repo.getProfile()).toMatchObject({ fullName: 'Jane Doe', username: 'jane' })
+    })
+
+    it('persists the profile across a reload, same as products', async () => {
+      const repo = createLocalRepository({ storage, seed: false })
+      await repo.updateProfile({ fullName: 'Jane Doe', birthday: '', address: '', employeeNumber: '', username: '' })
+
+      const reopened = createLocalRepository({ storage, seed: false })
+      expect(await reopened.getProfile()).toMatchObject({ fullName: 'Jane Doe' })
+    })
+
+    it('never has anything pending to approve locally', async () => {
+      const repo = createLocalRepository({ storage, seed: false })
+      expect(await repo.listPendingProfileChanges()).toEqual([])
+    })
+  })
 })

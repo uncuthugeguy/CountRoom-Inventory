@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { Session } from '@supabase/supabase-js'
+import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { createRepository, resolveBackend, type Backend } from './data/createRepository'
 import { getSupabaseClient } from './data/supabaseClient'
-import { DUPLICATE_SKU, type InventoryRepository } from './data/repository'
+import { DUPLICATE_SKU, type InventoryRepository, type Role } from './data/repository'
 import { findByScan } from './domain/inventory'
 import { nextSku } from './domain/products'
 import {
@@ -26,10 +26,11 @@ import type { StartCameraScan } from './scanner/cameraScanner'
 import { useWedgeScanner } from './scanner/useWedgeScanner'
 import { AuthScreen } from './ui/components/AuthScreen'
 import { ConfirmDialog } from './ui/components/ConfirmDialog'
+import { MfaChallengeScreen } from './ui/components/MfaChallengeScreen'
+import { MfaEnrollScreen } from './ui/components/MfaEnrollScreen'
 import { MovementDialog } from './ui/components/MovementDialog'
 import { Nav, type Tab } from './ui/components/Nav'
 import { ProductFormDialog } from './ui/components/ProductFormDialog'
-import { ResetPasswordScreen } from './ui/components/ResetPasswordScreen'
 import { printProductLabel } from './printing/printLabel'
 import { CheckoutScreen } from './ui/screens/CheckoutScreen'
 import { DashboardScreen } from './ui/screens/DashboardScreen'
@@ -41,6 +42,7 @@ import { SettingsScreen } from './ui/screens/SettingsScreen'
 import { StocktakeScreen } from './ui/screens/StocktakeScreen'
 import { useInventory } from './ui/useInventory'
 import { useSettings } from './ui/useSettings'
+import { useSettingsSync } from './ui/useSettingsSync'
 
 export interface AppProps {
   /** Overridden in tests; defaults to the env-configured backend. */
@@ -93,16 +95,41 @@ export function App(props: AppProps) {
   return <SupabaseGate backend={backend} {...props} />
 }
 
+/** Mandatory-MFA gate state, checked fresh every time the session changes
+ *  (sign-in, sign-out, or a just-verified TOTP challenge). */
+type MfaStatus =
+  | { kind: 'checking' }
+  | { kind: 'needsEnroll' }
+  | { kind: 'needsChallenge'; factorId: string }
+  | { kind: 'satisfied' }
+
+async function loadMfaStatus(client: SupabaseClient): Promise<MfaStatus> {
+  // `listFactors()`'s per-type buckets (`data.totp`) only ever contain
+  // already-verified factors — that filtering is done by Supabase, not
+  // here — so the first entry is exactly what's needed.
+  const { data: factorsData, error: factorsError } = await client.auth.mfa.listFactors()
+  if (factorsError) return { kind: 'needsEnroll' }
+
+  const verifiedTotp = factorsData?.totp?.[0]
+  if (!verifiedTotp) return { kind: 'needsEnroll' }
+
+  const { data: aal, error: aalError } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (aalError) return { kind: 'needsChallenge', factorId: verifiedTotp.id }
+
+  if (aal.currentLevel !== aal.nextLevel) {
+    return { kind: 'needsChallenge', factorId: verifiedTotp.id }
+  }
+
+  return { kind: 'satisfied' }
+}
+
 function SupabaseGate({
   backend,
   ...props
 }: AppProps & { backend: Extract<Backend, { kind: 'supabase' }> }) {
   const [session, setSession] = useState<Session | null>(null)
   const [checked, setChecked] = useState(false)
-  // Supabase's reset-password email link lands back here already signed in
-  // to a temporary session and fires this event — that must show the "set a
-  // new password" screen instead of dropping straight into the app.
-  const [recovering, setRecovering] = useState(false)
+  const [mfa, setMfa] = useState<MfaStatus>({ kind: 'checking' })
   const client = getSupabaseClient(backend.url, backend.anonKey)
 
   useEffect(() => {
@@ -110,12 +137,30 @@ function SupabaseGate({
       setSession(data.session)
       setChecked(true)
     })
-    const { data: sub } = client.auth.onAuthStateChange((event, next) => {
-      if (event === 'PASSWORD_RECOVERY') setRecovering(true)
+    const { data: sub } = client.auth.onAuthStateChange((_event, next) => {
       setSession(next)
     })
     return () => sub.subscription.unsubscribe()
   }, [client])
+
+  // Every StockFlow account must have a verified authenticator app and be at
+  // AAL2 before it can touch any inventory data — enforced again, server
+  // side, by the RLS policies in schema.sql, so this check can't be bypassed
+  // by skipping the UI.
+  useEffect(() => {
+    if (!session) {
+      setMfa({ kind: 'checking' })
+      return
+    }
+    let cancelled = false
+    setMfa({ kind: 'checking' })
+    void loadMfaStatus(client).then((status) => {
+      if (!cancelled) setMfa(status)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [client, session])
 
   if (!checked) {
     return (
@@ -128,12 +173,36 @@ function SupabaseGate({
     )
   }
 
-  if (recovering) {
-    return <ResetPasswordScreen client={client} onDone={() => setRecovering(false)} />
-  }
-
   if (!session) {
     return <AuthScreen client={client} />
+  }
+
+  const recheckMfa = () => void loadMfaStatus(client).then(setMfa)
+
+  if (mfa.kind === 'checking') {
+    return (
+      <div className="boot">
+        <h1>StockFlow</h1>
+        <p className="muted" role="status">
+          Checking two-factor status…
+        </p>
+      </div>
+    )
+  }
+
+  if (mfa.kind === 'needsEnroll') {
+    return <MfaEnrollScreen client={client} onEnrolled={recheckMfa} />
+  }
+
+  if (mfa.kind === 'needsChallenge') {
+    return (
+      <MfaChallengeScreen
+        client={client}
+        factorId={mfa.factorId}
+        onVerified={recheckMfa}
+        onSignOut={() => client.auth.signOut()}
+      />
+    )
   }
 
   return (
@@ -158,7 +227,12 @@ function AuthenticatedApp({
   userEmail,
 }: AuthenticatedAppProps) {
   const inventory = useInventory(openRepository)
+  // Screens are only reached once inventory.status === 'ready', by which
+  // point useInventory has already set a real role — 'employee' here is
+  // just a fail-closed fallback for the instant before that.
+  const role: Role = inventory.role ?? 'employee'
   const settings = useSettings(settingsStorage)
+  useSettingsSync(inventory, settings)
   const [tab, setTab] = useState<Tab>('dashboard')
   const [lastScan, setLastScan] = useState<string | null>(null)
   const [cart, setCart] = useState<Cart>([])
@@ -354,6 +428,7 @@ function AuthenticatedApp({
         {tab === 'dashboard' && (
           <DashboardScreen
             products={inventory.products}
+            role={role}
             movements={inventory.movements}
             sales={inventory.sales}
             onNavigate={setTab}
@@ -363,6 +438,7 @@ function AuthenticatedApp({
         {tab === 'products' && (
           <ProductsScreen
             products={inventory.products}
+            role={role}
             onMove={openMovement}
             onEdit={(product) => setDialog({ kind: 'product', product })}
             onDelete={(product) => setDialog({ kind: 'delete', product })}
@@ -387,6 +463,7 @@ function AuthenticatedApp({
           <CheckoutScreen
             products={inventory.products}
             cart={cart}
+            role={role}
             channels={settings.saleChannels}
             lastSale={lastSale}
             onAddByCode={addScanToCart}
@@ -403,6 +480,7 @@ function AuthenticatedApp({
         {tab === 'returns' && (
           <ReturnsScreen
             products={inventory.products}
+            role={role}
             sales={inventory.sales}
             returns={inventory.returns}
             onRecordReturn={recordReturn}
@@ -412,6 +490,7 @@ function AuthenticatedApp({
         {tab === 'stocktake' && (
           <StocktakeScreen
             products={inventory.products}
+            role={role}
             onApprove={approveStocktakeLine}
             onCreateProduct={(barcode) => setDialog({ kind: 'product', barcode })}
           />
@@ -422,10 +501,11 @@ function AuthenticatedApp({
             movements={inventory.movements}
             products={inventory.products}
             sales={inventory.sales}
+            role={role}
           />
         )}
 
-        {tab === 'settings' && <SettingsScreen settings={settings} />}
+        {tab === 'settings' && <SettingsScreen settings={settings} inventory={inventory} />}
       </main>
 
       <Nav tab={tab} onChange={setTab} />
@@ -441,6 +521,7 @@ function AuthenticatedApp({
           product={dialog.product}
           barcode={dialog.barcode}
           products={inventory.products}
+          role={role}
           onClose={closeDialog}
           onSubmit={saveProduct}
         />

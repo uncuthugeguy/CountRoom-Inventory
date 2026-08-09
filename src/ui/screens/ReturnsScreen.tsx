@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from 'react'
+import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
 import { returnsToCsv } from '../../domain/csv'
 import {
@@ -44,6 +45,7 @@ import { formatDateTime, formatNumber } from '../format'
 
 export interface ReturnsScreenProps {
   products: Product[]
+  role: Role
   /** Past till sales, so a case can be linked back to the original transaction. */
   sales: Sale[]
   returns: ReturnCase[]
@@ -94,7 +96,8 @@ const emptyDraft = (): {
   goodwillValue: '',
 })
 
-export function ReturnsScreen({ products, sales, returns, onRecordReturn }: ReturnsScreenProps) {
+export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }: ReturnsScreenProps) {
+  const isManager = role === 'manager'
   const saleId = useId()
   const channelId = useId()
   const customerId = useId()
@@ -278,19 +281,24 @@ export function ReturnsScreen({ products, sales, returns, onRecordReturn }: Retu
                     />
                   </label>
                   <div className="channel-picker" role="group" aria-label={`Disposition for ${line.product.name}`}>
-                    {STOCK_DISPOSITIONS.map((disposition: StockDisposition) => (
-                      <button
-                        key={disposition}
-                        type="button"
-                        className={`button chip-button ${line.disposition === disposition ? 'chip-button-active' : ''}`}
-                        aria-pressed={line.disposition === disposition}
-                        onClick={() =>
-                          setReturnCart((current) => setReturnLineDisposition(current, line.product.id, disposition))
-                        }
-                      >
-                        {STOCK_DISPOSITION_LABELS[disposition]}
-                      </button>
-                    ))}
+                    {STOCK_DISPOSITIONS.map((disposition: StockDisposition) => {
+                      const locked = disposition === 'writeoff' && !isManager
+                      return (
+                        <button
+                          key={disposition}
+                          type="button"
+                          className={`button chip-button ${line.disposition === disposition ? 'chip-button-active' : ''}`}
+                          aria-pressed={line.disposition === disposition}
+                          disabled={locked}
+                          title={locked ? 'Only a manager can write off returned stock' : undefined}
+                          onClick={() =>
+                            setReturnCart((current) => setReturnLineDisposition(current, line.product.id, disposition))
+                          }
+                        >
+                          {STOCK_DISPOSITION_LABELS[disposition]}
+                        </button>
+                      )
+                    })}
                   </div>
                   <button
                     type="button"
@@ -396,18 +404,26 @@ export function ReturnsScreen({ products, sales, returns, onRecordReturn }: Retu
       <section className="panel">
         <h2>What happened</h2>
         <div className="channel-picker" role="group" aria-label="Actions">
-          {RETURN_ACTIONS.map((action) => (
-            <button
-              key={action}
-              type="button"
-              className={`button chip-button ${draft.actions.includes(action) ? 'chip-button-active' : ''}`}
-              aria-pressed={draft.actions.includes(action)}
-              onClick={() => toggleAction(action)}
-            >
-              {RETURN_ACTION_LABELS[action]}
-            </button>
-          ))}
+          {RETURN_ACTIONS.map((action) => {
+            const locked = (action === 'refund' || action === 'goodwill') && !isManager
+            return (
+              <button
+                key={action}
+                type="button"
+                className={`button chip-button ${draft.actions.includes(action) ? 'chip-button-active' : ''}`}
+                aria-pressed={draft.actions.includes(action)}
+                disabled={locked}
+                title={locked ? 'Only a manager can process this' : undefined}
+                onClick={() => toggleAction(action)}
+              >
+                {RETURN_ACTION_LABELS[action]}
+              </button>
+            )
+          })}
         </div>
+        {!isManager && (
+          <p className="hint">Refunds and goodwill gestures need a manager — ask them to save this case.</p>
+        )}
 
         {draft.actions.includes('refund') && (
           <div className="field-row">
@@ -555,15 +571,17 @@ export function ReturnsScreen({ products, sales, returns, onRecordReturn }: Retu
       <section className="panel">
         <div className="toolbar">
           <h2>Cases</h2>
-          <div className="toolbar-actions">
-            <button
-              type="button"
-              className="button"
-              onClick={() => downloadCsv(timestampedFilename('returns'), returnsToCsv(inRange))}
-            >
-              Export returns CSV
-            </button>
-          </div>
+          {isManager && (
+            <div className="toolbar-actions">
+              <button
+                type="button"
+                className="button"
+                onClick={() => downloadCsv(timestampedFilename('returns'), returnsToCsv(inRange))}
+              >
+                Export returns CSV
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="channel-picker" role="group" aria-label="Date range">
@@ -593,18 +611,22 @@ export function ReturnsScreen({ products, sales, returns, onRecordReturn }: Retu
             <span className="stat-value">{summary.goodwillTotal.toFixed(2)}</span>
             <span className="stat-label">Goodwill given</span>
           </div>
-          <div className="stat stat-danger" data-testid="returns-writeoff-loss">
-            <span className="stat-value">{summary.writeOffLoss.toFixed(2)}</span>
-            <span className="stat-label">Written-off loss</span>
-          </div>
+          {isManager && (
+            <div className="stat stat-danger" data-testid="returns-writeoff-loss">
+              <span className="stat-value">{summary.writeOffLoss.toFixed(2)}</span>
+              <span className="stat-label">Written-off loss</span>
+            </div>
+          )}
           <div className="stat" data-testid="returns-restocked">
             <span className="stat-value">{formatNumber(summary.itemsRestocked)}</span>
             <span className="stat-label">Items restocked</span>
           </div>
-          <div className="stat" data-testid="returns-total-cost">
-            <span className="stat-value">{summary.totalCost.toFixed(2)}</span>
-            <span className="stat-label">Total cost</span>
-          </div>
+          {isManager && (
+            <div className="stat" data-testid="returns-total-cost">
+              <span className="stat-value">{summary.totalCost.toFixed(2)}</span>
+              <span className="stat-label">Total cost</span>
+            </div>
+          )}
         </section>
 
         {inRange.length === 0 ? (
@@ -639,7 +661,7 @@ export function ReturnsScreen({ products, sales, returns, onRecordReturn }: Retu
                       ))}
                     </div>
                     <div className="history-numbers">
-                      <span className="mono">{impact.totalCost.toFixed(2)}</span>
+                      {isManager && <span className="mono">{impact.totalCost.toFixed(2)}</span>}
                       <span className="muted">refund {impact.refundTotal.toFixed(2)}</span>
                     </div>
                     <div className="history-meta">

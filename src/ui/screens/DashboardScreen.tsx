@@ -1,3 +1,4 @@
+import type { Role } from '../../data/repository'
 import { lowStockProducts, summarise } from '../../domain/inventory'
 import { salesSince, summariseSales } from '../../domain/sales'
 import { MOVEMENT_LABELS, type Product, type Sale, type StockMovement } from '../../domain/types'
@@ -6,6 +7,7 @@ import type { Tab } from '../components/Nav'
 
 export interface DashboardScreenProps {
   products: Product[]
+  role: Role
   movements: StockMovement[]
   sales: Sale[]
   onNavigate: (tab: Tab) => void
@@ -33,7 +35,7 @@ function Stat({ id, label, value, tone }: StatProps) {
   )
 }
 
-export function DashboardScreen({ products, movements, sales, onNavigate }: DashboardScreenProps) {
+export function DashboardScreen({ products, role, movements, sales, onNavigate }: DashboardScreenProps) {
   const summary = summarise(products)
   const low = lowStockProducts(products)
   const recent = movements.slice(0, 5)
@@ -59,10 +61,12 @@ export function DashboardScreen({ products, movements, sales, onNavigate }: Dash
           <span className="stat-value">{today.revenue.toFixed(2)}</span>
           <span className="stat-label">Revenue today</span>
         </div>
-        <div className="stat" data-testid="stat-profit-today">
-          <span className="stat-value">{today.profit.toFixed(2)}</span>
-          <span className="stat-label">Profit today</span>
-        </div>
+        {role === 'manager' && (
+          <div className="stat" data-testid="stat-profit-today">
+            <span className="stat-value">{today.profit.toFixed(2)}</span>
+            <span className="stat-label">Profit today</span>
+          </div>
+        )}
       </section>
 
       <section className="panel">

@@ -209,3 +209,56 @@ export interface ReturnCase {
   replacementLines: ReplacementLine[]
   createdAt: string
 }
+
+// --- Account settings: personal/employee details ---------------------------
+//
+// A password is handled separately, straight through Supabase Auth
+// (`client.auth.updateUser({ password })`), the same way the existing
+// "forgot password" flow already does — it's a personal security credential,
+// not business data, so it takes effect immediately for anyone regardless of
+// role, with no approval step.
+//
+// Everything below IS business data about who someone is, so it follows the
+// same manager/employee split as everything else in `domain/permissions.ts`:
+// a manager's own edits apply immediately; an employee's edits are held as a
+// pending request until a manager approves or rejects them.
+
+/** Personal/employee details, editable from Account settings. */
+export interface Profile {
+  fullName: string
+  /** ISO date (YYYY-MM-DD), or '' if not set. */
+  birthday: string
+  address: string
+  employeeNumber: string
+  /** A display/login-adjacent handle, separate from the email used to sign in. */
+  username: string
+  updatedAt: string
+}
+
+/** Fields a user supplies when editing their own profile. */
+export type ProfileDraft = Omit<Profile, 'updatedAt'>
+
+export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
+  fullName: '',
+  birthday: '',
+  address: '',
+  employeeNumber: '',
+  username: '',
+}
+
+/** What happened after submitting a profile edit — applied immediately (a
+ * manager editing their own details), or held for manager approval (an
+ * employee editing theirs). */
+export type ProfileUpdateOutcome = { status: 'applied'; profile: Profile } | { status: 'pending' }
+
+export type ProfileChangeStatus = 'pending' | 'approved' | 'rejected'
+
+/** An employee's proposed profile edit, awaiting a manager's decision. */
+export interface ProfileChangeRequest {
+  id: string
+  /** Who asked for the change — "You" is inferred client-side, same as TeamMember. */
+  memberEmail: string
+  proposed: ProfileDraft
+  status: ProfileChangeStatus
+  requestedAt: string
+}

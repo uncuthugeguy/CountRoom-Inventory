@@ -1,4 +1,5 @@
 import { useId, useMemo, useState, type FormEvent } from 'react'
+import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
 import { cartHasIssues, cartLineIssue, cartTotals, type Cart } from '../../domain/sales'
 import {
@@ -16,6 +17,7 @@ import { formatDateTime, formatNumber } from '../format'
 export interface CheckoutScreenProps {
   products: Product[]
   cart: Cart
+  role: Role
   /** User-managed list of sale channels — see Settings. */
   channels: string[]
   /** The most recently completed sale, shown as a receipt-style confirmation. */
@@ -34,6 +36,7 @@ export interface CheckoutScreenProps {
 export function CheckoutScreen({
   products,
   cart,
+  role,
   channels,
   lastSale,
   onAddByCode,
@@ -241,6 +244,8 @@ export function CheckoutScreen({
                         inputMode="decimal"
                         value={line.unitPrice}
                         aria-label={`Price for ${line.product.name}`}
+                        disabled={role !== 'manager'}
+                        title={role !== 'manager' ? 'Only a manager can change the sale price' : undefined}
                         onChange={(e) => onSetPrice(line.product.id, Number(e.target.value) || 0)}
                       />
                     </label>
@@ -264,7 +269,7 @@ export function CheckoutScreen({
           <div className="cart-totals" data-testid="cart-totals">
             <span>{formatNumber(totals.itemCount)} items</span>
             <span>Subtotal: {totals.subtotal.toFixed(2)}</span>
-            <span>Est. profit: {totals.profit.toFixed(2)}</span>
+            {role === 'manager' && <span>Est. profit: {totals.profit.toFixed(2)}</span>}
           </div>
         )}
       </section>
@@ -375,7 +380,8 @@ export function CheckoutScreen({
           <p className="scan-quantity">
             <span className="quantity">{lastSale.subtotal.toFixed(2)}</span>
             <span className="quantity-caption">
-              {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]} · profit {lastSale.profit.toFixed(2)}
+              {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]}
+              {role === 'manager' && ` · profit ${lastSale.profit.toFixed(2)}`}
             </span>
           </p>
           {lastSaleCash && (

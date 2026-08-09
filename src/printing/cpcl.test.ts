@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { buildCpclLabel } from './cpcl'
 import type { CpclLogo } from './bitmap'
+import { DEFAULT_LABEL_TEMPLATE } from './labelTemplate'
 
 describe('buildCpclLabel', () => {
   it('opens with a CPCL header and ends with FORM/PRINT', () => {
     const cpcl = buildCpclLabel({ name: 'Widget', sku: 'SKU-001' })
     const lines = cpcl.trim().split('\r\n')
-    expect(lines[0]).toMatch(/^! 0 200 200 \d+ 1$/)
+    expect(lines[0]).toBe(`! 0 ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.heightDots} 1`)
     expect(lines.at(-2)).toBe('FORM')
     expect(lines.at(-1)).toBe('PRINT')
   })
@@ -31,16 +32,61 @@ describe('buildCpclLabel', () => {
     expect(cpcl).toContain('Variation: Blue')
   })
 
-  it('emits an EG bitmap command for the logo and indents the text past it', () => {
+  it('emits an EG bitmap command for the logo at its own template position', () => {
     const logo: CpclLogo = { widthBytes: 10, heightDots: 40, hex: 'AB'.repeat(10 * 40) }
     const withLogo = buildCpclLabel({ name: 'Widget', sku: 'SKU-001', logo })
     const withoutLogo = buildCpclLabel({ name: 'Widget', sku: 'SKU-001' })
 
     expect(withLogo).toContain(`EG ${logo.widthBytes} ${logo.heightDots} 20 20 ${logo.hex}`)
-
+    // The logo and text are positioned independently now (drag-to-place), so
+    // adding a logo does not move where the name prints.
     const textXWith = /TEXT 7 0 (\d+) 20 Widget/.exec(withLogo)?.[1]
     const textXWithout = /TEXT 7 0 (\d+) 20 Widget/.exec(withoutLogo)?.[1]
-    expect(Number(textXWith)).toBeGreaterThan(Number(textXWithout))
+    expect(textXWith).toBe(textXWithout)
+  })
+
+  it('clamps the logo position at print time using the real bitmap size, even if the stored template is stale', () => {
+    // A bigger logo than the editor's assumed 120x60 footprint, deliberately
+    // positioned via a template that would let it hang off a 600x300 label —
+    // the defensive check in buildCpclLabel itself, independent of whatever
+    // sanitiseLabelTemplate already did when the template was saved.
+    const logo: CpclLogo = { widthBytes: 30, heightDots: 100, hex: 'AB'.repeat(30 * 100) } // 240 dots wide
+    const cpcl = buildCpclLabel({
+      name: 'Widget',
+      sku: 'SKU-001',
+      logo,
+      template: {
+        widthDots: 600,
+        heightDots: 300,
+        dpi: 200,
+        nameFont: 7,
+        variationFont: 4,
+        skuFont: 4,
+        barcodeHeight: 60,
+        barcodeModuleWidth: 2,
+        logoWidthDots: 120,
+        logoHeightDots: 60,
+        logo: { x: 590, y: 290 }, // would print the 240x100 bitmap far off the label
+        name: { x: 160, y: 20 },
+        variation: { x: 160, y: 65 },
+        barcode: { x: 160, y: 100 },
+        sku: { x: 160, y: 180 },
+      },
+    })
+    const match = /EG 30 100 (\d+) (\d+) /.exec(cpcl)
+    expect(match).not.toBeNull()
+    const [, x, y] = match!
+    expect(Number(x)).toBeLessThanOrEqual(600 - 240)
+    expect(Number(y)).toBeLessThanOrEqual(300 - 100)
+  })
+
+  it('sends the barcode module width from the template as the BARCODE command width parameter', () => {
+    const cpcl = buildCpclLabel({
+      name: 'Widget',
+      sku: 'SKU-001',
+      template: { ...DEFAULT_LABEL_TEMPLATE, barcodeModuleWidth: 4 },
+    })
+    expect(cpcl).toMatch(/BARCODE 128 4 1 /)
   })
 
   it('strips embedded line breaks so a rogue value cannot inject a CPCL command', () => {

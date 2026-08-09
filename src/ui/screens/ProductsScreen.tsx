@@ -1,12 +1,14 @@
 import { useId, useMemo, useState } from 'react'
 import { productsToCsv } from '../../domain/csv'
 import { searchProducts } from '../../domain/inventory'
+import type { Role } from '../../data/repository'
 import type { MovementType, Product } from '../../domain/types'
 import { ProductRow } from '../components/ProductRow'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
 
 export interface ProductsScreenProps {
   products: Product[]
+  role: Role
   onMove: (product: Product, type: MovementType) => void
   onEdit: (product: Product) => void
   onDelete: (product: Product) => void
@@ -16,6 +18,7 @@ export interface ProductsScreenProps {
 
 export function ProductsScreen({
   products,
+  role,
   onMove,
   onEdit,
   onDelete,
@@ -44,13 +47,15 @@ export function ProductsScreen({
           <button type="button" className="button button-primary" onClick={onCreate}>
             New product
           </button>
-          <button
-            type="button"
-            className="button"
-            onClick={() => downloadCsv(timestampedFilename('products'), productsToCsv(visible))}
-          >
-            Export products CSV
-          </button>
+          {role === 'manager' && (
+            <button
+              type="button"
+              className="button"
+              onClick={() => downloadCsv(timestampedFilename('products'), productsToCsv(visible))}
+            >
+              Export products CSV
+            </button>
+          )}
         </div>
       </div>
 
@@ -70,6 +75,7 @@ export function ProductsScreen({
             <ProductRow
               key={product.id}
               product={product}
+              role={role}
               onMove={onMove}
               onEdit={onEdit}
               onDelete={onDelete}

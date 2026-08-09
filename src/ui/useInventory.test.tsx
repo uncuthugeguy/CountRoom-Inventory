@@ -113,6 +113,7 @@ describe('useInventory', () => {
   it('turns a thrown backend error into a failed result instead of crashing the screen', async () => {
     const repo: InventoryRepository = {
       kind: 'supabase',
+      role: 'manager',
       listProducts: async () => [],
       listMovements: async () => [],
       createProduct: vi.fn(() => Promise.reject(new Error('network down'))),
@@ -123,6 +124,16 @@ describe('useInventory', () => {
       recordSale: vi.fn(),
       listReturns: async () => [],
       recordReturn: vi.fn(),
+      listTeam: async () => [],
+      inviteEmployee: vi.fn(),
+      removeTeamMember: vi.fn(),
+      getProfile: async () => ({ fullName: '', birthday: '', address: '', employeeNumber: '', username: '', updatedAt: 't' }),
+      updateProfile: vi.fn(),
+      listPendingProfileChanges: async () => [],
+      approveProfileChange: vi.fn(),
+      rejectProfileChange: vi.fn(),
+      getAccountSettings: async () => null,
+      setAccountSettings: vi.fn(),
     }
     const { result } = renderHook(() => useInventory(async () => repo))
     await waitFor(() => expect(result.current.status).toBe('ready'))

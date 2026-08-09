@@ -6,6 +6,10 @@ import type {
   MovementInput,
   Product,
   ProductDraft,
+  Profile,
+  ProfileChangeRequest,
+  ProfileDraft,
+  ProfileUpdateOutcome,
   ReplacementLine,
   Result,
   ReturnCase,
@@ -16,13 +20,16 @@ import type {
   SaleLine,
   StockMovement,
 } from '../domain/types'
+import { EMPTY_PROFILE_DRAFT } from '../domain/types'
 import { DEMO_PRODUCTS } from './demoSeed'
 import {
   DUPLICATE_BARCODE,
   DUPLICATE_SKU,
   EMPTY_SALE,
   NOT_FOUND,
+  TEAM_NOT_SUPPORTED,
   type InventoryRepository,
+  type TeamMember,
 } from './repository'
 
 export const STORAGE_KEY = 'stockflow.v1'
@@ -32,6 +39,7 @@ interface Snapshot {
   movements: StockMovement[]
   sales: Sale[]
   returns: ReturnCase[]
+  profile: Profile
 }
 
 export interface LocalRepositoryOptions {
@@ -40,7 +48,9 @@ export interface LocalRepositoryOptions {
   storage?: Storage
 }
 
-const empty = (): Snapshot => ({ products: [], movements: [], sales: [], returns: [] })
+const emptyProfile = (): Profile => ({ ...EMPTY_PROFILE_DRAFT, updatedAt: new Date().toISOString() })
+
+const empty = (): Snapshot => ({ products: [], movements: [], sales: [], returns: [], profile: emptyProfile() })
 
 function read(storage: Storage): Snapshot | null {
   const raw = storage.getItem(STORAGE_KEY)
@@ -48,10 +58,11 @@ function read(storage: Storage): Snapshot | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Snapshot>
     if (!Array.isArray(parsed.products) || !Array.isArray(parsed.movements)) return empty()
-    // Older snapshots predate sales and returns tracking entirely.
+    // Older snapshots predate sales, returns and profile tracking entirely.
     const sales = Array.isArray(parsed.sales) ? parsed.sales : []
     const returns = Array.isArray(parsed.returns) ? parsed.returns : []
-    return { products: parsed.products, movements: parsed.movements, sales, returns }
+    const profile = parsed.profile && typeof parsed.profile === 'object' ? { ...emptyProfile(), ...parsed.profile } : emptyProfile()
+    return { products: parsed.products, movements: parsed.movements, sales, returns, profile }
   } catch {
     // Corrupt or hand-edited storage: start clean rather than crash on boot.
     return empty()
@@ -75,7 +86,7 @@ export function createLocalRepository(
 
   let state =
     read(storage) ??
-    (seed ? { products: [...DEMO_PRODUCTS], movements: [], sales: [], returns: [] } : empty())
+    (seed ? { products: [...DEMO_PRODUCTS], movements: [], sales: [], returns: [], profile: emptyProfile() } : empty())
 
   const persist = () => storage.setItem(STORAGE_KEY, JSON.stringify(state))
   if (!storage.getItem(STORAGE_KEY)) persist()
@@ -91,6 +102,9 @@ export function createLocalRepository(
 
   return {
     kind: 'local',
+    // No second real login exists in offline demo mode — see Role's doc
+    // comment in repository.ts for why this is always 'manager' here.
+    role: 'manager',
 
     async listProducts() {
       return state.products.map((p) => ({ ...p }))
@@ -345,6 +359,55 @@ export function createLocalRepository(
       }
       persist()
       return { ok: true, value: returnCase }
+    },
+
+    async listTeam(): Promise<TeamMember[]> {
+      // One person, one role — nothing to list. See the `role` comment above.
+      return [{ id: 'you', email: 'you', role: 'manager', status: 'active', isYou: true }]
+    },
+
+    async inviteEmployee(): Promise<Result<TeamMember>> {
+      return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async removeTeamMember(): Promise<Result<true>> {
+      return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async getProfile(): Promise<Profile> {
+      return { ...state.profile }
+    },
+
+    async updateProfile(draft: ProfileDraft): Promise<Result<ProfileUpdateOutcome>> {
+      // Solo local mode is always 'manager' — an edit here always applies
+      // immediately, there's no one else around to approve it.
+      const profile: Profile = { ...draft, updatedAt: new Date().toISOString() }
+      state = { ...state, profile }
+      persist()
+      return { ok: true, value: { status: 'applied', profile } }
+    },
+
+    async listPendingProfileChanges(): Promise<ProfileChangeRequest[]> {
+      // Nothing is ever held pending locally — see updateProfile above.
+      return []
+    },
+
+    async approveProfileChange(): Promise<Result<true>> {
+      return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async rejectProfileChange(): Promise<Result<true>> {
+      return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async getAccountSettings() {
+      // No account to sync to in offline demo mode — settings already live
+      // in this browser's own storage, which is the whole of the model here.
+      return null
+    },
+
+    async setAccountSettings(): Promise<Result<true>> {
+      return { ok: false, error: TEAM_NOT_SUPPORTED }
     },
   }
 }

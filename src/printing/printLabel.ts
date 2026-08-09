@@ -2,6 +2,7 @@ import type { Settings } from '../data/settingsStorage'
 import type { Product, Result } from '../domain/types'
 import { toMonochromeBitmap, type CpclLogo } from './bitmap'
 import { buildCpclLabel } from './cpcl'
+import { DEFAULT_LABEL_TEMPLATE } from './labelTemplate'
 import { rasterizeLogo } from './logoRaster'
 import { sendToPrinter } from './printerClient'
 
@@ -15,10 +16,12 @@ export async function printProductLabel(
   product: Product,
   settings: Settings,
 ): Promise<Result<true>> {
+  const template = settings.labelTemplate ?? DEFAULT_LABEL_TEMPLATE
+
   let logo: CpclLogo | undefined
   if (settings.logoDataUrl) {
     try {
-      const raster = await rasterizeLogo(settings.logoDataUrl)
+      const raster = await rasterizeLogo(settings.logoDataUrl, template.logoWidthDots, template.logoHeightDots)
       logo = toMonochromeBitmap(raster)
     } catch {
       logo = undefined
@@ -30,6 +33,7 @@ export async function printProductLabel(
     sku: product.sku,
     variation: product.variation || undefined,
     logo,
+    template,
   })
 
   return sendToPrinter(cpcl)

@@ -35,6 +35,7 @@ function buildStaleSkuRepo(): InventoryRepository {
 
   return {
     kind: 'local',
+    role: 'manager',
     async listProducts() {
       return revealed ? [conflicting, ...saved] : []
     },
@@ -61,6 +62,24 @@ function buildStaleSkuRepo(): InventoryRepository {
       return []
     },
     recordReturn: vi.fn(),
+    async listTeam() {
+      return [{ id: 'you', email: 'You', role: 'manager' as const, status: 'active' as const, isYou: true }]
+    },
+    inviteEmployee: vi.fn(),
+    removeTeamMember: vi.fn(),
+    async getProfile() {
+      return { fullName: '', birthday: '', address: '', employeeNumber: '', username: '', updatedAt: 't' }
+    },
+    updateProfile: vi.fn(),
+    async listPendingProfileChanges() {
+      return []
+    },
+    approveProfileChange: vi.fn(),
+    rejectProfileChange: vi.fn(),
+    async getAccountSettings() {
+      return null
+    },
+    setAccountSettings: vi.fn(),
   }
 }
 

@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from 'react'
+import type { Role } from '../../data/repository'
 import { movementsToCsv, salesToCsv } from '../../domain/csv'
 import {
   breakdownByChannel,
@@ -21,6 +22,7 @@ export interface HistoryScreenProps {
   movements: StockMovement[]
   products: Product[]
   sales: Sale[]
+  role: Role
 }
 
 type Mode = 'movements' | 'sales'
@@ -129,8 +131,9 @@ function MovementsView({ movements, products }: { movements: StockMovement[]; pr
   )
 }
 
-function SalesView({ sales }: { sales: Sale[] }) {
+function SalesView({ sales, role }: { sales: Sale[]; role: Role }) {
   const [range, setRange] = useState<Range>('7d')
+  const isManager = role === 'manager'
 
   const inRange = useMemo(() => salesSince(sales, rangeStart(range)), [sales, range])
   const summary = useMemo(() => summariseSales(inRange), [inRange])
@@ -154,15 +157,17 @@ function SalesView({ sales }: { sales: Sale[] }) {
             </button>
           ))}
         </div>
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            className="button"
-            onClick={() => downloadCsv(timestampedFilename('sales'), salesToCsv(inRange))}
-          >
-            Export sales CSV
-          </button>
-        </div>
+        {isManager && (
+          <div className="toolbar-actions">
+            <button
+              type="button"
+              className="button"
+              onClick={() => downloadCsv(timestampedFilename('sales'), salesToCsv(inRange))}
+            >
+              Export sales CSV
+            </button>
+          </div>
+        )}
       </div>
 
       <section className="stats" aria-label="Profit and loss summary">
@@ -170,14 +175,18 @@ function SalesView({ sales }: { sales: Sale[] }) {
           <span className="stat-value">{summary.revenue.toFixed(2)}</span>
           <span className="stat-label">Revenue</span>
         </div>
-        <div className="stat" data-testid="pl-cost">
-          <span className="stat-value">{summary.cost.toFixed(2)}</span>
-          <span className="stat-label">Cost of goods</span>
-        </div>
-        <div className="stat" data-testid="pl-profit">
-          <span className="stat-value">{summary.profit.toFixed(2)}</span>
-          <span className="stat-label">Profit</span>
-        </div>
+        {isManager && (
+          <div className="stat" data-testid="pl-cost">
+            <span className="stat-value">{summary.cost.toFixed(2)}</span>
+            <span className="stat-label">Cost of goods</span>
+          </div>
+        )}
+        {isManager && (
+          <div className="stat" data-testid="pl-profit">
+            <span className="stat-value">{summary.profit.toFixed(2)}</span>
+            <span className="stat-label">Profit</span>
+          </div>
+        )}
         <div className="stat" data-testid="pl-count">
           <span className="stat-value">{formatNumber(summary.saleCount)}</span>
           <span className="stat-label">Sales ({formatNumber(summary.itemsSold)} items)</span>
@@ -196,7 +205,7 @@ function SalesView({ sales }: { sales: Sale[] }) {
                   <li key={row.key} className="breakdown-row">
                     <span>{row.key}</span>
                     <span className="mono">{row.revenue.toFixed(2)}</span>
-                    <span className="muted">profit {row.profit.toFixed(2)}</span>
+                    {isManager && <span className="muted">profit {row.profit.toFixed(2)}</span>}
                   </li>
                 ))}
               </ul>
@@ -208,7 +217,7 @@ function SalesView({ sales }: { sales: Sale[] }) {
                   <li key={row.key} className="breakdown-row">
                     <span>{PAYMENT_METHOD_LABELS[row.key as keyof typeof PAYMENT_METHOD_LABELS] ?? row.key}</span>
                     <span className="mono">{row.revenue.toFixed(2)}</span>
-                    <span className="muted">profit {row.profit.toFixed(2)}</span>
+                    {isManager && <span className="muted">profit {row.profit.toFixed(2)}</span>}
                   </li>
                 ))}
               </ul>
@@ -225,7 +234,8 @@ function SalesView({ sales }: { sales: Sale[] }) {
                   </span>
                   <span className="mono">{formatNumber(row.unitsSold)} sold</span>
                   <span className="muted">
-                    revenue {row.revenue.toFixed(2)} · profit {row.profit.toFixed(2)}
+                    revenue {row.revenue.toFixed(2)}
+                    {isManager && ` · profit ${row.profit.toFixed(2)}`}
                   </span>
                 </li>
               ))}
@@ -241,7 +251,7 @@ function SalesView({ sales }: { sales: Sale[] }) {
                 </div>
                 <div className="history-numbers">
                   <span className="mono">{sale.subtotal.toFixed(2)}</span>
-                  <span className="muted">profit {sale.profit.toFixed(2)}</span>
+                  {isManager && <span className="muted">profit {sale.profit.toFixed(2)}</span>}
                 </div>
                 <div className="history-meta">
                   <span className="muted">{formatDateTime(sale.createdAt)}</span>
@@ -258,7 +268,7 @@ function SalesView({ sales }: { sales: Sale[] }) {
   )
 }
 
-export function HistoryScreen({ movements, products, sales }: HistoryScreenProps) {
+export function HistoryScreen({ movements, products, sales, role }: HistoryScreenProps) {
   const [mode, setMode] = useState<Mode>('movements')
 
   return (
@@ -285,7 +295,7 @@ export function HistoryScreen({ movements, products, sales }: HistoryScreenProps
       {mode === 'movements' ? (
         <MovementsView movements={movements} products={products} />
       ) : (
-        <SalesView sales={sales} />
+        <SalesView sales={sales} role={role} />
       )}
     </div>
   )

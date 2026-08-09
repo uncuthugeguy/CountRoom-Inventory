@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { applyMovement } from '../domain/movements'
+import { MANAGER_ONLY, productEditNeedsManager } from '../domain/permissions'
 import { validateDraft } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
 import type {
@@ -7,6 +8,10 @@ import type {
   PaymentMethod,
   Product,
   ProductDraft,
+  Profile,
+  ProfileChangeRequest,
+  ProfileDraft,
+  ProfileUpdateOutcome,
   ReplacementLine,
   Result,
   ReturnAction,
@@ -19,13 +24,18 @@ import type {
   StockDisposition,
   StockMovement,
 } from '../domain/types'
+import { EMPTY_PROFILE_DRAFT } from '../domain/types'
+import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
 import { getSupabaseClient } from './supabaseClient'
 import {
   DUPLICATE_BARCODE,
   DUPLICATE_SKU,
   EMPTY_SALE,
   NOT_FOUND,
+  type AccountSettingsSync,
   type InventoryRepository,
+  type Role,
+  type TeamMember,
 } from './repository'
 
 interface ProductRow {
@@ -251,10 +261,19 @@ const uniqueViolationMessage = (error: {
 }
 
 /**
- * Supabase-backed repository. Rows are scoped to the signed-in user by RLS
- * (see supabase/schema.sql), so no user id is sent from the client.
+ * Supabase-backed repository. Rows are scoped to the signed-in account by
+ * RLS (see supabase/schema.sql) rather than a raw user id sent from the
+ * client — the account can now have more than one person on it.
+ *
+ * Reads for products/sales/returns go through *_view relations rather than
+ * the base tables: those views return `cost`/`profit`-shaped columns as
+ * `null` for anyone who isn't a manager (enforced server-side, so it can't
+ * be bypassed by calling the API directly). Every UI component that shows
+ * one of those figures must check `role` before rendering it rather than
+ * assuming the value's magnitude — a `null` here means "hidden from you",
+ * not "zero".
  */
-export function createSupabaseRepository(url: string, anonKey: string): InventoryRepository {
+export async function createSupabaseRepository(url: string, anonKey: string): Promise<InventoryRepository> {
   const db: SupabaseClient = getSupabaseClient(url, anonKey)
 
   const currentUserId = async (): Promise<string | null> => {
@@ -262,12 +281,24 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
     return data.user?.id ?? null
   }
 
+  // Read once at startup rather than on every call — a role change (an
+  // invite accepted, someone removed) takes effect on next sign-in, the
+  // same way a real permission change usually does.
+  const { data: roleData } = await db.rpc('current_role')
+  const role: Role = roleData === 'manager' ? 'manager' : 'employee'
+  // Needed to address the account_settings upsert below — RLS restricts
+  // reads/writes to this account already, but an upsert still has to name
+  // the row it's writing.
+  const { data: accountIdData } = await db.rpc('current_account_id')
+  const accountId = (accountIdData as string | null) ?? null
+
   return {
     kind: 'supabase',
+    role,
 
     async listProducts() {
       const { data, error } = await db
-        .from('products')
+        .from('products_view')
         .select('*')
         .order('name', { ascending: true })
       if (error) throw new Error(error.message)
@@ -307,9 +338,36 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
       const validated = validateDraft(draft)
       if (!validated.ok) return validated
 
+      const fullRow = toRow(validated.value)
+      let payload: Partial<typeof fullRow> = fullRow
+
+      if (role !== 'manager') {
+        // Fetch just enough of the real (unmasked) row to tell whether this
+        // edit is actually trying to change cost/price — an employee editing
+        // an unrelated field (location, quantity, …) must go through even
+        // though their own view of cost/price may be hidden.
+        const { data: existing, error: readError } = await db
+          .from('products')
+          .select('cost, price')
+          .eq('id', id)
+          .maybeSingle()
+        if (readError) return { ok: false, error: readError.message }
+        if (!existing) return { ok: false, error: NOT_FOUND }
+        if (productEditNeedsManager(validated.value, existing as { cost: number; price: number })) {
+          return { ok: false, error: MANAGER_ONLY.editCostOrPrice }
+        }
+        // Leave cost/price out of the update entirely rather than resending
+        // a possibly-masked value — the database trigger is the real
+        // enforcement; this just keeps an employee's own edit from
+        // accidentally overwriting cost/price with whatever their (hidden)
+        // local copy happened to hold.
+        const { cost: _cost, price: _price, ...rest } = fullRow
+        payload = rest
+      }
+
       const { data, error } = await db
         .from('products')
-        .update({ ...toRow(validated.value), updated_at: new Date().toISOString() })
+        .update({ ...payload, updated_at: new Date().toISOString() })
         .eq('id', id)
         .select()
         .maybeSingle()
@@ -322,12 +380,17 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
     },
 
     async deleteProduct(id): Promise<Result<true>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.deleteProduct }
       const { error } = await db.from('products').delete().eq('id', id)
       if (error) return { ok: false, error: error.message }
       return { ok: true, value: true }
     },
 
     async recordMovement(productId, input: MovementInput): Promise<Result<AppliedMovement>> {
+      if (input.type === 'adjust' && role !== 'manager') {
+        return { ok: false, error: MANAGER_ONLY.approveStocktake }
+      }
+
       const { data: existing, error: readError } = await db
         .from('products')
         .select('*')
@@ -395,7 +458,7 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
 
     async listSales() {
       const { data: saleRows, error } = await db
-        .from('sales')
+        .from('sales_view')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(500)
@@ -404,7 +467,7 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
       if (sales.length === 0) return []
 
       const { data: itemRows, error: itemsError } = await db
-        .from('sale_items')
+        .from('sale_items_view')
         .select('*')
         .in('sale_id', sales.map((s) => s.id))
       if (itemsError) throw new Error(itemsError.message)
@@ -435,9 +498,21 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
       })
       if (error) return { ok: false, error: error.message }
 
-      const saleRow = data as SaleRow
+      // checkout_sale() hands back the real, unmasked row (it reads/writes
+      // the base table directly) — re-read it through the view so an
+      // employee's own just-completed sale is just as cost/profit-hidden as
+      // every other sale in their list, rather than a one-time exception.
+      const rawSale = data as SaleRow
+      const { data: saleViewRow, error: saleViewError } = await db
+        .from('sales_view')
+        .select('*')
+        .eq('id', rawSale.id)
+        .single()
+      if (saleViewError) return { ok: false, error: saleViewError.message }
+      const saleRow = saleViewRow as SaleRow
+
       const { data: itemRows, error: itemsError } = await db
-        .from('sale_items')
+        .from('sale_items_view')
         .select('*')
         .eq('sale_id', saleRow.id)
       if (itemsError) return { ok: false, error: itemsError.message }
@@ -461,8 +536,8 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
       const returnIds = returns.map((r) => r.id)
       const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
         await Promise.all([
-          db.from('return_lines').select('*').in('return_id', returnIds),
-          db.from('replacement_lines').select('*').in('return_id', returnIds),
+          db.from('return_lines_view').select('*').in('return_id', returnIds),
+          db.from('replacement_lines_view').select('*').in('return_id', returnIds),
         ])
       if (linesError) throw new Error(linesError.message)
       if (replacementError) throw new Error(replacementError.message)
@@ -512,8 +587,8 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
       const returnRow = data as ReturnRow
       const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
         await Promise.all([
-          db.from('return_lines').select('*').eq('return_id', returnRow.id),
-          db.from('replacement_lines').select('*').eq('return_id', returnRow.id),
+          db.from('return_lines_view').select('*').eq('return_id', returnRow.id),
+          db.from('replacement_lines_view').select('*').eq('return_id', returnRow.id),
         ])
       if (linesError) return { ok: false, error: linesError.message }
       if (replacementError) return { ok: false, error: replacementError.message }
@@ -526,6 +601,170 @@ export function createSupabaseRepository(url: string, anonKey: string): Inventor
           (replacementRows as ReplacementLineRow[]).map(toReplacementLine),
         ),
       }
+    },
+
+    async listTeam(): Promise<TeamMember[]> {
+      const myId = await currentUserId()
+      const { data, error } = await db
+        .from('memberships')
+        .select('id, member_id, invited_email, role, status')
+        .order('created_at', { ascending: true })
+      if (error) throw new Error(error.message)
+
+      return (data as { id: string; member_id: string | null; invited_email: string | null; role: Role; status: 'active' | 'pending' | 'removed' }[])
+        .filter((row) => row.status !== 'removed')
+        .map((row) => ({
+          id: row.id,
+          email: row.member_id === myId ? 'You' : row.invited_email ?? '(unknown)',
+          role: row.role,
+          status: row.status as 'active' | 'pending',
+          isYou: row.member_id === myId,
+        }))
+    },
+
+    async inviteEmployee(email: string): Promise<Result<TeamMember>> {
+      const { data, error } = await db.rpc('invite_employee', { p_email: email })
+      if (error) return { ok: false, error: error.message }
+      const row = data as { id: string; invited_email: string | null; role: Role; status: 'active' | 'pending' }
+      return {
+        ok: true,
+        value: {
+          id: row.id,
+          email: row.invited_email ?? email,
+          role: row.role,
+          status: row.status,
+          isYou: false,
+        },
+      }
+    },
+
+    async getProfile(): Promise<Profile> {
+      const userId = await currentUserId()
+      if (!userId) return { ...EMPTY_PROFILE_DRAFT, updatedAt: new Date().toISOString() }
+
+      const { data, error } = await db
+        .from('profiles')
+        .select('full_name, birthday, address, employee_number, username, updated_at')
+        .eq('member_id', userId)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) return { ...EMPTY_PROFILE_DRAFT, updatedAt: new Date().toISOString() }
+
+      const row = data as {
+        full_name: string
+        birthday: string | null
+        address: string
+        employee_number: string
+        username: string
+        updated_at: string
+      }
+      return {
+        fullName: row.full_name,
+        birthday: row.birthday ?? '',
+        address: row.address,
+        employeeNumber: row.employee_number,
+        username: row.username,
+        updatedAt: row.updated_at,
+      }
+    },
+
+    async updateProfile(draft: ProfileDraft): Promise<Result<ProfileUpdateOutcome>> {
+      const { data, error } = await db.rpc('request_profile_update', {
+        p_full_name: draft.fullName,
+        p_birthday: draft.birthday || null,
+        p_address: draft.address,
+        p_employee_number: draft.employeeNumber,
+        p_username: draft.username,
+      })
+      if (error) return { ok: false, error: error.message }
+
+      const outcome = data as { status: 'applied' | 'pending'; profile?: Record<string, string> }
+      if (outcome.status === 'pending') {
+        return { ok: true, value: { status: 'pending' } }
+      }
+      const p = outcome.profile!
+      return {
+        ok: true,
+        value: {
+          status: 'applied',
+          profile: {
+            fullName: p.fullName,
+            birthday: p.birthday,
+            address: p.address,
+            employeeNumber: p.employeeNumber,
+            username: p.username,
+            updatedAt: p.updatedAt,
+          },
+        },
+      }
+    },
+
+    async listPendingProfileChanges(): Promise<ProfileChangeRequest[]> {
+      const { data, error } = await db.rpc('list_pending_profile_changes')
+      if (error) throw new Error(error.message)
+      return (data as { id: string; invited_email: string | null; proposed: ProfileDraft; requested_at: string }[]).map(
+        (row) => ({
+          id: row.id,
+          memberEmail: row.invited_email ?? '(unknown)',
+          proposed: row.proposed,
+          status: 'pending',
+          requestedAt: row.requested_at,
+        }),
+      )
+    },
+
+    async approveProfileChange(requestId: string): Promise<Result<true>> {
+      const { error } = await db.rpc('approve_profile_change', { p_request_id: requestId })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
+    },
+
+    async rejectProfileChange(requestId: string): Promise<Result<true>> {
+      const { error } = await db.rpc('reject_profile_change', { p_request_id: requestId })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
+    },
+
+    async removeTeamMember(membershipId: string): Promise<Result<true>> {
+      const { error } = await db.rpc('remove_team_member', { p_membership_id: membershipId })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
+    },
+
+    async getAccountSettings(): Promise<AccountSettingsSync | null> {
+      const { data, error } = await db
+        .from('account_settings')
+        .select('logo_data_url, label_template, sale_channels, label_presets')
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) return null
+
+      const row = data as {
+        logo_data_url: string | null
+        label_template: LabelTemplate | null
+        sale_channels: string[] | null
+        label_presets: LabelPreset[] | null
+      }
+      return {
+        ...(row.logo_data_url ? { logoDataUrl: row.logo_data_url } : {}),
+        ...(row.label_template ? { labelTemplate: row.label_template } : {}),
+        ...(row.sale_channels ? { saleChannels: row.sale_channels } : {}),
+        ...(row.label_presets ? { labelPresets: row.label_presets } : {}),
+      }
+    },
+
+    async setAccountSettings(patch: AccountSettingsSync): Promise<Result<true>> {
+      if (!accountId) return { ok: false, error: 'Sign in to sync settings.' }
+
+      const payload: Record<string, unknown> = { account_id: accountId, updated_at: new Date().toISOString() }
+      if (patch.logoDataUrl !== undefined) payload.logo_data_url = patch.logoDataUrl
+      if (patch.labelTemplate !== undefined) payload.label_template = patch.labelTemplate
+      if (patch.saleChannels !== undefined) payload.sale_channels = patch.saleChannels
+      if (patch.labelPresets !== undefined) payload.label_presets = patch.labelPresets
+
+      const { error } = await db.from('account_settings').upsert(payload, { onConflict: 'account_id' })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
     },
   }
 }

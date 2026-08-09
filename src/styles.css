@@ -56,6 +56,9 @@ h1, h2, h3, p { margin-top: 0; }
 .field input, .field select, .field textarea { width: 100%; min-height: 2.7rem; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: .65rem; color: #f4f8ff; background: #071523; }
 .field-grow { flex: 1 1 17rem; }
 .field-row { display: grid; grid-template-columns: 1fr; gap: .8rem; }
+.number-stepper { display: flex; align-items: stretch; gap: .4rem; }
+.number-stepper input { flex: 1 1 auto; min-width: 0; text-align: center; }
+.number-stepper .button { flex: 0 0 auto; width: 2.7rem; padding: 0; font-size: 1.25rem; }
 .toolbar-actions, .dialog-actions, .stock-actions, .row-admin, .camera-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; }
 .product-list, .plain-list { display: grid; gap: .65rem; padding: 0; margin: 0; list-style: none; }
 .product-row { display: grid; gap: .8rem; padding: .9rem; border: 1px solid var(--border); border-radius: .85rem; background: rgba(7,21,35,.65); }
@@ -114,6 +117,12 @@ h1, h2, h3, p { margin-top: 0; }
 .result-count { margin: 0; }
 .logo-preview { display: grid; place-items: center; padding: 1rem; margin-bottom: .8rem; border: 1px solid var(--border); border-radius: .8rem; background: #fff; }
 .logo-preview img { max-width: 220px; max-height: 140px; }
+.label-preview-wrap { display: grid; justify-items: start; gap: .5rem; margin-bottom: 1rem; }
+.label-preview-svg { border-radius: .4rem; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.label-canvas-svg { touch-action: none; max-width: 100%; height: auto; }
+.label-canvas-svg g[role="button"]:focus-visible rect { stroke: #39d3bb; stroke-width: 2; stroke-dasharray: none; }
+.label-canvas-dragging { cursor: grabbing; }
+.label-template-grid { grid-template-columns: 1fr; margin-bottom: .8rem; }
 .quick-adjust { display: flex; align-items: center; gap: .6rem; }
 .quick-adjust-count { min-width: 2ch; font-weight: 800; text-align: center; }
 .checkout-search-field { margin-top: .8rem; }
@@ -170,6 +179,7 @@ h1, h2, h3, p { margin-top: 0; }
   .app-header { padding-left: max(1rem, calc((100vw - 1000px)/2)); }
   .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .field-row { grid-template-columns: 1fr 1fr; }
+  .label-template-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .product-row { grid-template-columns: minmax(0, 1fr) auto minmax(220px, auto); align-items: center; }
   .product-actions { justify-items: end; }
   .history-row { grid-template-columns: minmax(0, 1fr) auto; }

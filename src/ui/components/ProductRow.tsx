@@ -1,17 +1,19 @@
 import { isLowStock } from '../../domain/inventory'
+import type { Role } from '../../data/repository'
 import type { MovementType, Product } from '../../domain/types'
 import { formatDateTime, formatNumber } from '../format'
 import { StockActions } from './StockActions'
 
 export interface ProductRowProps {
   product: Product
+  role: Role
   onMove: (product: Product, type: MovementType) => void
   onEdit: (product: Product) => void
   onDelete: (product: Product) => void
   onPrintLabel: (product: Product) => void
 }
 
-export function ProductRow({ product, onMove, onEdit, onDelete, onPrintLabel }: ProductRowProps) {
+export function ProductRow({ product, role, onMove, onEdit, onDelete, onPrintLabel }: ProductRowProps) {
   const low = isLowStock(product)
 
   return (
@@ -57,14 +59,16 @@ export function ProductRow({ product, onMove, onEdit, onDelete, onPrintLabel }: 
           >
             Edit
           </button>
-          <button
-            type="button"
-            className="button button-ghost"
-            aria-label={`Delete ${product.name}`}
-            onClick={() => onDelete(product)}
-          >
-            Delete
-          </button>
+          {role === 'manager' && (
+            <button
+              type="button"
+              className="button button-ghost"
+              aria-label={`Delete ${product.name}`}
+              onClick={() => onDelete(product)}
+            >
+              Delete
+            </button>
+          )}
         </div>
       </div>
     </li>

@@ -3,6 +3,7 @@ import { DEFAULT_PRINTER, sendToPrinter } from './printerClient'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('sendToPrinter', () => {
@@ -36,5 +37,26 @@ describe('sendToPrinter', () => {
 
     const result = await sendToPrinter('data')
     expect(result.ok === false && result.error).toBe('Failed to fetch')
+  })
+
+  it('gives up with a readable timeout message if the printer never responds, instead of hanging forever', async () => {
+    vi.useFakeTimers()
+    // A silently-unreachable printer: fetch's promise never settles on its
+    // own, only when the abort signal it was given fires — exactly what a
+    // dropped connection to an off/out-of-range printer looks like.
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resultPromise = sendToPrinter('data', { host: '10.0.0.9', port: 9100 })
+    await vi.advanceTimersByTimeAsync(8000)
+    const result = await resultPromise
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toMatch(/timed out/i)
   })
 })

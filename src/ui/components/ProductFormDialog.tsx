@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent } from 'react'
+import type { Role } from '../../data/repository'
 import { emptyDraft, knownVariations, nextSku, validateDraft } from '../../domain/products'
 import type { Product, ProductDraft, Result } from '../../domain/types'
 import { Dialog } from './Dialog'
@@ -10,6 +11,7 @@ export interface ProductFormDialogProps {
   barcode?: string
   /** The full catalogue, used to auto-generate the next SKU and to suggest variations. */
   products: Product[]
+  role: Role
   onClose: () => void
   /**
    * `autoSku` tells the caller this SKU was picked automatically rather than
@@ -29,8 +31,13 @@ const toDraft = (product: Product): ProductDraft => ({
   variation: product.variation,
   quantity: product.quantity,
   reorderLevel: product.reorderLevel,
-  cost: product.cost,
-  price: product.price,
+  // An employee's own copy of a product has cost/price hidden by the
+  // backend (see supabaseRepository.ts) — coerce that to a safe 0 rather
+  // than let a non-finite value fail client-side validation and block an
+  // otherwise-unrelated edit. The real value on the server is untouched:
+  // the repository excludes cost/price from an employee's update entirely.
+  cost: Number.isFinite(product.cost) ? product.cost : 0,
+  price: Number.isFinite(product.price) ? product.price : 0,
 })
 
 /** Keeps the field empty rather than snapping to 0 while the user retypes. */
@@ -40,6 +47,7 @@ export function ProductFormDialog({
   product,
   barcode,
   products,
+  role,
   onClose,
   onSubmit,
 }: ProductFormDialogProps) {
@@ -186,34 +194,43 @@ export function ProductFormDialog({
           </div>
         </div>
 
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor={field('cost')}>Cost</label>
-            <input
-              id={field('cost')}
-              type="number"
-              min={0}
-              step={0.01}
-              inputMode="decimal"
-              value={Number.isNaN(draft.cost) ? '' : draft.cost}
-              onChange={(e) => set('cost', toCount(e.target.value))}
-            />
-            <p className="hint">What this unit costs you — used to work out profit at checkout.</p>
+        {role === 'manager' ? (
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor={field('cost')}>Cost</label>
+              <input
+                id={field('cost')}
+                type="number"
+                min={0}
+                step={0.01}
+                inputMode="decimal"
+                value={Number.isNaN(draft.cost) ? '' : draft.cost}
+                onChange={(e) => set('cost', toCount(e.target.value))}
+              />
+              <p className="hint">What this unit costs you — used to work out profit at checkout.</p>
+            </div>
+            <div className="field">
+              <label htmlFor={field('price')}>Price</label>
+              <input
+                id={field('price')}
+                type="number"
+                min={0}
+                step={0.01}
+                inputMode="decimal"
+                value={Number.isNaN(draft.price) ? '' : draft.price}
+                onChange={(e) => set('price', toCount(e.target.value))}
+              />
+              <p className="hint">Default sale price — checkout lets you override it per sale.</p>
+            </div>
           </div>
+        ) : (
           <div className="field">
-            <label htmlFor={field('price')}>Price</label>
-            <input
-              id={field('price')}
-              type="number"
-              min={0}
-              step={0.01}
-              inputMode="decimal"
-              value={Number.isNaN(draft.price) ? '' : draft.price}
-              onChange={(e) => set('price', toCount(e.target.value))}
-            />
-            <p className="hint">Default sale price — checkout lets you override it per sale.</p>
+            <p className="hint">
+              Cost and price are set by a manager — everything else on this form is still yours to
+              edit.
+            </p>
           </div>
-        </div>
+        )}
 
         {error && (
           <p className="alert" role="alert">

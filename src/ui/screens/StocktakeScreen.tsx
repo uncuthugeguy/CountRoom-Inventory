@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent } from 'react'
+import type { Role } from '../../data/repository'
 import type { AppliedMovement } from '../../domain/movements'
 import { buildStocktakeLines, parseBarcodeDump, type StocktakeLine } from '../../domain/stocktake'
 import type { Product, Result } from '../../domain/types'
@@ -6,6 +7,7 @@ import { formatDateTime, formatNumber } from '../format'
 
 export interface StocktakeScreenProps {
   products: Product[]
+  role: Role
   /** Writes the counted quantity as an absolute stocktake adjustment. */
   onApprove: (product: Product, counted: number) => Promise<Result<AppliedMovement>>
   /** Opens the new-product dialog pre-filled with a scanned code that matched nothing. */
@@ -26,7 +28,7 @@ function differenceLabel(difference: number): string {
   return 'Matches'
 }
 
-export function StocktakeScreen({ products, onApprove, onCreateProduct }: StocktakeScreenProps) {
+export function StocktakeScreen({ products, role, onApprove, onCreateProduct }: StocktakeScreenProps) {
   const dumpId = useId()
 
   const [dump, setDump] = useState('')
@@ -132,6 +134,12 @@ export function StocktakeScreen({ products, onApprove, onCreateProduct }: Stockt
               matched · {formatNumber(mismatched)} don't match what's on hand ·{' '}
               {formatNumber(session.unmatched.length)} unrecognised.
             </p>
+            {role !== 'manager' && (
+              <p className="hint">
+                Flag anything that doesn't match for recount — a manager needs to approve the
+                actual adjustment.
+              </p>
+            )}
           </section>
 
           {session.lines.length === 0 ? (
@@ -172,7 +180,8 @@ export function StocktakeScreen({ products, onApprove, onCreateProduct }: Stockt
                           <button
                             type="button"
                             className="button button-primary"
-                            disabled={saving === line.barcode}
+                            disabled={saving === line.barcode || role !== 'manager'}
+                            title={role !== 'manager' ? 'Only a manager can approve a recount' : undefined}
                             onClick={() => approve(line)}
                           >
                             {saving === line.barcode ? 'Saving…' : 'Approve'}
