@@ -9,6 +9,7 @@ import {
   cartHasIssues,
   cartLineIssue,
   cartTotals,
+  checkOrderTotal,
   EMPTY_SALE_FEES_DRAFT,
   removeFromCart,
   resolveSaleFeesDraft,
@@ -252,6 +253,51 @@ describe('saleFeeTotal', () => {
     const base = { buyerProtectionFee: 0, buyerProtectionFeePaidBy: 'seller' as const, vat: 0, advertisingCost: 0 }
     expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'seller' })).toBe(5)
     expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'buyer' })).toBe(0)
+  })
+})
+
+describe('checkOrderTotal', () => {
+  it('returns null until an order total has been entered', () => {
+    expect(checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: null })).toBeNull()
+  })
+
+  it('matches when subtotal + buyer protection fee + delivery + VAT equals the order total', () => {
+    // A real eBay order: Subtotal 28.00 + Buyer Protection fee 1.82 +
+    // Postage 2.45 + VAT 0.49 = Order total 32.76. Compared with toBeCloseTo
+    // throughout — floating-point addition lands a few femtopence off exact.
+    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    expect(check?.itemised).toBeCloseTo(32.76)
+    expect(check?.entered).toBe(32.76)
+    expect(check?.difference).toBeCloseTo(0)
+    expect(check?.matches).toBe(true)
+  })
+
+  it('excludes advertising cost — it never appears on the buyer\'s own order total', () => {
+    // Same real order, but with an ad fee also entered — the order total
+    // check should still match, because that fee is the seller's own
+    // expense and was never part of what the buyer paid.
+    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    expect(check?.matches).toBe(true)
+  })
+
+  it('flags a short itemised total — likely a forgotten fee — with the exact gap', () => {
+    // Buyer protection fee never got entered: 28 + 0 + 2.45 + 0.49 = 30.94,
+    // but the order total copied from the receipt is 32.76.
+    const check = checkOrderTotal(28, { buyerProtectionFee: 0, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    expect(check?.itemised).toBeCloseTo(30.94)
+    expect(check?.entered).toBe(32.76)
+    expect(check?.difference).toBeCloseTo(1.82)
+    expect(check?.matches).toBe(false)
+  })
+
+  it('flags an itemised total that overshoots the entered order total', () => {
+    const check = checkOrderTotal(28, { buyerProtectionFee: 5, deliveryCost: 0, vat: 0, orderTotal: 30 })
+    expect(check).toEqual({ itemised: 33, entered: 30, difference: -3, matches: false })
+  })
+
+  it('treats a mismatch within a penny of rounding as a match', () => {
+    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.7601 })
+    expect(check?.matches).toBe(true)
   })
 })
 

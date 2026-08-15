@@ -165,6 +165,44 @@ export function saleFeeTotal(fees: {
   )
 }
 
+/**
+ * Cross-checks the fees you've entered against the order total copied from
+ * the marketplace's own receipt — catching a forgotten or mistyped fee
+ * before you complete (or save an edit to) a sale, the same way you'd add up
+ * a Vinted/eBay order summary by hand. Only meaningful once an order total
+ * has actually been entered, so this returns `null` until then.
+ *
+ * `advertisingCost` is deliberately excluded from the itemised total: it's a
+ * seller-side expense (a boosted-listing/ad fee) that never appears on the
+ * buyer's own receipt, confirmed against a real eBay "what your buyer paid"
+ * breakdown (subtotal + Buyer Protection fee + postage + VAT = order total,
+ * with the ad fee only showing up later, under "what you earned").
+ */
+export interface OrderTotalCheck {
+  /** subtotal + buyer protection fee + delivery cost + VAT — everything a
+   * marketplace's own order summary would show as making up the total. */
+  itemised: number
+  /** The order total as entered, straight from the resolved fees. */
+  entered: number
+  /** entered − itemised. Positive means the order total is higher than
+   * what's been itemised so far (likely a forgotten or undercounted fee);
+   * negative means more has been itemised than the order total accounts for. */
+  difference: number
+  /** Equal within a penny — allows for rounding, not exact float equality. */
+  matches: boolean
+}
+
+export function checkOrderTotal(
+  subtotal: number,
+  fees: { buyerProtectionFee: number; deliveryCost: number; vat: number; orderTotal: number | null },
+): OrderTotalCheck | null {
+  if (fees.orderTotal === null) return null
+  const itemised = subtotal + fees.buyerProtectionFee + fees.deliveryCost + fees.vat
+  const entered = fees.orderTotal
+  const difference = entered - itemised
+  return { itemised, entered, difference, matches: Math.abs(difference) < 0.005 }
+}
+
 export function buildSaleInput(
   cart: Cart,
   channel: string,

@@ -67,6 +67,11 @@ export function ScanCode({ value, format = 'qr', size = 240 }: ScanCodeProps) {
         preserveAspectRatio="none"
         role="img"
         aria-label="Scannable code"
+        // Not part of the symbology — a plain hook for anything that needs
+        // the raw value a scan of this code would produce (tests simulating
+        // a wedge scan of a printed receipt; a person hovering to
+        // sanity-check it).
+        data-scan-value={value}
         style={{ background: '#fff', borderRadius: 8, shapeRendering: 'crispEdges' }}
       >
         <g fill="#000">{cells}</g>
@@ -102,6 +107,7 @@ export function ScanCode({ value, format = 'qr', size = 240 }: ScanCodeProps) {
       height={size}
       role="img"
       aria-label="Scannable code"
+      data-scan-value={value}
       style={{ background: '#fff', borderRadius: 8, shapeRendering: 'crispEdges' }}
     >
       <g fill="#000">{cells}</g>

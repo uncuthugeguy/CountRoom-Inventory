@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
 import { movementsToCsv, salesToCsv } from '../../domain/csv'
@@ -10,6 +10,7 @@ import {
   buildEditCart,
   buildSaleInput,
   cartTotals,
+  checkOrderTotal,
   editCartHasIssues,
   editCartLineIssue,
   removeFromCart,
@@ -143,7 +144,9 @@ function SaleEditDialog({
 
   const totals = cartTotals(cart)
   const hasIssues = editCartHasIssues(cart, sale)
-  const netProfit = totals.profit - saleFeeTotal(resolveSaleFeesDraft(fees))
+  const resolvedFees = resolveSaleFeesDraft(fees)
+  const netProfit = totals.profit - saleFeeTotal(resolvedFees)
+  const orderTotalCheck = checkOrderTotal(totals.subtotal, resolvedFees)
 
   const matches = useMemo(() => {
     if (!query.trim()) return []
@@ -328,6 +331,20 @@ function SaleEditDialog({
       </div>
 
       <SaleFeesFields value={fees} onChange={setFees} />
+      {orderTotalCheck && (
+        <p
+          className={`order-total-check ${orderTotalCheck.matches ? '' : 'order-total-check-mismatch'}`}
+          data-testid="order-total-check"
+        >
+          {orderTotalCheck.matches
+            ? `Matches your order total (${orderTotalCheck.entered.toFixed(2)}).`
+            : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
+                orderTotalCheck.difference > 0
+                  ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
+                  : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than you've itemised.`
+              }`}
+        </p>
+      )}
 
       {error && (
         <p className="alert" role="alert">
@@ -393,6 +410,13 @@ export interface HistoryScreenProps {
   /** User-managed list of sale channels — see Settings. */
   channels: string[]
   onUpdateSale: (id: string, input: SaleInput) => Promise<Result<Sale>>
+  /** A sale looked up from a scanned receipt code (see App.tsx's
+   * handleScan) — pops its receipt straight open, regardless of the
+   * current date-range filter, the moment it arrives. `onRecalledSaleHandled`
+   * clears it back to null once consumed, so re-scanning the same code
+   * later still reopens it rather than being ignored as a no-op prop change. */
+  recalledSale?: Sale | null
+  onRecalledSaleHandled?: () => void
 }
 
 type Mode = 'movements' | 'sales'
@@ -525,17 +549,30 @@ function SalesView({
   role,
   channels,
   onUpdateSale,
+  recalledSale,
+  onRecalledSaleHandled,
 }: {
   sales: Sale[]
   products: Product[]
   role: Role
   channels: string[]
   onUpdateSale: (id: string, input: SaleInput) => Promise<Result<Sale>>
+  recalledSale?: Sale | null
+  onRecalledSaleHandled?: () => void
 }) {
   const [range, setRange] = useState<Range>('7d')
   const [viewingSale, setViewingSale] = useState<Sale | null>(null)
   const [editingSale, setEditingSale] = useState<Sale | null>(null)
   const isManager = role === 'manager'
+
+  // Opens straight to the scanned sale's receipt, bypassing the date-range
+  // filter below entirely — `viewingSale` doesn't depend on `inRange`, so a
+  // sale from months ago pops up just as readily as one from today.
+  useEffect(() => {
+    if (!recalledSale) return
+    setViewingSale(recalledSale)
+    onRecalledSaleHandled?.()
+  }, [recalledSale, onRecalledSaleHandled])
 
   const inRange = useMemo(() => salesSince(sales, rangeStart(range)), [sales, range])
   const summary = useMemo(() => summariseSales(inRange), [inRange])
@@ -703,8 +740,24 @@ function SalesView({
   )
 }
 
-export function HistoryScreen({ movements, products, sales, role, channels, onUpdateSale }: HistoryScreenProps) {
+export function HistoryScreen({
+  movements,
+  products,
+  sales,
+  role,
+  channels,
+  onUpdateSale,
+  recalledSale,
+  onRecalledSaleHandled,
+}: HistoryScreenProps) {
   const [mode, setMode] = useState<Mode>('movements')
+
+  // A scanned receipt code can arrive while this screen is showing stock
+  // movements, not sales — switch over so SalesView is actually mounted to
+  // receive `recalledSale` below.
+  useEffect(() => {
+    if (recalledSale) setMode('sales')
+  }, [recalledSale])
 
   return (
     <div className="screen">
@@ -730,7 +783,15 @@ export function HistoryScreen({ movements, products, sales, role, channels, onUp
       {mode === 'movements' ? (
         <MovementsView movements={movements} products={products} />
       ) : (
-        <SalesView sales={sales} products={products} role={role} channels={channels} onUpdateSale={onUpdateSale} />
+        <SalesView
+          sales={sales}
+          products={products}
+          role={role}
+          channels={channels}
+          onUpdateSale={onUpdateSale}
+          recalledSale={recalledSale}
+          onRecalledSaleHandled={onRecalledSaleHandled}
+        />
       )}
     </div>
   )

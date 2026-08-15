@@ -178,6 +178,8 @@ h1, h2, h3, p { margin-top: 0; }
 .cash-row { margin-top: .8rem; }
 .change-due { margin: 0; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); font-size: 1.2rem; font-weight: 800; }
 .change-due-short { color: var(--danger); border-color: #9f2940; }
+.order-total-check { margin: .4rem 0 0; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); font-size: .85rem; }
+.order-total-check-mismatch { color: var(--danger); border-color: #9f2940; font-weight: 700; }
 .product-added { font-size: .78rem; }
 .stocktake-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; padding: .8rem; border: 1px solid var(--border); border-radius: .8rem; background: rgba(7,21,35,.65); }
 .stocktake-numbers { display: flex; flex-wrap: wrap; gap: 1rem; }
@@ -189,14 +191,17 @@ h1, h2, h3, p { margin-top: 0; }
 .receipt-total { font-weight: 800; font-size: 1.05rem; }
 .receipt-view-actions { margin-top: .6rem; }
 .receipt, .stocktake-report { display: none; }
+.receipt-scan { margin-top: 1rem; text-align: center; }
+.receipt-scan p { margin: .35rem 0 0; font-size: .75rem; }
+/* .receipt/.stocktake-report are portalled straight onto <body> (see
+   PrintPortal.tsx) specifically so this block can hide the rest of the app
+   with a plain `display: none` — removing it from layout entirely — instead
+   of the old `visibility: hidden` trick, which kept the app's full height
+   and paginated the print job across several mostly-blank pages. */
 @media print {
-  body * { visibility: hidden; }
-  .receipt, .receipt *, .stocktake-report, .stocktake-report * { visibility: visible; }
+  .app { display: none; }
   .receipt, .stocktake-report {
     display: block;
-    position: absolute;
-    top: 0;
-    left: 0;
     width: 100%;
     padding: 1.5rem;
     color: #000;
@@ -208,6 +213,7 @@ h1, h2, h3, p { margin-top: 0; }
   .receipt-lines td { padding: .25rem 0; border-bottom: 1px dashed #999; }
   .receipt-amount { text-align: right; white-space: nowrap; }
   .receipt-total { font-weight: 800; font-size: 1.1rem; }
+  .receipt-scan svg { background: #fff; }
 }
 @media (min-width: 700px) {
   .app { padding-bottom: 0; padding-left: 92px; }

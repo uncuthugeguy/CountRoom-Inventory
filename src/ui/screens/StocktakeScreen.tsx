@@ -3,6 +3,7 @@ import type { Role } from '../../data/repository'
 import type { AppliedMovement } from '../../domain/movements'
 import { buildStocktakeLines, parseBarcodeDump, type StocktakeLine } from '../../domain/stocktake'
 import type { Product, Result } from '../../domain/types'
+import { PrintPortal } from '../components/PrintPortal'
 import { formatDateTime, formatNumber } from '../format'
 
 export interface StocktakeScreenProps {
@@ -223,42 +224,47 @@ export function StocktakeScreen({ products, role, onApprove, onCreateProduct }: 
             </section>
           )}
 
-          {/* Off-screen except when printing — @media print in styles.css hides
-              everything else on the page and shows only this block. */}
-          <div className="stocktake-report" aria-hidden="true">
-            <h2>Stocktake report</h2>
-            <p>{formatDateTime(session.importedAt)}</p>
-            <table className="receipt-lines">
-              <tbody>
-                {session.lines.map((line) => (
-                  <tr key={line.barcode}>
-                    <td>
-                      {line.product.name} ({line.product.sku})
-                    </td>
-                    <td className="receipt-amount">
-                      counted {line.counted} · system {line.systemQuantity} ·{' '}
-                      {differenceLabel(line.difference)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {session.unmatched.length > 0 && (
-              <>
-                <p className="receipt-total">Unrecognised barcodes</p>
-                <table className="receipt-lines">
-                  <tbody>
-                    {session.unmatched.map((code) => (
-                      <tr key={code.barcode}>
-                        <td>{code.barcode || '(blank)'}</td>
-                        <td className="receipt-amount">scanned {code.counted}×</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </>
-            )}
-          </div>
+          {/* Portalled onto <body> and off-screen except when printing —
+              @media print in styles.css hides the rest of the app and shows
+              only this block. See PrintPortal for why it's a portal, not
+              just nested here: nesting it caused printing to spit out
+              several blank pages alongside the real one. */}
+          <PrintPortal>
+            <div className="stocktake-report" aria-hidden="true">
+              <h2>Stocktake report</h2>
+              <p>{formatDateTime(session.importedAt)}</p>
+              <table className="receipt-lines">
+                <tbody>
+                  {session.lines.map((line) => (
+                    <tr key={line.barcode}>
+                      <td>
+                        {line.product.name} ({line.product.sku})
+                      </td>
+                      <td className="receipt-amount">
+                        counted {line.counted} · system {line.systemQuantity} ·{' '}
+                        {differenceLabel(line.difference)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {session.unmatched.length > 0 && (
+                <>
+                  <p className="receipt-total">Unrecognised barcodes</p>
+                  <table className="receipt-lines">
+                    <tbody>
+                      {session.unmatched.map((code) => (
+                        <tr key={code.barcode}>
+                          <td>{code.barcode || '(blank)'}</td>
+                          <td className="receipt-amount">scanned {code.counted}×</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          </PrintPortal>
         </>
       )}
     </div>

@@ -5,6 +5,7 @@ import {
   cartHasIssues,
   cartLineIssue,
   cartTotals,
+  checkOrderTotal,
   EMPTY_SALE_FEES_DRAFT,
   resolveSaleFeesDraft,
   saleFeeTotal,
@@ -21,7 +22,9 @@ import {
   type Sale,
 } from '../../domain/types'
 import { CameraScanner } from '../components/CameraScanner'
+import { PrintPortal } from '../components/PrintPortal'
 import { SaleFeesFields } from '../components/SaleFeesFields'
+import { ScanCode } from '../components/ScanCode'
 import type { StartCameraScan } from '../../scanner/cameraScanner'
 import { formatDateTime, formatNumber } from '../format'
 
@@ -85,6 +88,7 @@ export function CheckoutScreen({
   const resolvedFees = resolveSaleFeesDraft(fees)
   const feeTotal = saleFeeTotal(resolvedFees)
   const netProfit = totals.profit - feeTotal
+  const orderTotalCheck = checkOrderTotal(totals.subtotal, resolvedFees)
 
   const tendered = Number(cashReceived)
   const tenderedValid = cashReceived.trim() !== '' && Number.isFinite(tendered)
@@ -327,6 +331,20 @@ export function CheckoutScreen({
       {role === 'manager' && (
         <section className="panel">
           <SaleFeesFields value={fees} onChange={setFees} />
+          {orderTotalCheck && (
+            <p
+              className={`order-total-check ${orderTotalCheck.matches ? '' : 'order-total-check-mismatch'}`}
+              data-testid="order-total-check"
+            >
+              {orderTotalCheck.matches
+                ? `Matches your order total (${orderTotalCheck.entered.toFixed(2)}).`
+                : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
+                    orderTotalCheck.difference > 0
+                      ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
+                      : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than you've itemised.`
+                  }`}
+            </p>
+          )}
         </section>
       )}
 
@@ -452,34 +470,79 @@ export function CheckoutScreen({
         </section>
       )}
 
-      {/* Off-screen except when printing — @media print in styles.css hides
-          everything else on the page and shows only this block. */}
+      {/* Portalled onto <body> and off-screen except when printing —
+          @media print in styles.css hides the rest of the app and shows
+          only this block. See PrintPortal for why it's a portal, not just
+          nested here: nesting it caused printing to spit out several blank
+          pages alongside the real one. */}
       {lastSale && (
-        <div className="receipt" aria-hidden="true">
-          <h2>Receipt</h2>
-          <p>{formatDateTime(lastSale.createdAt)}</p>
-          <p>Sold via {lastSale.channel || 'Unspecified'}</p>
-          <table className="receipt-lines">
-            <tbody>
-              {lastSale.lines.map((line) => (
-                <tr key={line.id}>
-                  <td>
-                    {line.quantity} × {line.name} ({line.sku})
-                  </td>
-                  <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="receipt-total">Total: {lastSale.subtotal.toFixed(2)}</p>
-          <p>Payment: {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]}</p>
-          {lastSaleCash && (
-            <>
-              <p>Cash received: {lastSaleCash.tendered.toFixed(2)}</p>
-              <p>Change given: {lastSaleCash.change.toFixed(2)}</p>
-            </>
-          )}
-        </div>
+        <PrintPortal>
+          <div className="receipt" aria-hidden="true" data-testid="print-receipt">
+            <h2>Receipt</h2>
+            <p>{formatDateTime(lastSale.createdAt)}</p>
+            <p>Sold via {lastSale.channel || 'Unspecified'}</p>
+            <table className="receipt-lines">
+              <tbody>
+                {lastSale.lines.map((line) => (
+                  <tr key={line.id}>
+                    <td>
+                      {line.quantity} × {line.name} ({line.sku})
+                    </td>
+                    <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="receipt-total">Total: {lastSale.subtotal.toFixed(2)}</p>
+            <p>Payment: {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]}</p>
+            {lastSaleCash && (
+              <>
+                <p>Cash received: {lastSaleCash.tendered.toFixed(2)}</p>
+                <p>Change given: {lastSaleCash.change.toFixed(2)}</p>
+              </>
+            )}
+
+            {/* Manager-only, matching every other place this sale's fees
+                and profit show up on screen — an employee's printed copy
+                stays limited to what they can already see at checkout. */}
+            {role === 'manager' &&
+              ((lastSale.buyerProtectionFee ?? 0) > 0 ||
+                (lastSale.deliveryCost ?? 0) > 0 ||
+                (lastSale.vat ?? 0) > 0 ||
+                (lastSale.advertisingCost ?? 0) > 0 ||
+                (lastSale.orderTotal !== null && lastSale.orderTotal !== undefined)) && (
+                <>
+                  <p className="receipt-total">Fees</p>
+                  {(lastSale.buyerProtectionFee ?? 0) > 0 && (
+                    <p>
+                      Buyer protection: {lastSale.buyerProtectionFee!.toFixed(2)} (
+                      {PAID_BY_LABELS[lastSale.buyerProtectionFeePaidBy ?? 'seller']} paid)
+                    </p>
+                  )}
+                  {(lastSale.deliveryCost ?? 0) > 0 && (
+                    <p>
+                      Delivery: {lastSale.deliveryCost!.toFixed(2)} ({PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']}{' '}
+                      paid)
+                    </p>
+                  )}
+                  {(lastSale.vat ?? 0) > 0 && <p>VAT: {lastSale.vat!.toFixed(2)}</p>}
+                  {(lastSale.advertisingCost ?? 0) > 0 && <p>Advertising: {lastSale.advertisingCost!.toFixed(2)}</p>}
+                  {lastSale.orderTotal !== null && lastSale.orderTotal !== undefined && (
+                    <p>Order total: {lastSale.orderTotal.toFixed(2)}</p>
+                  )}
+                </>
+              )}
+            {role === 'manager' && <p className="receipt-total">Profit: {lastSale.profit.toFixed(2)}</p>}
+
+            {/* A scannable code for this exact sale — scan it back in on the
+                History screen later (with a camera or a wedge scanner) to
+                pull this sale straight back up, no searching required. */}
+            <div className="receipt-scan">
+              <ScanCode value={lastSale.id} format="qr" size={110} />
+              <p>Scan to find this sale in History</p>
+            </div>
+          </div>
+        </PrintPortal>
       )}
     </div>
   )

@@ -255,6 +255,11 @@ function AuthenticatedApp({
   const [lastSale, setLastSale] = useState<Sale | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [toast, setToast] = useState<string | null>(null)
+  // A sale looked up by scanning the QR code printed on its own receipt —
+  // see handleScan below and the "Scan to find this sale" code CheckoutScreen
+  // prints. Handed to HistoryScreen, which pops the sale's receipt open and
+  // clears this back to null once it has.
+  const [recalledSale, setRecalledSale] = useState<Sale | null>(null)
 
   useEffect(() => {
     if (!toast) return
@@ -272,13 +277,23 @@ function AuthenticatedApp({
   }
 
   // On every other screen a scan looks a product up; on Checkout it rings
-  // one up instead. Deliberately not memoised — useWedgeScanner re-reads
-  // this closure on every render via a ref, so it always sees the current
-  // tab without needing to re-subscribe its keydown listener.
+  // one up instead; on History it's a receipt's own code, recalling that
+  // exact sale. Deliberately not memoised — useWedgeScanner re-reads this
+  // closure on every render via a ref, so it always sees the current tab
+  // without needing to re-subscribe its keydown listener.
   const handleScan = (code: string) => {
     const trimmed = code.trim()
     if (tab === 'checkout') {
       addScanToCart(trimmed)
+      return
+    }
+    if (tab === 'history') {
+      const sale = inventory.sales.find((s) => s.id === trimmed)
+      if (!sale) {
+        setToast(`No sale matches "${trimmed}".`)
+        return
+      }
+      setRecalledSale(sale)
       return
     }
     setLastScan(trimmed)
@@ -537,6 +552,8 @@ function AuthenticatedApp({
             role={role}
             channels={settings.saleChannels}
             onUpdateSale={updateSale}
+            recalledSale={recalledSale}
+            onRecalledSaleHandled={() => setRecalledSale(null)}
           />
         )}
 

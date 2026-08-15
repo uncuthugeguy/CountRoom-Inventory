@@ -509,6 +509,49 @@ describe('editing a past sale', () => {
   })
 })
 
+describe('recalling a sale by scanning its receipt', () => {
+  it('pops the matching receipt open on History, regardless of the current tab or date filter', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    // The printed receipt's scannable code encodes the sale's own id —
+    // read it the same way a wedge scanner reading the printed code would
+    // hand it back, rather than reaching into repository internals.
+    const scanCode = screen.getByRole('img', { name: /scannable code/i, hidden: true })
+    const saleId = scanCode.getAttribute('data-scan-value')
+    expect(saleId).toBeTruthy()
+
+    // History defaults to Stock movements, not Sales — scanning should get
+    // there on its own rather than requiring a manual toggle first.
+    await go(user, /history/i)
+    expect(screen.queryByTestId('sale-row')).toBeNull()
+
+    wedgeScan(saleId!)
+
+    const receipt = await screen.findByRole('dialog')
+    expect(receipt).toHaveTextContent('eBay')
+    expect(receipt).toHaveTextContent('0.05')
+  })
+
+  it('tells you when a scanned code matches no sale', async () => {
+    const { user } = await renderApp()
+    await go(user, /history/i)
+
+    wedgeScan('not-a-real-sale-id')
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/no sale matches "not-a-real-sale-id"/i)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
 describe('stocktake', () => {
   it('imports a pasted barcode dump, tallies counts and shows the difference against system stock', async () => {
     const { user } = await renderApp()
@@ -750,6 +793,25 @@ describe('checkout', () => {
 
     // The marketplace fees reset for the next sale rather than carrying over.
     expect(screen.getByLabelText('Buyer protection fee')).toHaveValue(null)
+
+    // The printed receipt (portalled off-screen, only shown by @media print)
+    // carries the same fee breakdown as the on-screen "Last sale" panel —
+    // it used to only show the line items and total, leaving VAT and every
+    // other fee off the printed copy entirely.
+    const printReceipt = screen.getByTestId('print-receipt')
+    expect(printReceipt).toHaveTextContent('Buyer protection: 1.00 (Me paid)')
+    expect(printReceipt).toHaveTextContent('Delivery: 2.00 (Buyer paid)')
+    expect(printReceipt).toHaveTextContent('VAT: 0.50')
+    expect(printReceipt).toHaveTextContent('Advertising: 0.25')
+    expect(printReceipt).toHaveTextContent('Profit: -1.71')
+    // And a scannable code for finding this exact sale again later.
+    expect(within(printReceipt).getByRole('img', { name: /scannable code/i, hidden: true })).toBeInTheDocument()
+
+    // Portalled straight onto <body>, not nested inside .app — this is what
+    // lets @media print hide the whole app with `display: none` instead of
+    // the old visibility trick that printed several blank pages.
+    expect(printReceipt.closest('.app')).toBeNull()
+    expect(printReceipt.parentElement).toBe(document.body)
   })
 
   it('excludes the buyer protection fee from profit when the buyer paid it', async () => {
@@ -775,6 +837,32 @@ describe('checkout', () => {
     const lastSale = await screen.findByTestId('last-sale')
     expect(lastSale).toHaveTextContent('profit 0.04')
     expect(screen.getByTestId('last-sale-fees')).toHaveTextContent('Buyer protection 1.00 (Buyer paid)')
+  })
+
+  it('checks the itemised fees against an entered order total, flagging a mismatch with the exact gap', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: cost 0.01, price 0.05 → subtotal 0.05 for one.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+
+    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
+    await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
+
+    // Itemised: 0.05 + 1 + 2 + 0.5 = 3.55 — enter that as the order total.
+    await user.type(screen.getByLabelText(/order total/i), '3.55')
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (3.55).')
+
+    // Now change it to something that doesn't add up, as if a fee had been
+    // forgotten — the gap should be called out exactly.
+    await user.clear(screen.getByLabelText(/order total/i))
+    await user.type(screen.getByLabelText(/order total/i), '5')
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent(
+      "You've itemised 3.55, but entered an order total of 5.00 — you're 1.45 short. Check you haven't missed a fee.",
+    )
   })
 
   it('routes a wedge scan to the cart instead of the scan screen while on checkout', async () => {
