@@ -414,6 +414,7 @@ alter table public.sales add column if not exists created_by uuid references aut
 -- have none of these), hence the zero/'seller'/null defaults rather than a
 -- NOT NULL-with-no-default that would break existing rows.
 alter table public.sales add column if not exists buyer_protection_fee double precision not null default 0 check (buyer_protection_fee >= 0);
+alter table public.sales add column if not exists buyer_protection_fee_paid_by text not null default 'seller' check (buyer_protection_fee_paid_by in ('seller', 'buyer'));
 alter table public.sales add column if not exists delivery_cost double precision not null default 0 check (delivery_cost >= 0);
 alter table public.sales add column if not exists delivery_paid_by text not null default 'seller' check (delivery_paid_by in ('seller', 'buyer'));
 alter table public.sales add column if not exists vat double precision not null default 0 check (vat >= 0);
@@ -547,6 +548,7 @@ select
   -- (they reveal margin and ad spend), so they're masked from a
   -- non-manager the same way.
   case when public.current_role() = 'manager' then buyer_protection_fee end as buyer_protection_fee,
+  case when public.current_role() = 'manager' then buyer_protection_fee_paid_by end as buyer_protection_fee_paid_by,
   case when public.current_role() = 'manager' then delivery_cost end as delivery_cost,
   case when public.current_role() = 'manager' then delivery_paid_by end as delivery_paid_by,
   case when public.current_role() = 'manager' then vat end as vat,
@@ -587,6 +589,7 @@ declare
   v_total_cost double precision := 0;
   v_profit double precision := 0;
   v_buyer_protection_fee double precision := coalesce((payload->>'buyerProtectionFee')::double precision, 0);
+  v_buyer_protection_fee_paid_by text := coalesce(payload->>'buyerProtectionFeePaidBy', 'seller');
   v_delivery_cost double precision := coalesce((payload->>'deliveryCost')::double precision, 0);
   v_delivery_paid_by text := coalesce(payload->>'deliveryPaidBy', 'seller');
   v_vat double precision := coalesce((payload->>'vat')::double precision, 0);
@@ -657,13 +660,14 @@ begin
   -- Net of the marketplace fees, not just item price minus item cost —
   -- delivery only comes off profit when the seller (not the buyer) paid it.
   v_profit := v_profit - (
-    v_buyer_protection_fee + v_vat + v_advertising_cost +
+    v_vat + v_advertising_cost +
+    case when v_buyer_protection_fee_paid_by = 'seller' then v_buyer_protection_fee else 0 end +
     case when v_delivery_paid_by = 'seller' then v_delivery_cost else 0 end
   );
 
   insert into public.sales (
     id, user_id, channel, payment_method, subtotal, total_cost, profit,
-    buyer_protection_fee, delivery_cost, delivery_paid_by, vat, advertising_cost, order_total
+    buyer_protection_fee, buyer_protection_fee_paid_by, delivery_cost, delivery_paid_by, vat, advertising_cost, order_total
   )
   values (
     v_sale_id,
@@ -674,6 +678,7 @@ begin
     v_total_cost,
     v_profit,
     v_buyer_protection_fee,
+    v_buyer_protection_fee_paid_by,
     v_delivery_cost,
     v_delivery_paid_by,
     v_vat,
@@ -721,6 +726,7 @@ declare
   v_total_cost double precision := 0;
   v_profit double precision := 0;
   v_buyer_protection_fee double precision := coalesce((payload->>'buyerProtectionFee')::double precision, 0);
+  v_buyer_protection_fee_paid_by text := coalesce(payload->>'buyerProtectionFeePaidBy', 'seller');
   v_delivery_cost double precision := coalesce((payload->>'deliveryCost')::double precision, 0);
   v_delivery_paid_by text := coalesce(payload->>'deliveryPaidBy', 'seller');
   v_vat double precision := coalesce((payload->>'vat')::double precision, 0);
@@ -837,7 +843,8 @@ begin
   -- Net of the marketplace fees, exactly like checkout_sale() — delivery
   -- only comes off profit when the seller (not the buyer) paid it.
   v_profit := v_profit - (
-    v_buyer_protection_fee + v_vat + v_advertising_cost +
+    v_vat + v_advertising_cost +
+    case when v_buyer_protection_fee_paid_by = 'seller' then v_buyer_protection_fee else 0 end +
     case when v_delivery_paid_by = 'seller' then v_delivery_cost else 0 end
   );
 
@@ -849,6 +856,7 @@ begin
       total_cost = v_total_cost,
       profit = v_profit,
       buyer_protection_fee = v_buyer_protection_fee,
+      buyer_protection_fee_paid_by = v_buyer_protection_fee_paid_by,
       delivery_cost = v_delivery_cost,
       delivery_paid_by = v_delivery_paid_by,
       vat = v_vat,

@@ -1,6 +1,6 @@
 import { isLowStock } from './inventory'
 import { returnImpact } from './returns'
-import { DELIVERY_PAID_BY_LABELS, PAYMENT_METHOD_LABELS, RETURN_ACTION_LABELS } from './types'
+import { PAID_BY_LABELS, PAYMENT_METHOD_LABELS, RETURN_ACTION_LABELS } from './types'
 import type { Product, ReturnCase, Sale, StockMovement } from './types'
 
 const NEEDS_QUOTING = /[",\r\n]/
@@ -85,8 +85,9 @@ export function salesToCsv(sales: Sale[]): string {
     { label: 'Subtotal', value: (s) => s.subtotal.toFixed(2) },
     { label: 'Cost', value: (s) => s.totalCost.toFixed(2) },
     { label: 'Buyer Protection Fee', value: (s) => (s.buyerProtectionFee ?? 0).toFixed(2) },
+    { label: 'Buyer Protection Fee Paid By', value: (s) => PAID_BY_LABELS[s.buyerProtectionFeePaidBy ?? 'seller'] },
     { label: 'Delivery Cost', value: (s) => (s.deliveryCost ?? 0).toFixed(2) },
-    { label: 'Delivery Paid By', value: (s) => DELIVERY_PAID_BY_LABELS[s.deliveryPaidBy ?? 'seller'] },
+    { label: 'Delivery Paid By', value: (s) => PAID_BY_LABELS[s.deliveryPaidBy ?? 'seller'] },
     { label: 'VAT', value: (s) => (s.vat ?? 0).toFixed(2) },
     { label: 'Advertising Cost', value: (s) => (s.advertisingCost ?? 0).toFixed(2) },
     { label: 'Order Total', value: (s) => (s.orderTotal === null || s.orderTotal === undefined ? '' : s.orderTotal.toFixed(2)) },

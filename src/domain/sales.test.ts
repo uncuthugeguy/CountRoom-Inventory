@@ -134,6 +134,7 @@ describe('buildSaleInput', () => {
     const cart = addToCart([], bolt)
     const feesDraft: SaleFeesDraft = {
       buyerProtectionFee: '1.50',
+      buyerProtectionFeePaidBy: 'buyer',
       deliveryCost: '3',
       deliveryPaidBy: 'buyer',
       vat: '0.75',
@@ -145,6 +146,7 @@ describe('buildSaleInput', () => {
       paymentMethod: 'card',
       lines: [{ productId: bolt.id, quantity: 1, unitPrice: 5 }],
       buyerProtectionFee: 1.5,
+      buyerProtectionFeePaidBy: 'buyer',
       deliveryCost: 3,
       deliveryPaidBy: 'buyer',
       vat: 0.75,
@@ -158,6 +160,7 @@ describe('resolveSaleFeesDraft', () => {
   it('reads a blank field as 0 (or, for order total, as not-entered)', () => {
     expect(resolveSaleFeesDraft(EMPTY_SALE_FEES_DRAFT)).toEqual({
       buyerProtectionFee: 0,
+      buyerProtectionFeePaidBy: 'seller',
       deliveryCost: 0,
       deliveryPaidBy: 'seller',
       vat: 0,
@@ -170,6 +173,7 @@ describe('resolveSaleFeesDraft', () => {
     expect(
       resolveSaleFeesDraft({
         buyerProtectionFee: '1.20',
+        buyerProtectionFeePaidBy: 'buyer',
         deliveryCost: '4',
         deliveryPaidBy: 'buyer',
         vat: '0.5',
@@ -178,6 +182,7 @@ describe('resolveSaleFeesDraft', () => {
       }),
     ).toEqual({
       buyerProtectionFee: 1.2,
+      buyerProtectionFeePaidBy: 'buyer',
       deliveryCost: 4,
       deliveryPaidBy: 'buyer',
       vat: 0.5,
@@ -196,6 +201,7 @@ describe('saleFeesDraftFromSale', () => {
     expect(
       saleFeesDraftFromSale({
         buyerProtectionFee: 0,
+        buyerProtectionFeePaidBy: 'buyer',
         deliveryCost: 2.5,
         deliveryPaidBy: 'buyer',
         vat: 0,
@@ -204,6 +210,7 @@ describe('saleFeesDraftFromSale', () => {
       }),
     ).toEqual({
       buyerProtectionFee: '',
+      buyerProtectionFeePaidBy: 'buyer',
       deliveryCost: '2.5',
       deliveryPaidBy: 'buyer',
       vat: '',
@@ -222,14 +229,27 @@ describe('saleFeesDraftFromSale', () => {
 })
 
 describe('saleFeeTotal', () => {
-  it('sums buyer protection fee, VAT and advertising cost unconditionally', () => {
+  it('sums VAT and advertising cost unconditionally', () => {
     expect(
-      saleFeeTotal({ buyerProtectionFee: 1, deliveryCost: 0, deliveryPaidBy: 'seller', vat: 2, advertisingCost: 3 }),
-    ).toBe(6)
+      saleFeeTotal({
+        buyerProtectionFee: 0,
+        buyerProtectionFeePaidBy: 'buyer',
+        deliveryCost: 0,
+        deliveryPaidBy: 'seller',
+        vat: 2,
+        advertisingCost: 3,
+      }),
+    ).toBe(5)
+  })
+
+  it('adds the buyer protection fee only when the seller paid for it', () => {
+    const base = { deliveryCost: 0, deliveryPaidBy: 'seller' as const, vat: 0, advertisingCost: 0 }
+    expect(saleFeeTotal({ ...base, buyerProtectionFee: 4, buyerProtectionFeePaidBy: 'seller' })).toBe(4)
+    expect(saleFeeTotal({ ...base, buyerProtectionFee: 4, buyerProtectionFeePaidBy: 'buyer' })).toBe(0)
   })
 
   it('adds delivery cost only when the seller paid for it', () => {
-    const base = { buyerProtectionFee: 0, vat: 0, advertisingCost: 0 }
+    const base = { buyerProtectionFee: 0, buyerProtectionFeePaidBy: 'seller' as const, vat: 0, advertisingCost: 0 }
     expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'seller' })).toBe(5)
     expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'buyer' })).toBe(0)
   })

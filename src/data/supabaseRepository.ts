@@ -4,8 +4,8 @@ import { MANAGER_ONLY, isManager, productEditNeedsManager } from '../domain/perm
 import { validateDraft } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
 import type {
-  DeliveryPaidBy,
   MovementInput,
+  PaidBy,
   PaymentMethod,
   Product,
   ProductDraft,
@@ -83,8 +83,9 @@ interface SaleRow {
   // Masked to null for a non-manager by sales_view, the same way total_cost
   // and profit are — see the view's definition in supabase/schema.sql.
   buyer_protection_fee?: number | null
+  buyer_protection_fee_paid_by?: PaidBy | null
   delivery_cost?: number | null
-  delivery_paid_by?: DeliveryPaidBy | null
+  delivery_paid_by?: PaidBy | null
   vat?: number | null
   advertising_cost?: number | null
   order_total?: number | null
@@ -191,6 +192,7 @@ const toSale = (row: SaleRow, lines: SaleLine[]): Sale => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at ?? undefined,
   buyerProtectionFee: row.buyer_protection_fee ?? undefined,
+  buyerProtectionFeePaidBy: row.buyer_protection_fee_paid_by ?? undefined,
   deliveryCost: row.delivery_cost ?? undefined,
   deliveryPaidBy: row.delivery_paid_by ?? undefined,
   vat: row.vat ?? undefined,
@@ -515,6 +517,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
           paymentMethod: input.paymentMethod,
           lines: input.lines,
           buyerProtectionFee: input.buyerProtectionFee ?? 0,
+          buyerProtectionFeePaidBy: input.buyerProtectionFeePaidBy ?? 'seller',
           deliveryCost: input.deliveryCost ?? 0,
           deliveryPaidBy: input.deliveryPaidBy ?? 'seller',
           vat: input.vat ?? 0,
@@ -564,6 +567,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
           paymentMethod: input.paymentMethod,
           lines: input.lines,
           buyerProtectionFee: input.buyerProtectionFee ?? 0,
+          buyerProtectionFeePaidBy: input.buyerProtectionFeePaidBy ?? 'seller',
           deliveryCost: input.deliveryCost ?? 0,
           deliveryPaidBy: input.deliveryPaidBy ?? 'seller',
           vat: input.vat ?? 0,

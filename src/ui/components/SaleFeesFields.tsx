@@ -1,8 +1,8 @@
 import { useId } from 'react'
 import type { SaleFeesDraft } from '../../domain/sales'
-import { DELIVERY_PAID_BY_LABELS, type DeliveryPaidBy } from '../../domain/types'
+import { PAID_BY_LABELS, type PaidBy } from '../../domain/types'
 
-const DELIVERY_PAID_BY_OPTIONS: DeliveryPaidBy[] = ['seller', 'buyer']
+const PAID_BY_OPTIONS: PaidBy[] = ['seller', 'buyer']
 
 export interface SaleFeesFieldsProps {
   value: SaleFeesDraft
@@ -11,11 +11,11 @@ export interface SaleFeesFieldsProps {
 
 /**
  * The order-level marketplace fees a checkout or a sale edit can carry on
- * top of the item price — a Vinted/eBay-style "Buyer Protection" add-on,
- * delivery (which may have been paid by either side), VAT and ad spend,
- * plus the buyer's own order total for reconciliation. Shared between
- * `CheckoutScreen` and `HistoryScreen`'s sale-edit dialog so both stay in
- * sync as this list of fees evolves.
+ * top of the item price — a Vinted/eBay-style "Buyer Protection" add-on
+ * (which may have been paid by either side), delivery (likewise), VAT and
+ * ad spend, plus the buyer's own order total for reconciliation. Shared
+ * between `CheckoutScreen` and `HistoryScreen`'s sale-edit dialog so both
+ * stay in sync as this list of fees evolves.
  *
  * Every field is optional — a blank amount is treated as 0, not an error —
  * so a plain cash or walk-in sale with none of these can just skip the
@@ -31,8 +31,8 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
       <h3>Marketplace fees</h3>
       <p className="muted">
         Optional — only relevant for a sale through a marketplace that charges these on top of the item price (e.g.
-        Vinted's Buyer Protection fee). Every amount here comes off profit, except delivery when the buyer paid for
-        it themselves.
+        Vinted's Buyer Protection fee). Every amount here comes off profit, except the buyer protection fee or
+        delivery when the buyer paid for it themselves.
       </p>
 
       <div className="field-row">
@@ -50,17 +50,21 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
           />
         </div>
         <div className="field">
-          <label htmlFor={`${idPrefix}-vat`}>VAT</label>
-          <input
-            id={`${idPrefix}-vat`}
-            type="number"
-            min={0}
-            step={0.01}
-            inputMode="decimal"
-            value={value.vat}
-            placeholder="0.00"
-            onChange={(event) => set('vat', event.target.value)}
-          />
+          <span>Who paid the buyer protection fee?</span>
+          <div className="channel-picker">
+            {PAID_BY_OPTIONS.map((who) => (
+              <button
+                key={who}
+                type="button"
+                className={`button chip-button ${value.buyerProtectionFeePaidBy === who ? 'chip-button-active' : ''}`}
+                aria-pressed={value.buyerProtectionFeePaidBy === who}
+                aria-label={`${PAID_BY_LABELS[who]} paid the buyer protection fee`}
+                onClick={() => set('buyerProtectionFeePaidBy', who)}
+              >
+                {PAID_BY_LABELS[who]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -81,15 +85,16 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
         <div className="field">
           <span>Who paid for delivery?</span>
           <div className="channel-picker">
-            {DELIVERY_PAID_BY_OPTIONS.map((who) => (
+            {PAID_BY_OPTIONS.map((who) => (
               <button
                 key={who}
                 type="button"
                 className={`button chip-button ${value.deliveryPaidBy === who ? 'chip-button-active' : ''}`}
                 aria-pressed={value.deliveryPaidBy === who}
+                aria-label={`${PAID_BY_LABELS[who]} paid for delivery`}
                 onClick={() => set('deliveryPaidBy', who)}
               >
-                {DELIVERY_PAID_BY_LABELS[who]}
+                {PAID_BY_LABELS[who]}
               </button>
             ))}
           </div>
@@ -97,6 +102,19 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
       </div>
 
       <div className="field-row">
+        <div className="field">
+          <label htmlFor={`${idPrefix}-vat`}>VAT</label>
+          <input
+            id={`${idPrefix}-vat`}
+            type="number"
+            min={0}
+            step={0.01}
+            inputMode="decimal"
+            value={value.vat}
+            placeholder="0.00"
+            onChange={(event) => set('vat', event.target.value)}
+          />
+        </div>
         <div className="field">
           <label htmlFor={`${idPrefix}-advertising`}>Advertising cost</label>
           <input
@@ -110,6 +128,9 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
             onChange={(event) => set('advertisingCost', event.target.value)}
           />
         </div>
+      </div>
+
+      <div className="field-row">
         <div className="field">
           <label htmlFor={`${idPrefix}-order-total`}>Order total (what the buyer paid)</label>
           <input

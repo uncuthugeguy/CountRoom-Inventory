@@ -73,14 +73,17 @@ export interface SaleLineInput {
   unitPrice: number
 }
 
-/** Who actually paid for delivery — a Vinted/eBay-style listing can go
- * either way (buyer pays shipping on top, or the seller offers "free"
- * delivery and eats the cost). Only 'seller'-paid delivery counts as an
- * expense against profit; buyer-paid delivery passes straight through and
- * never touches what the seller keeps. */
-export type DeliveryPaidBy = 'seller' | 'buyer'
+/** Who actually paid a given fee — a Vinted/eBay-style listing can go either
+ * way for both delivery and the platform's own "Buyer Protection"-style fee
+ * (the seller can absorb either to make a listing look cheaper, or pass it
+ * straight on to the buyer). Only a 'seller'-paid fee counts as an expense
+ * against profit; a 'buyer'-paid one passes straight through and never
+ * touches what the seller keeps. Shared by `deliveryPaidBy` and
+ * `buyerProtectionFeePaidBy` below since the choice means the same thing
+ * either way. */
+export type PaidBy = 'seller' | 'buyer'
 
-export const DELIVERY_PAID_BY_LABELS: Record<DeliveryPaidBy, string> = {
+export const PAID_BY_LABELS: Record<PaidBy, string> = {
   seller: 'Me',
   buyer: 'Buyer',
 }
@@ -98,11 +101,15 @@ export interface SaleFeesFields {
    * platforms/sellers it's deducted from the payout rather than being
    * purely buyer-side — see the checkout screen's own note on this. */
   buyerProtectionFee?: number
+  /** Who actually paid the buyer protection fee — same seller/buyer choice
+   * as `deliveryPaidBy`, and nets against profit the same way. Defaults to
+   * 'seller'. */
+  buyerProtectionFeePaidBy?: PaidBy
   deliveryCost?: number
   /** Who actually paid for delivery — determines whether `deliveryCost`
    * reduces profit (seller-paid) or is cost-neutral to the seller (buyer
    * paid it themselves, on top of the item price). Defaults to 'seller'. */
-  deliveryPaidBy?: DeliveryPaidBy
+  deliveryPaidBy?: PaidBy
   /** VAT owed on this sale — reduces what you actually keep. */
   vat?: number
   /** What you spent promoting this specific listing (a boosted/promoted

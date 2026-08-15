@@ -143,9 +143,15 @@ describe('employee role', () => {
     await go(user, /checkout/i)
 
     expect(screen.getByRole('heading', { name: /marketplace fees/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/buyer protection fee/i)).toBeInTheDocument()
+    // Exact match — the paid-by toggle buttons below also have "buyer
+    // protection fee" in their accessible name via aria-label.
+    expect(screen.getByLabelText('Buyer protection fee')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /me paid the buyer protection fee/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/^vat$/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/delivery cost/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /me paid for delivery/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /buyer paid for delivery/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/advertising cost/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/order total/i)).toBeInTheDocument()
   })

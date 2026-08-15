@@ -202,12 +202,20 @@ export function createLocalRepository(
       // defaults to seller-paid, exactly like the Supabase-backed
       // checkout_sale() function does for the cloud repository.
       const buyerProtectionFee = input.buyerProtectionFee ?? 0
+      const buyerProtectionFeePaidBy = input.buyerProtectionFeePaidBy ?? 'seller'
       const deliveryCost = input.deliveryCost ?? 0
       const deliveryPaidBy = input.deliveryPaidBy ?? 'seller'
       const vat = input.vat ?? 0
       const advertisingCost = input.advertisingCost ?? 0
       const orderTotal = input.orderTotal ?? null
-      const feeTotal = saleFeeTotal({ buyerProtectionFee, deliveryCost, deliveryPaidBy, vat, advertisingCost })
+      const feeTotal = saleFeeTotal({
+        buyerProtectionFee,
+        buyerProtectionFeePaidBy,
+        deliveryCost,
+        deliveryPaidBy,
+        vat,
+        advertisingCost,
+      })
 
       const at = new Date().toISOString()
       const saleId = newId()
@@ -257,6 +265,7 @@ export function createLocalRepository(
         subtotal: saleLines.reduce((sum, l) => sum + l.lineTotal, 0),
         totalCost: saleLines.reduce((sum, l) => sum + l.unitCost * l.quantity, 0),
         buyerProtectionFee,
+        buyerProtectionFeePaidBy,
         deliveryCost,
         deliveryPaidBy,
         vat,
@@ -286,12 +295,20 @@ export function createLocalRepository(
       if (input.lines.length === 0) return { ok: false, error: EMPTY_SALE }
 
       const buyerProtectionFee = input.buyerProtectionFee ?? 0
+      const buyerProtectionFeePaidBy = input.buyerProtectionFeePaidBy ?? 'seller'
       const deliveryCost = input.deliveryCost ?? 0
       const deliveryPaidBy = input.deliveryPaidBy ?? 'seller'
       const vat = input.vat ?? 0
       const advertisingCost = input.advertisingCost ?? 0
       const orderTotal = input.orderTotal ?? null
-      const feeTotal = saleFeeTotal({ buyerProtectionFee, deliveryCost, deliveryPaidBy, vat, advertisingCost })
+      const feeTotal = saleFeeTotal({
+        buyerProtectionFee,
+        buyerProtectionFeePaidBy,
+        deliveryCost,
+        deliveryPaidBy,
+        vat,
+        advertisingCost,
+      })
 
       const at = new Date().toISOString()
       const nextProducts = [...state.products]
@@ -352,6 +369,7 @@ export function createLocalRepository(
         subtotal: saleLines.reduce((sum, l) => sum + l.lineTotal, 0),
         totalCost: saleLines.reduce((sum, l) => sum + l.unitCost * l.quantity, 0),
         buyerProtectionFee,
+        buyerProtectionFeePaidBy,
         deliveryCost,
         deliveryPaidBy,
         vat,

@@ -1,4 +1,4 @@
-import type { DeliveryPaidBy, PaymentMethod, Product, Sale, SaleInput } from './types'
+import type { PaidBy, PaymentMethod, Product, Sale, SaleInput } from './types'
 
 /** One line of a sale in progress — not yet submitted to the repository. */
 export interface CartLine {
@@ -73,8 +73,11 @@ export function cartHasIssues(cart: Cart): boolean {
  * empty without every field showing a misleading `0.00`. */
 export interface SaleFeesDraft {
   buyerProtectionFee: string
+  /** Who actually paid the buyer protection fee — same seller/buyer choice
+   * as `deliveryPaidBy`. */
+  buyerProtectionFeePaidBy: PaidBy
   deliveryCost: string
-  deliveryPaidBy: DeliveryPaidBy
+  deliveryPaidBy: PaidBy
   vat: string
   advertisingCost: string
   /** The buyer's total from the marketplace's own order summary — a
@@ -84,6 +87,7 @@ export interface SaleFeesDraft {
 
 export const EMPTY_SALE_FEES_DRAFT: SaleFeesDraft = {
   buyerProtectionFee: '',
+  buyerProtectionFeePaidBy: 'seller',
   deliveryCost: '',
   deliveryPaidBy: 'seller',
   vat: '',
@@ -97,8 +101,9 @@ export const EMPTY_SALE_FEES_DRAFT: SaleFeesDraft = {
  * ("not entered") rather than 0, since 0 would be a real (if unusual) value. */
 export interface ResolvedSaleFees {
   buyerProtectionFee: number
+  buyerProtectionFeePaidBy: PaidBy
   deliveryCost: number
-  deliveryPaidBy: DeliveryPaidBy
+  deliveryPaidBy: PaidBy
   vat: number
   advertisingCost: number
   orderTotal: number | null
@@ -114,6 +119,7 @@ export function resolveSaleFeesDraft(draft: SaleFeesDraft): ResolvedSaleFees {
   const orderTotal = draft.orderTotal.trim() !== '' && Number.isFinite(orderTotalRaw) ? orderTotalRaw : null
   return {
     buyerProtectionFee: parseAmount(draft.buyerProtectionFee),
+    buyerProtectionFeePaidBy: draft.buyerProtectionFeePaidBy,
     deliveryCost: parseAmount(draft.deliveryCost),
     deliveryPaidBy: draft.deliveryPaidBy,
     vat: parseAmount(draft.vat),
@@ -126,10 +132,11 @@ export function resolveSaleFeesDraft(draft: SaleFeesDraft): ResolvedSaleFees {
  * `SaleFeesDraft` counterpart to `buildEditCart` below — a missing/zero
  * amount is shown as a blank field rather than a literal "0", matching how
  * the field looked before anything was typed into it. */
-export function saleFeesDraftFromSale(sale: Pick<Sale, 'buyerProtectionFee' | 'deliveryCost' | 'deliveryPaidBy' | 'vat' | 'advertisingCost' | 'orderTotal'>): SaleFeesDraft {
+export function saleFeesDraftFromSale(sale: Pick<Sale, 'buyerProtectionFee' | 'buyerProtectionFeePaidBy' | 'deliveryCost' | 'deliveryPaidBy' | 'vat' | 'advertisingCost' | 'orderTotal'>): SaleFeesDraft {
   const str = (n: number | undefined): string => (n ? String(n) : '')
   return {
     buyerProtectionFee: str(sale.buyerProtectionFee),
+    buyerProtectionFeePaidBy: sale.buyerProtectionFeePaidBy ?? 'seller',
     deliveryCost: str(sale.deliveryCost),
     deliveryPaidBy: sale.deliveryPaidBy ?? 'seller',
     vat: str(sale.vat),
@@ -139,19 +146,21 @@ export function saleFeesDraftFromSale(sale: Pick<Sale, 'buyerProtectionFee' | 'd
 }
 
 /** How much of a sale's order-level fees actually come out of the seller's
- * own pocket — delivery only counts here when the seller (not the buyer)
- * paid for it; buyer-paid delivery never touches what the seller keeps. */
+ * own pocket — the buyer protection fee and delivery cost only count here
+ * when the seller (not the buyer) paid for them; a buyer-paid fee never
+ * touches what the seller keeps. */
 export function saleFeeTotal(fees: {
   buyerProtectionFee: number
+  buyerProtectionFeePaidBy: PaidBy
   deliveryCost: number
-  deliveryPaidBy: DeliveryPaidBy
+  deliveryPaidBy: PaidBy
   vat: number
   advertisingCost: number
 }): number {
   return (
-    fees.buyerProtectionFee +
     fees.vat +
     fees.advertisingCost +
+    (fees.buyerProtectionFeePaidBy === 'seller' ? fees.buyerProtectionFee : 0) +
     (fees.deliveryPaidBy === 'seller' ? fees.deliveryCost : 0)
   )
 }

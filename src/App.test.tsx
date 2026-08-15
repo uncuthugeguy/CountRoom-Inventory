@@ -722,13 +722,16 @@ describe('checkout', () => {
     await user.click(screen.getByRole('button', { name: /add to sale/i }))
     await screen.findByTestId('cart-row')
 
-    await user.type(screen.getByLabelText(/buyer protection fee/i), '1')
+    // Exact match, not a substring regex — the "Who paid the buyer
+    // protection fee?" toggle buttons below also have "buyer protection
+    // fee" in their accessible name, so a loose match would be ambiguous.
+    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
     await user.type(screen.getByLabelText(/^vat$/i), '0.5')
     await user.type(screen.getByLabelText(/advertising cost/i), '0.25')
     await user.type(screen.getByLabelText(/delivery cost/i), '2')
     // Buyer paid for delivery themselves, so it should NOT come off profit —
     // only the buyer protection fee, VAT and advertising cost should.
-    await user.click(screen.getByRole('button', { name: /^buyer$/i }))
+    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
 
     // 0.04 - (1 + 0.5 + 0.25) = -1.71; delivery excluded since the buyer paid it.
     expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: -1.71')
@@ -740,13 +743,38 @@ describe('checkout', () => {
     const lastSale = await screen.findByTestId('last-sale')
     expect(lastSale).toHaveTextContent('profit -1.71')
     const feesLine = screen.getByTestId('last-sale-fees')
-    expect(feesLine).toHaveTextContent('Buyer protection 1.00')
+    expect(feesLine).toHaveTextContent('Buyer protection 1.00 (Me paid)')
     expect(feesLine).toHaveTextContent('Delivery 2.00 (Buyer paid)')
     expect(feesLine).toHaveTextContent('VAT 0.50')
     expect(feesLine).toHaveTextContent('Advertising 0.25')
 
     // The marketplace fees reset for the next sale rather than carrying over.
-    expect(screen.getByLabelText(/buyer protection fee/i)).toHaveValue(null)
+    expect(screen.getByLabelText('Buyer protection fee')).toHaveValue(null)
+  })
+
+  it('excludes the buyer protection fee from profit when the buyer paid it', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: cost 0.01, price 0.05 → cart profit 0.04 before fees.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+
+    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
+    await user.click(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i }))
+
+    // The buyer protection fee is excluded since the buyer paid it — profit
+    // stays at the plain cart profit of 0.04.
+    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: 0.04')
+
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+
+    const lastSale = await screen.findByTestId('last-sale')
+    expect(lastSale).toHaveTextContent('profit 0.04')
+    expect(screen.getByTestId('last-sale-fees')).toHaveTextContent('Buyer protection 1.00 (Buyer paid)')
   })
 
   it('routes a wedge scan to the cart instead of the scan screen while on checkout', async () => {

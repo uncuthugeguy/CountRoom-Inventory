@@ -302,11 +302,34 @@ describe('recordSale', () => {
     // other three fees still come off: 3 - (1 + 0.5 + 0.25) = 1.25.
     expect(result.value.profit).toBeCloseTo(1.25)
     expect(result.value.buyerProtectionFee).toBe(1)
+    expect(result.value.buyerProtectionFeePaidBy).toBe('seller')
     expect(result.value.deliveryCost).toBe(2)
     expect(result.value.deliveryPaidBy).toBe('buyer')
     expect(result.value.vat).toBe(0.5)
     expect(result.value.advertisingCost).toBe(0.25)
     expect(result.value.orderTotal).toBe(8.5)
+  })
+
+  it('excludes the buyer protection fee from profit when the buyer paid it', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const result = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+      buyerProtectionFee: 1,
+      buyerProtectionFeePaidBy: 'buyer',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Line profit 3, buyer protection fee excluded — the buyer paid it.
+    expect(result.value.profit).toBeCloseTo(3)
+    expect(result.value.buyerProtectionFeePaidBy).toBe('buyer')
   })
 
   it('deducts delivery from profit when the seller paid it', async () => {
@@ -347,6 +370,7 @@ describe('recordSale', () => {
     if (!result.ok) return
     expect(result.value.profit).toBeCloseTo(3)
     expect(result.value.buyerProtectionFee).toBe(0)
+    expect(result.value.buyerProtectionFeePaidBy).toBe('seller')
     expect(result.value.deliveryCost).toBe(0)
     expect(result.value.deliveryPaidBy).toBe('seller')
     expect(result.value.vat).toBe(0)

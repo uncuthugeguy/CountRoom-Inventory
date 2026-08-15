@@ -24,7 +24,7 @@ import {
   type SaleFeesDraft,
 } from '../../domain/sales'
 import {
-  DELIVERY_PAID_BY_LABELS,
+  PAID_BY_LABELS,
   MOVEMENT_LABELS,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -81,9 +81,10 @@ function ReceiptDialog({
           (sale.advertisingCost ?? 0) > 0 ||
           (sale.orderTotal !== null && sale.orderTotal !== undefined)) && (
           <p className="muted" data-testid="receipt-fees">
-            {(sale.buyerProtectionFee ?? 0) > 0 && `Buyer protection ${sale.buyerProtectionFee!.toFixed(2)} · `}
+            {(sale.buyerProtectionFee ?? 0) > 0 &&
+              `Buyer protection ${sale.buyerProtectionFee!.toFixed(2)} (${PAID_BY_LABELS[sale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
             {(sale.deliveryCost ?? 0) > 0 &&
-              `Delivery ${sale.deliveryCost!.toFixed(2)} (${DELIVERY_PAID_BY_LABELS[sale.deliveryPaidBy ?? 'seller']} paid) · `}
+              `Delivery ${sale.deliveryCost!.toFixed(2)} (${PAID_BY_LABELS[sale.deliveryPaidBy ?? 'seller']} paid) · `}
             {(sale.vat ?? 0) > 0 && `VAT ${sale.vat!.toFixed(2)} · `}
             {(sale.advertisingCost ?? 0) > 0 && `Advertising ${sale.advertisingCost!.toFixed(2)} · `}
             {sale.orderTotal !== null && sale.orderTotal !== undefined && `Order total ${sale.orderTotal.toFixed(2)}`}

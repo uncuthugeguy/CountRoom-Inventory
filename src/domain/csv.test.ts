@@ -121,13 +121,13 @@ describe('salesToCsv', () => {
   it('exports the sale columns with items summarised', () => {
     const lines = salesToCsv([sale]).split('\r\n')
     expect(lines[0]).toBe(
-      'Timestamp,Channel,Payment Method,Items,Subtotal,Cost,Buyer Protection Fee,Delivery Cost,Delivery Paid By,VAT,Advertising Cost,Order Total,Profit',
+      'Timestamp,Channel,Payment Method,Items,Subtotal,Cost,Buyer Protection Fee,Buyer Protection Fee Paid By,Delivery Cost,Delivery Paid By,VAT,Advertising Cost,Order Total,Profit',
     )
     // No fees were entered on this sale, so every fee column reads as a
     // plain 0.00 (or blank, for the reconciliation-only order total) rather
     // than throwing on the missing/optional fields.
     expect(lines[1]).toBe(
-      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,0.00,0.00,Me,0.00,0.00,,15.00',
+      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,0.00,Me,0.00,Me,0.00,0.00,,15.00',
     )
   })
 
@@ -135,6 +135,7 @@ describe('salesToCsv', () => {
     const withFees: Sale = {
       ...sale,
       buyerProtectionFee: 1.5,
+      buyerProtectionFeePaidBy: 'buyer',
       deliveryCost: 3.99,
       deliveryPaidBy: 'buyer',
       vat: 2.1,
@@ -143,7 +144,7 @@ describe('salesToCsv', () => {
     }
     const lines = salesToCsv([withFees]).split('\r\n')
     expect(lines[1]).toBe(
-      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,1.50,3.99,Buyer,2.10,0.75,30.49,15.00',
+      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,1.50,Buyer,3.99,Buyer,2.10,0.75,30.49,15.00',
     )
   })
 })

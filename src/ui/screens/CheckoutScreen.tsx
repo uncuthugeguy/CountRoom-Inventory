@@ -12,7 +12,7 @@ import {
   type SaleFeesDraft,
 } from '../../domain/sales'
 import {
-  DELIVERY_PAID_BY_LABELS,
+  PAID_BY_LABELS,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
   type PaymentMethod,
@@ -418,9 +418,10 @@ export function CheckoutScreen({
               (lastSale.vat ?? 0) > 0 ||
               (lastSale.advertisingCost ?? 0) > 0) && (
               <p className="muted" data-testid="last-sale-fees">
-                {(lastSale.buyerProtectionFee ?? 0) > 0 && `Buyer protection ${lastSale.buyerProtectionFee!.toFixed(2)} · `}
+                {(lastSale.buyerProtectionFee ?? 0) > 0 &&
+                  `Buyer protection ${lastSale.buyerProtectionFee!.toFixed(2)} (${PAID_BY_LABELS[lastSale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
                 {(lastSale.deliveryCost ?? 0) > 0 &&
-                  `Delivery ${lastSale.deliveryCost!.toFixed(2)} (${DELIVERY_PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']} paid) · `}
+                  `Delivery ${lastSale.deliveryCost!.toFixed(2)} (${PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']} paid) · `}
                 {(lastSale.vat ?? 0) > 0 && `VAT ${lastSale.vat!.toFixed(2)} · `}
                 {(lastSale.advertisingCost ?? 0) > 0 && `Advertising ${lastSale.advertisingCost!.toFixed(2)}`}
               </p>
