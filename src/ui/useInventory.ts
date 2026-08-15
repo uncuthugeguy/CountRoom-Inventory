@@ -37,7 +37,11 @@ export interface Inventory {
   deleteProduct(id: string): Promise<Result<true>>
   recordMovement(productId: string, input: MovementInput): Promise<Result<AppliedMovement>>
   recordSale(input: SaleInput): Promise<Result<Sale>>
+  /** Manager-only. Fully replaces a past sale's items/quantities/prices. */
+  updateSale(id: string, input: SaleInput): Promise<Result<Sale>>
   recordReturn(input: ReturnCaseInput): Promise<Result<ReturnCase>>
+  /** Manager-only. Fully replaces a past return case. */
+  updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>>
   /** Returns the freshly fetched catalogue, so callers can act on it directly
    *  rather than reading `products` from a stale render closure. */
   reload(): Promise<Product[]>
@@ -154,8 +158,18 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     [run],
   )
 
+  const updateSale = useCallback(
+    (id: string, input: SaleInput) => run((repo) => repo.updateSale(id, input)),
+    [run],
+  )
+
   const recordReturn = useCallback(
     (input: ReturnCaseInput) => run((repo) => repo.recordReturn(input)),
+    [run],
+  )
+
+  const updateReturn = useCallback(
+    (id: string, input: ReturnCaseInput) => run((repo) => repo.updateReturn(id, input)),
     [run],
   )
 
@@ -275,7 +289,9 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     deleteProduct,
     recordMovement,
     recordSale,
+    updateSale,
     recordReturn,
+    updateReturn,
     reload,
     listTeam,
     inviteEmployee,

@@ -1,8 +1,18 @@
 import { useId, useMemo, useState, type FormEvent } from 'react'
 import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
-import { cartHasIssues, cartLineIssue, cartTotals, type Cart } from '../../domain/sales'
 import {
+  cartHasIssues,
+  cartLineIssue,
+  cartTotals,
+  EMPTY_SALE_FEES_DRAFT,
+  resolveSaleFeesDraft,
+  saleFeeTotal,
+  type Cart,
+  type SaleFeesDraft,
+} from '../../domain/sales'
+import {
+  DELIVERY_PAID_BY_LABELS,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
   type PaymentMethod,
@@ -11,6 +21,7 @@ import {
   type Sale,
 } from '../../domain/types'
 import { CameraScanner } from '../components/CameraScanner'
+import { SaleFeesFields } from '../components/SaleFeesFields'
 import type { StartCameraScan } from '../../scanner/cameraScanner'
 import { formatDateTime, formatNumber } from '../format'
 
@@ -28,7 +39,7 @@ export interface CheckoutScreenProps {
   onSetPrice: (productId: string, unitPrice: number) => void
   onRemove: (productId: string) => void
   onAddChannel: (name: string) => void
-  onCheckout: (channel: string, paymentMethod: PaymentMethod) => Promise<Result<Sale>>
+  onCheckout: (channel: string, paymentMethod: PaymentMethod, fees: SaleFeesDraft) => Promise<Result<Sale>>
   /** Injected in tests; the component otherwise uses the real camera. */
   startCamera?: StartCameraScan
 }
@@ -59,6 +70,7 @@ export function CheckoutScreen({
   const [newChannel, setNewChannel] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
   const [cashReceived, setCashReceived] = useState('')
+  const [fees, setFees] = useState<SaleFeesDraft>(EMPTY_SALE_FEES_DRAFT)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   // Cash tendered/change isn't part of the Sale record — it's a till
@@ -70,6 +82,9 @@ export function CheckoutScreen({
 
   const totals = cartTotals(cart)
   const hasIssues = cartHasIssues(cart)
+  const resolvedFees = resolveSaleFeesDraft(fees)
+  const feeTotal = saleFeeTotal(resolvedFees)
+  const netProfit = totals.profit - feeTotal
 
   const tendered = Number(cashReceived)
   const tenderedValid = cashReceived.trim() !== '' && Number.isFinite(tendered)
@@ -128,7 +143,7 @@ export function CheckoutScreen({
     }
 
     setSaving(true)
-    const result = await onCheckout(channel, paymentMethod)
+    const result = await onCheckout(channel, paymentMethod, fees)
     setSaving(false)
     if (!result.ok) {
       setError(result.error)
@@ -138,6 +153,7 @@ export function CheckoutScreen({
     setChannel('')
     setPaymentMethod('cash')
     setCashReceived('')
+    setFees(EMPTY_SALE_FEES_DRAFT)
   }
 
   return (
@@ -269,7 +285,7 @@ export function CheckoutScreen({
           <div className="cart-totals" data-testid="cart-totals">
             <span>{formatNumber(totals.itemCount)} items</span>
             <span>Subtotal: {totals.subtotal.toFixed(2)}</span>
-            {role === 'manager' && <span>Est. profit: {totals.profit.toFixed(2)}</span>}
+            {role === 'manager' && <span>Est. profit: {netProfit.toFixed(2)}</span>}
           </div>
         )}
       </section>
@@ -307,6 +323,12 @@ export function CheckoutScreen({
           </div>
         </form>
       </section>
+
+      {role === 'manager' && (
+        <section className="panel">
+          <SaleFeesFields value={fees} onChange={setFees} />
+        </section>
+      )}
 
       <section className="panel">
         <h2>Payment method</h2>
@@ -389,6 +411,38 @@ export function CheckoutScreen({
               Cash received {lastSaleCash.tendered.toFixed(2)} · change {lastSaleCash.change.toFixed(2)}
             </p>
           )}
+
+          {role === 'manager' &&
+            ((lastSale.buyerProtectionFee ?? 0) > 0 ||
+              (lastSale.deliveryCost ?? 0) > 0 ||
+              (lastSale.vat ?? 0) > 0 ||
+              (lastSale.advertisingCost ?? 0) > 0) && (
+              <p className="muted" data-testid="last-sale-fees">
+                {(lastSale.buyerProtectionFee ?? 0) > 0 && `Buyer protection ${lastSale.buyerProtectionFee!.toFixed(2)} · `}
+                {(lastSale.deliveryCost ?? 0) > 0 &&
+                  `Delivery ${lastSale.deliveryCost!.toFixed(2)} (${DELIVERY_PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']} paid) · `}
+                {(lastSale.vat ?? 0) > 0 && `VAT ${lastSale.vat!.toFixed(2)} · `}
+                {(lastSale.advertisingCost ?? 0) > 0 && `Advertising ${lastSale.advertisingCost!.toFixed(2)}`}
+              </p>
+            )}
+
+          {/* The full itemised receipt, right here on screen — not just the
+              print-only copy below, which you'd otherwise only ever see by
+              opening the print dialog. */}
+          <table className="receipt-lines">
+            <tbody>
+              {lastSale.lines.map((line) => (
+                <tr key={line.id}>
+                  <td>
+                    {line.quantity} × {line.name} ({line.sku})
+                  </td>
+                  <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="receipt-total">Total: {lastSale.subtotal.toFixed(2)}</p>
+
           <div className="dialog-actions">
             <button type="button" className="button" onClick={() => window.print()}>
               Print receipt

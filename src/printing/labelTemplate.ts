@@ -17,6 +17,33 @@ export interface ElementPosition {
   y: number
 }
 
+/**
+ * Which of the five label elements actually print — unticking one leaves its
+ * position, size and font untouched (so re-ticking it later restores exactly
+ * where it was) but drops it from both the live preview and the real CPCL
+ * output. Lets a business turn off e.g. the logo for a small label roll
+ * without losing the uploaded image or its placement, in case a bigger label
+ * or a different printer later has room for it.
+ */
+export interface LabelElementVisibility {
+  name: boolean
+  variation: boolean
+  barcode: boolean
+  sku: boolean
+  logo: boolean
+}
+
+/** Every element prints by default — matches the app's behaviour before this
+ * setting existed, so an older saved template with no `include` field at all
+ * still prints exactly as it always did. */
+export const DEFAULT_LABEL_ELEMENT_VISIBILITY: LabelElementVisibility = {
+  name: true,
+  variation: true,
+  barcode: true,
+  sku: true,
+  logo: true,
+}
+
 export interface LabelTemplate {
   /** Printable label width, in dots. */
   widthDots: number
@@ -53,6 +80,23 @@ export interface LabelTemplate {
   barcode: ElementPosition
   /** Top-left position of the human-readable SKU text. */
   sku: ElementPosition
+  /** Printer darkness ("print.tone" in Zebra's SGD command set), sent as
+   * `! U1 setvar "print.tone" "<value>"` before every label. Zebra's
+   * documented range is 0–30 (default 4 on most printers). Larger CPCL
+   * bitmap fonts (like the default name font) have thinner relative stroke
+   * width than a barcode's solid bars, so they're the first thing to look
+   * faint if this is too low — raise it if text (especially the product
+   * name) is printing lighter than the barcode next to it. */
+  darkness: number
+  /** Print speed in inches per second ("media.speed" in Zebra's SGD command
+   * set), sent as `! U1 setvar "media.speed" "<value>"` before every label.
+   * Zebra's documented range is 2–12 ips. Slower gives the print head more
+   * dwell time per dot, which — together with `darkness` — is usually what
+   * fixes fine text printing lighter than thicker elements like a barcode. */
+  printSpeedIps: number
+  /** Which elements are actually turned on for this label — see
+   * `LabelElementVisibility`. */
+  include: LabelElementVisibility
 }
 
 /**
@@ -122,6 +166,12 @@ export const DEFAULT_LABEL_TEMPLATE: LabelTemplate = {
   variation: { x: 160, y: 65 },
   barcode: { x: 160, y: 100 },
   sku: { x: 160, y: 180 },
+  // Darker and slower than the printer's own factory default (tone 4,
+  // speed varies by model) — chosen so large/fine text like the name
+  // (font 7 by default) comes out fully solid, not just the barcode.
+  darkness: 14,
+  printSpeedIps: 2,
+  include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY },
 }
 
 /** CPCL's built-in bitmap fonts only go from 0 (smallest) to 7 (largest). */
@@ -144,6 +194,18 @@ const clampPosition = (
 ): ElementPosition => ({
   x: clampInt(pos?.x ?? fallback.x, 0, maxX),
   y: clampInt(pos?.y ?? fallback.y, 0, maxY),
+})
+
+/** Coerces a possibly-partial, possibly-missing visibility object (an older
+ * saved template predates this field entirely) into a complete one, one key
+ * at a time — so a template saved with only `{ logo: false }` still shows
+ * every other element rather than hiding them too. */
+const sanitiseVisibility = (partial: Partial<LabelElementVisibility> | undefined): LabelElementVisibility => ({
+  name: partial?.name ?? true,
+  variation: partial?.variation ?? true,
+  barcode: partial?.barcode ?? true,
+  sku: partial?.sku ?? true,
+  logo: partial?.logo ?? true,
 })
 
 /**
@@ -211,5 +273,8 @@ export function sanitiseLabelTemplate(partial: Partial<LabelTemplate> | undefine
       widthDots,
       Math.max(0, heightDots - textHeightDots(clampInt(merged.skuFont, MIN_FONT, MAX_FONT))),
     ),
+    darkness: clampInt(merged.darkness, 0, 30),
+    printSpeedIps: clampInt(merged.printSpeedIps, 2, 12),
+    include: sanitiseVisibility(merged.include),
   }
 }

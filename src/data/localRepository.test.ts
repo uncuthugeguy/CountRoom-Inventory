@@ -277,6 +277,83 @@ describe('recordSale', () => {
     expect(sales[0].channel).toBe('eBay')
   })
 
+  it('nets marketplace fees out of profit, deducting delivery only when the seller paid it', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const result = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+      buyerProtectionFee: 1,
+      deliveryCost: 2,
+      deliveryPaidBy: 'buyer',
+      vat: 0.5,
+      advertisingCost: 0.25,
+      orderTotal: 8.5,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Line profit is 5 - 2 = 3. Delivery is excluded (buyer paid it); the
+    // other three fees still come off: 3 - (1 + 0.5 + 0.25) = 1.25.
+    expect(result.value.profit).toBeCloseTo(1.25)
+    expect(result.value.buyerProtectionFee).toBe(1)
+    expect(result.value.deliveryCost).toBe(2)
+    expect(result.value.deliveryPaidBy).toBe('buyer')
+    expect(result.value.vat).toBe(0.5)
+    expect(result.value.advertisingCost).toBe(0.25)
+    expect(result.value.orderTotal).toBe(8.5)
+  })
+
+  it('deducts delivery from profit when the seller paid it', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const result = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+      deliveryCost: 2,
+      deliveryPaidBy: 'seller',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Line profit 3, minus the 2 the seller spent on delivery.
+    expect(result.value.profit).toBeCloseTo(1)
+  })
+
+  it('defaults every fee to 0 (and delivery to seller-paid) when none are given', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const result = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.profit).toBeCloseTo(3)
+    expect(result.value.buyerProtectionFee).toBe(0)
+    expect(result.value.deliveryCost).toBe(0)
+    expect(result.value.deliveryPaidBy).toBe('seller')
+    expect(result.value.vat).toBe(0)
+    expect(result.value.advertisingCost).toBe(0)
+    expect(result.value.orderTotal).toBeNull()
+  })
+
   it('refuses an empty sale', async () => {
     const repo = createLocalRepository({ storage, seed: false })
     const result = await repo.recordSale({ channel: 'eBay', paymentMethod: 'cash', lines: [] })
@@ -329,6 +406,148 @@ describe('recordSale', () => {
       lines: [{ productId: 'nope', quantity: 1, unitPrice: 5 }],
     })
     expect(result.ok === false && result.error).toMatch(/product not found/i)
+  })
+})
+
+describe('updateSale', () => {
+  it('reverses the original lines and reapplies the edited ones, netting stock correctly', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 3, unitPrice: 5 }],
+    })
+    if (!sale.ok) throw new Error('setup failed')
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(7)
+
+    const result = await repo.updateSale(sale.value.id, {
+      channel: 'Facebook Marketplace',
+      paymentMethod: 'cash',
+      lines: [{ productId: bolt.value.id, quantity: 5, unitPrice: 6 }],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.channel).toBe('Facebook Marketplace')
+    expect(result.value.subtotal).toBeCloseTo(5 * 6)
+    expect(result.value.lines).toHaveLength(1)
+    expect(result.value.updatedAt).toBeTruthy()
+
+    // Net effect vs. the original 10 on hand: sold 5 net (not 3 + 5 = 8).
+    const products = await repo.listProducts()
+    expect(products.find((p) => p.id === bolt.value.id)?.quantity).toBe(5)
+
+    const sales = await repo.listSales()
+    expect(sales).toHaveLength(1)
+    expect(sales[0].lines[0].quantity).toBe(5)
+
+    // Reversal + reapply each write their own audit movement, alongside the
+    // original sale's — three in total.
+    const movements = await repo.listMovements()
+    expect(movements).toHaveLength(3)
+    expect(movements.some((m) => m.type === 'in' && m.delta === 3)).toBe(true)
+    expect(movements.some((m) => m.type === 'out' && m.delta === -5)).toBe(true)
+    expect(movements.some((m) => m.type === 'out' && m.delta === -3)).toBe(true)
+  })
+
+  it('recalculates profit against the edited fees, not the fees the sale was first recorded with', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(
+      draft({ barcode: '', sku: 'BLT', name: 'Bolt', quantity: 10, cost: 2, price: 5 }),
+    )
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+      deliveryCost: 2,
+      deliveryPaidBy: 'buyer',
+    })
+    if (!sale.ok) throw new Error('setup failed')
+    expect(sale.value.profit).toBeCloseTo(3) // delivery excluded — buyer paid
+
+    const result = await repo.updateSale(sale.value.id, {
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 1, unitPrice: 5 }],
+      deliveryCost: 2,
+      deliveryPaidBy: 'seller',
+      vat: 0.5,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Now the seller is on the hook for delivery too: 3 - (2 + 0.5) = 0.5.
+    expect(result.value.profit).toBeCloseTo(0.5)
+    expect(result.value.deliveryPaidBy).toBe('seller')
+    expect(result.value.vat).toBe(0.5)
+  })
+
+  it('drops a line entirely when the edited sale no longer includes that product', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10 }))
+    const washer = await repo.createProduct(draft({ barcode: '', sku: 'WSH', quantity: 10 }))
+    if (!bolt.ok || !washer.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [
+        { productId: bolt.value.id, quantity: 2, unitPrice: 8 },
+        { productId: washer.value.id, quantity: 3, unitPrice: 8 },
+      ],
+    })
+    if (!sale.ok) throw new Error('setup failed')
+
+    const result = await repo.updateSale(sale.value.id, {
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 8 }],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.lines).toHaveLength(1)
+
+    const products = await repo.listProducts()
+    // Bolt: sold 2, unchanged net. Washer: fully returned to stock.
+    expect(products.find((p) => p.id === bolt.value.id)?.quantity).toBe(8)
+    expect(products.find((p) => p.id === washer.value.id)?.quantity).toBe(10)
+  })
+
+  it('refuses to oversell on the edited lines and leaves the sale as it was', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ quantity: 5 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 8 }],
+    })
+    if (!sale.ok) throw new Error('setup failed')
+
+    const result = await repo.updateSale(sale.value.id, {
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 99, unitPrice: 8 }],
+    })
+
+    expect(result.ok === false && result.error).toMatch(/only \d+ in stock/i)
+    const sales = await repo.listSales()
+    expect(sales[0].lines[0].quantity).toBe(2)
+  })
+
+  it('reports an unknown sale', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const result = await repo.updateSale('nope', { channel: 'eBay', paymentMethod: 'cash', lines: [] })
+    expect(result.ok === false && result.error).toMatch(/sale not found/i)
   })
 })
 
@@ -457,6 +676,120 @@ describe('recordReturn', () => {
 
     const returns = await repo.listReturns()
     expect(returns.map((r) => r.goodwillType)).toEqual(['second', 'first'])
+  })
+})
+
+describe('updateReturn', () => {
+  it('reverses a restock and reapplies the edited quantity, netting stock correctly', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10, cost: 2 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const original = await repo.recordReturn({
+      channel: 'eBay',
+      reason: 'Wrong size',
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 3, disposition: 'restock' }],
+    })
+    if (!original.ok) throw new Error('setup failed')
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(13)
+
+    const result = await repo.updateReturn(original.value.id, {
+      channel: 'eBay',
+      reason: 'Wrong size, corrected qty',
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 5, disposition: 'restock' }],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.returnLines[0].quantity).toBe(5)
+    expect(result.value.updatedAt).toBeTruthy()
+
+    // Net effect vs. the original 10 on hand: 5 restocked (not 3 + 5 = 8).
+    const products = await repo.listProducts()
+    expect(products.find((p) => p.id === bolt.value.id)?.quantity).toBe(15)
+  })
+
+  it('refuses to edit away a restock once the stock has since been sold', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const original = await repo.recordReturn({
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 3, disposition: 'restock' }],
+    })
+    if (!original.ok) throw new Error('setup failed')
+    // Now 13 on hand — sell 12 of it, leaving only 1, less than the 3 this
+    // case restocked.
+    await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'cash',
+      lines: [{ productId: bolt.value.id, quantity: 12, unitPrice: 8 }],
+    })
+
+    const result = await repo.updateReturn(original.value.id, {
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 1, disposition: 'restock' }],
+    })
+
+    expect(result.ok === false && result.error).toMatch(/already been sold/i)
+    // Left exactly as the sale left it.
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(1)
+  })
+
+  it('switches a line from restock to writeoff, taking the stock back out', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10, cost: 2 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const original = await repo.recordReturn({
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 3, disposition: 'restock' }],
+    })
+    if (!original.ok) throw new Error('setup failed')
+
+    const result = await repo.updateReturn(original.value.id, {
+      actions: ['return'],
+      returnLines: [{ productId: bolt.value.id, quantity: 3, disposition: 'writeoff' }],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.returnLines[0].disposition).toBe('writeoff')
+    // Back to the original 10 — the restock is undone, and a writeoff never
+    // adds stock back.
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(10)
+  })
+
+  it('reverses a replacement line, giving the stock back', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10, cost: 2 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const original = await repo.recordReturn({
+      actions: ['replacement'],
+      replacementLines: [{ productId: bolt.value.id, quantity: 2 }],
+    })
+    if (!original.ok) throw new Error('setup failed')
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(8)
+
+    const result = await repo.updateReturn(original.value.id, {
+      actions: [],
+      notes: 'Customer changed their mind before the replacement shipped',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.replacementLines).toHaveLength(0)
+    expect((await repo.listProducts()).find((p) => p.id === bolt.value.id)?.quantity).toBe(10)
+  })
+
+  it('reports an unknown return', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const result = await repo.updateReturn('nope', { actions: ['goodwill'], goodwillType: 'x', goodwillValue: 1 })
+    expect(result.ok === false && result.error).toMatch(/return not found/i)
   })
 
   describe('profile', () => {

@@ -1,9 +1,10 @@
+import { sanitiseQuickCodes, type QuickCode, type QuickCodeDraft } from '../domain/quickCodes'
 import { sanitiseLabelTemplate, type LabelPreset, type LabelTemplate } from '../printing/labelTemplate'
 
-const newId = (): string =>
+const newId = (prefix = 'preset'): string =>
   typeof crypto?.randomUUID === 'function'
     ? crypto.randomUUID()
-    : `preset-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+    : `${prefix}-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
 
 export const SETTINGS_STORAGE_KEY = 'stockflow.settings.v1'
 
@@ -29,9 +30,13 @@ export interface Settings {
    * loaded back over `labelTemplate` at any time. Saving one doesn't change
    * what currently prints; only loading one does. */
   labelPresets: LabelPreset[]
+  /** Saved reference codes (printer maintenance commands, Wi-Fi joins,
+   * supplier links, etc.) shown on screen for scanning instead of a paper
+   * manual — see `domain/quickCodes.ts`. */
+  quickCodes: QuickCode[]
 }
 
-const empty = (): Settings => ({ saleChannels: [...DEFAULT_SALE_CHANNELS], labelPresets: [] })
+const empty = (): Settings => ({ saleChannels: [...DEFAULT_SALE_CHANNELS], labelPresets: [], quickCodes: [] })
 
 const sanitisePresets = (value: unknown): LabelPreset[] => {
   if (!Array.isArray(value)) return []
@@ -56,11 +61,13 @@ function read(storage: Storage): Settings {
         ? sanitiseLabelTemplate(parsed.labelTemplate)
         : undefined
     const labelPresets = sanitisePresets(parsed.labelPresets)
+    const quickCodes = sanitiseQuickCodes(parsed.quickCodes)
     return {
       ...(logoDataUrl ? { logoDataUrl } : {}),
       saleChannels,
       ...(labelTemplate ? { labelTemplate } : {}),
       labelPresets,
+      quickCodes,
     }
   } catch {
     return empty()
@@ -86,6 +93,11 @@ export interface SettingsStore {
   applyLabelPreset(id: string): void
   renameLabelPreset(id: string, newName: string): void
   deleteLabelPreset(id: string): void
+  /** Adds a new saved reference code. Returns the id so the caller (the "add
+   * code" form) can do something with it right away if needed. */
+  addQuickCode(draft: QuickCodeDraft): string
+  updateQuickCode(id: string, patch: Partial<QuickCodeDraft>): void
+  deleteQuickCode(id: string): void
   /**
    * Overwrites whichever fields are present with values pulled from another
    * source (the account's synced settings in Supabase mode) in one write,
@@ -97,6 +109,7 @@ export interface SettingsStore {
     labelTemplate?: LabelTemplate
     saleChannels?: string[]
     labelPresets?: LabelPreset[]
+    quickCodes?: QuickCode[]
   }): void
 }
 
@@ -192,6 +205,31 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
       persist()
     },
 
+    addQuickCode(draft: QuickCodeDraft) {
+      const id = newId('code')
+      const [code] = sanitiseQuickCodes([{ ...draft, id }])
+      state = { ...state, quickCodes: [...state.quickCodes, code] }
+      persist()
+      return id
+    },
+
+    updateQuickCode(id: string, patch: Partial<QuickCodeDraft>) {
+      state = {
+        ...state,
+        quickCodes: state.quickCodes.map((c) => {
+          if (c.id !== id) return c
+          const [updated] = sanitiseQuickCodes([{ ...c, ...patch, id }])
+          return updated
+        }),
+      }
+      persist()
+    },
+
+    deleteQuickCode(id: string) {
+      state = { ...state, quickCodes: state.quickCodes.filter((c) => c.id !== id) }
+      persist()
+    },
+
     applyRemote(remote) {
       state = {
         ...state,
@@ -199,6 +237,7 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
         ...(remote.saleChannels !== undefined ? { saleChannels: [...remote.saleChannels] } : {}),
         ...(remote.labelTemplate !== undefined ? { labelTemplate: sanitiseLabelTemplate(remote.labelTemplate) } : {}),
         ...(remote.labelPresets !== undefined ? { labelPresets: sanitisePresets(remote.labelPresets) } : {}),
+        ...(remote.quickCodes !== undefined ? { quickCodes: sanitiseQuickCodes(remote.quickCodes) } : {}),
       }
       persist()
     },

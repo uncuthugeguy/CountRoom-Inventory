@@ -14,6 +14,7 @@ describe('createSettingsStore', () => {
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
       labelPresets: [],
+      quickCodes: [],
     })
   })
 
@@ -37,7 +38,7 @@ describe('createSettingsStore', () => {
 
   it('recovers from corrupt storage instead of throwing', () => {
     storage.setItem(SETTINGS_STORAGE_KEY, 'not json{{')
-    expect(createSettingsStore(storage).get()).toEqual({ saleChannels: DEFAULT_SALE_CHANNELS, labelPresets: [] })
+    expect(createSettingsStore(storage).get()).toEqual({ saleChannels: DEFAULT_SALE_CHANNELS, labelPresets: [], quickCodes: [] })
   })
 })
 
@@ -143,5 +144,51 @@ describe('label presets', () => {
     const reopened = createSettingsStore(storage)
     expect(reopened.get().labelPresets).toHaveLength(1)
     expect(reopened.get().labelPresets[0].name).toBe('RV')
+  })
+})
+
+describe('quick codes', () => {
+  it('adds a code and persists it', () => {
+    const store = createSettingsStore(storage)
+    const id = store.addQuickCode({ category: 'Printer codes', name: 'Restore defaults', value: 'ZEBRA-RESTORE', format: 'qr' })
+
+    expect(store.get().quickCodes).toHaveLength(1)
+    expect(store.get().quickCodes[0]).toMatchObject({ id, category: 'Printer codes', name: 'Restore defaults', value: 'ZEBRA-RESTORE' })
+
+    const reopened = createSettingsStore(storage)
+    expect(reopened.get().quickCodes).toHaveLength(1)
+  })
+
+  it('falls back to "Other" for a blank category', () => {
+    const store = createSettingsStore(storage)
+    store.addQuickCode({ category: '', name: 'Guest Wi-Fi', value: 'WIFI:S:Guest;;', format: 'qr' })
+    expect(store.get().quickCodes[0].category).toBe('Other')
+  })
+
+  it('updates a code in place', () => {
+    const store = createSettingsStore(storage)
+    const id = store.addQuickCode({ category: 'Printer codes', name: 'Battery', value: 'OLD', format: 'qr' })
+
+    store.updateQuickCode(id, { value: 'NEW', note: 'Hold 3s' })
+
+    expect(store.get().quickCodes[0]).toMatchObject({ id, value: 'NEW', note: 'Hold 3s', name: 'Battery' })
+  })
+
+  it('deletes a code', () => {
+    const store = createSettingsStore(storage)
+    const id = store.addQuickCode({ category: 'Other', name: 'Test', value: 'X', format: 'qr' })
+
+    store.deleteQuickCode(id)
+
+    expect(store.get().quickCodes).toEqual([])
+  })
+
+  it('drops a saved code that is missing required fields instead of crashing on read', () => {
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, labelPresets: [], quickCodes: [{ id: '1' }, { id: '2', name: 'Ok', value: 'V' }] }),
+    )
+    const store = createSettingsStore(storage)
+    expect(store.get().quickCodes).toEqual([{ id: '2', name: 'Ok', value: 'V', category: 'Other', format: 'qr' }])
   })
 })

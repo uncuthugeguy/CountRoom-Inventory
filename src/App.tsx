@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { createRepository, resolveBackend, type Backend } from './data/createRepository'
+import { clearProductDraft } from './data/productDraftStorage'
 import { getSupabaseClient } from './data/supabaseClient'
 import { DUPLICATE_SKU, type InventoryRepository, type Role } from './data/repository'
 import { findByScan } from './domain/inventory'
@@ -12,6 +13,7 @@ import {
   setCartPrice,
   setCartQuantity,
   type Cart,
+  type SaleFeesDraft,
 } from './domain/sales'
 import type {
   MovementInput,
@@ -21,6 +23,7 @@ import type {
   ProductDraft,
   ReturnCaseInput,
   Sale,
+  SaleInput,
 } from './domain/types'
 import type { StartCameraScan } from './scanner/cameraScanner'
 import { useWedgeScanner } from './scanner/useWedgeScanner'
@@ -36,6 +39,7 @@ import { CheckoutScreen } from './ui/screens/CheckoutScreen'
 import { DashboardScreen } from './ui/screens/DashboardScreen'
 import { HistoryScreen } from './ui/screens/HistoryScreen'
 import { ProductsScreen } from './ui/screens/ProductsScreen'
+import { QuickCodesScreen } from './ui/screens/QuickCodesScreen'
 import { ReturnsScreen } from './ui/screens/ReturnsScreen'
 import { ScanScreen } from './ui/screens/ScanScreen'
 import { SettingsScreen } from './ui/screens/SettingsScreen'
@@ -50,6 +54,10 @@ export interface AppProps {
   startCamera?: StartCameraScan
   /** Overridden in tests so the suite never touches the host's real localStorage. */
   settingsStorage?: Storage
+  /** Overridden in tests; backs the product-form autosave (see productDraftStorage.ts). */
+  productDraftStorage?: Storage
+  /** Overridden in tests; backs the sign-in screen's remembered-email suggestions (see recentEmailsStorage.ts). */
+  emailStorage?: Storage
 }
 
 type DialogState =
@@ -66,6 +74,7 @@ const TITLES: Record<Tab, string> = {
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
+  codes: 'Quick codes',
   settings: 'Settings',
 }
 
@@ -174,7 +183,7 @@ function SupabaseGate({
   }
 
   if (!session) {
-    return <AuthScreen client={client} />
+    return <AuthScreen client={client} emailStorage={props.emailStorage} />
   }
 
   const recheckMfa = () => void loadMfaStatus(client).then(setMfa)
@@ -208,7 +217,13 @@ function SupabaseGate({
   return (
     <AuthenticatedApp
       {...props}
-      onSignOut={() => client.auth.signOut()}
+      onSignOut={() => {
+        // A product draft is an in-progress edit tied to whoever is signed
+        // in — it must not resurface for the next person to sign in on this
+        // device (see productDraftStorage.ts).
+        clearProductDraft(props.productDraftStorage)
+        client.auth.signOut()
+      }}
       userEmail={session.user.email ?? undefined}
     />
   )
@@ -223,6 +238,7 @@ function AuthenticatedApp({
   openRepository = defaultOpen,
   startCamera,
   settingsStorage,
+  productDraftStorage,
   onSignOut,
   userEmail,
 }: AuthenticatedAppProps) {
@@ -321,8 +337,8 @@ function AuthenticatedApp({
     setToast(result.ok ? `${product.name} label sent to the printer.` : `Print failed: ${result.error}`)
   }
 
-  const checkoutSale = async (channel: string, paymentMethod: PaymentMethod) => {
-    const result = await inventory.recordSale(buildSaleInput(cart, channel, paymentMethod))
+  const checkoutSale = async (channel: string, paymentMethod: PaymentMethod, fees: SaleFeesDraft) => {
+    const result = await inventory.recordSale(buildSaleInput(cart, channel, paymentMethod, fees))
     if (result.ok) {
       setLastSale(result.value)
       setCart([])
@@ -338,6 +354,22 @@ function AuthenticatedApp({
         ? result.value.actions.join(', ')
         : 'note only'
       setToast(`Return case saved — ${summary}.`)
+    }
+    return result
+  }
+
+  const updateSale = async (id: string, input: SaleInput) => {
+    const result = await inventory.updateSale(id, input)
+    if (result.ok) {
+      setToast(`Sale updated — now ${result.value.subtotal.toFixed(2)} via ${result.value.channel || 'Unspecified'}.`)
+    }
+    return result
+  }
+
+  const updateReturn = async (id: string, input: ReturnCaseInput) => {
+    const result = await inventory.updateReturn(id, input)
+    if (result.ok) {
+      setToast('Return case updated.')
     }
     return result
   }
@@ -484,6 +516,7 @@ function AuthenticatedApp({
             sales={inventory.sales}
             returns={inventory.returns}
             onRecordReturn={recordReturn}
+            onUpdateReturn={updateReturn}
           />
         )}
 
@@ -502,13 +535,17 @@ function AuthenticatedApp({
             products={inventory.products}
             sales={inventory.sales}
             role={role}
+            channels={settings.saleChannels}
+            onUpdateSale={updateSale}
           />
         )}
+
+        {tab === 'codes' && role === 'manager' && <QuickCodesScreen settings={settings} />}
 
         {tab === 'settings' && <SettingsScreen settings={settings} inventory={inventory} />}
       </main>
 
-      <Nav tab={tab} onChange={setTab} />
+      <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['codes']} />
 
       {toast && (
         <p className="toast" role="status">
@@ -524,6 +561,7 @@ function AuthenticatedApp({
           role={role}
           onClose={closeDialog}
           onSubmit={saveProduct}
+          draftStorage={productDraftStorage}
         />
       )}
 

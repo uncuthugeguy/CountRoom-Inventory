@@ -19,7 +19,7 @@ export async function printProductLabel(
   const template = settings.labelTemplate ?? DEFAULT_LABEL_TEMPLATE
 
   let logo: CpclLogo | undefined
-  if (settings.logoDataUrl) {
+  if (settings.logoDataUrl && template.include.logo) {
     try {
       const raster = await rasterizeLogo(settings.logoDataUrl, template.logoWidthDots, template.logoHeightDots)
       logo = toMonochromeBitmap(raster)

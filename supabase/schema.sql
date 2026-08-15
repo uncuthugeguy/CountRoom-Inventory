@@ -408,6 +408,33 @@ create table if not exists public.sales (
 
 alter table public.sales add column if not exists created_by uuid references auth.users(id);
 
+-- Order-level marketplace fees on top of the item price — a Vinted/eBay-style
+-- "Buyer Protection" add-on, delivery, VAT and ad spend, plus the buyer's
+-- own order total for reconciliation. All optional in practice (most sales
+-- have none of these), hence the zero/'seller'/null defaults rather than a
+-- NOT NULL-with-no-default that would break existing rows.
+alter table public.sales add column if not exists buyer_protection_fee double precision not null default 0 check (buyer_protection_fee >= 0);
+alter table public.sales add column if not exists delivery_cost double precision not null default 0 check (delivery_cost >= 0);
+alter table public.sales add column if not exists delivery_paid_by text not null default 'seller' check (delivery_paid_by in ('seller', 'buyer'));
+alter table public.sales add column if not exists vat double precision not null default 0 check (vat >= 0);
+alter table public.sales add column if not exists advertising_cost double precision not null default 0 check (advertising_cost >= 0);
+-- Unlike the fee columns above, a null order_total is meaningful (the buyer
+-- total wasn't recorded) rather than a stand-in for zero, so this one has no
+-- default and stays nullable.
+alter table public.sales add column if not exists order_total double precision check (order_total is null or order_total >= 0);
+
+-- No default and nullable, unlike products.updated_at — a sale that's never
+-- been edited should show no updated_at at all (matching the client's
+-- optional Sale.updatedAt), not a timestamp equal to when it was created.
+-- The trigger below only ever fires on UPDATE, never INSERT, so a freshly
+-- checked-out sale stays NULL here until edit_sale() actually touches it.
+alter table public.sales add column if not exists updated_at timestamptz;
+
+drop trigger if exists sales_set_updated_at on public.sales;
+create trigger sales_set_updated_at
+  before update on public.sales
+  for each row execute function public.set_updated_at();
+
 drop trigger if exists sales_stamp_account_actor on public.sales;
 create trigger sales_stamp_account_actor
   before insert on public.sales
@@ -513,9 +540,18 @@ from public.products;
 create or replace view public.sales_view
 with (security_invoker = true) as
 select
-  id, user_id, channel, payment_method, subtotal, created_at, created_by,
+  id, user_id, channel, payment_method, subtotal, created_at, created_by, updated_at,
   case when public.current_role() = 'manager' then total_cost end as total_cost,
-  case when public.current_role() = 'manager' then profit end as profit
+  case when public.current_role() = 'manager' then profit end as profit,
+  -- Marketplace fees are as profit-sensitive as cost/profit themselves
+  -- (they reveal margin and ad spend), so they're masked from a
+  -- non-manager the same way.
+  case when public.current_role() = 'manager' then buyer_protection_fee end as buyer_protection_fee,
+  case when public.current_role() = 'manager' then delivery_cost end as delivery_cost,
+  case when public.current_role() = 'manager' then delivery_paid_by end as delivery_paid_by,
+  case when public.current_role() = 'manager' then vat end as vat,
+  case when public.current_role() = 'manager' then advertising_cost end as advertising_cost,
+  case when public.current_role() = 'manager' then order_total end as order_total
 from public.sales;
 
 create or replace view public.sale_items_view
@@ -550,6 +586,14 @@ declare
   v_subtotal double precision := 0;
   v_total_cost double precision := 0;
   v_profit double precision := 0;
+  v_buyer_protection_fee double precision := coalesce((payload->>'buyerProtectionFee')::double precision, 0);
+  v_delivery_cost double precision := coalesce((payload->>'deliveryCost')::double precision, 0);
+  v_delivery_paid_by text := coalesce(payload->>'deliveryPaidBy', 'seller');
+  v_vat double precision := coalesce((payload->>'vat')::double precision, 0);
+  v_advertising_cost double precision := coalesce((payload->>'advertisingCost')::double precision, 0);
+  -- Unlike the fee amounts above, a genuinely absent order total stays NULL
+  -- rather than coalescing to 0 — it's a reconciliation figure, not a cost.
+  v_order_total double precision := (payload->>'orderTotal')::double precision;
   v_sale public.sales;
 begin
   if v_account is null then
@@ -610,7 +654,17 @@ begin
     v_profit := v_profit + (v_unit_price - v_product.cost) * v_qty;
   end loop;
 
-  insert into public.sales (id, user_id, channel, payment_method, subtotal, total_cost, profit)
+  -- Net of the marketplace fees, not just item price minus item cost —
+  -- delivery only comes off profit when the seller (not the buyer) paid it.
+  v_profit := v_profit - (
+    v_buyer_protection_fee + v_vat + v_advertising_cost +
+    case when v_delivery_paid_by = 'seller' then v_delivery_cost else 0 end
+  );
+
+  insert into public.sales (
+    id, user_id, channel, payment_method, subtotal, total_cost, profit,
+    buyer_protection_fee, delivery_cost, delivery_paid_by, vat, advertising_cost, order_total
+  )
   values (
     v_sale_id,
     v_account,
@@ -618,7 +672,13 @@ begin
     payload->>'paymentMethod',
     v_subtotal,
     v_total_cost,
-    v_profit
+    v_profit,
+    v_buyer_protection_fee,
+    v_delivery_cost,
+    v_delivery_paid_by,
+    v_vat,
+    v_advertising_cost,
+    v_order_total
   )
   returning * into v_sale;
 
@@ -627,6 +687,181 @@ end;
 $$;
 
 grant execute on function public.checkout_sale(jsonb) to authenticated;
+
+-- Edits a past sale: reverses the stock effect of its original lines, then
+-- reapplies the edited ones as one atomic transaction — the same
+-- reverse-then-reapply approach localRepository.ts's updateSale() uses for
+-- the offline backend, so both backends net stock identically regardless of
+-- what changed about the sale.
+--
+-- security definer (unlike checkout_sale() above) because sales/sale_items
+-- are intentionally locked down from direct UPDATE/DELETE by authenticated
+-- (see "Audit and financial rows are intentionally immutable from the
+-- browser" above) — this function is the one sanctioned way through that
+-- lock. Running as the owner also means RLS does not apply here the way it
+-- does for an ordinary query, so every lookup below explicitly scopes to
+-- `user_id = v_account` itself rather than relying on a policy to do it.
+create or replace function public.edit_sale(payload jsonb)
+returns public.sales
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_account uuid := public.current_account_id();
+  v_role text := public.current_role();
+  v_sale_id uuid := (payload->>'id')::uuid;
+  v_old_line record;
+  v_line jsonb;
+  v_product public.products;
+  v_qty integer;
+  v_unit_price double precision;
+  v_new_qty integer;
+  v_subtotal double precision := 0;
+  v_total_cost double precision := 0;
+  v_profit double precision := 0;
+  v_buyer_protection_fee double precision := coalesce((payload->>'buyerProtectionFee')::double precision, 0);
+  v_delivery_cost double precision := coalesce((payload->>'deliveryCost')::double precision, 0);
+  v_delivery_paid_by text := coalesce(payload->>'deliveryPaidBy', 'seller');
+  v_vat double precision := coalesce((payload->>'vat')::double precision, 0);
+  v_advertising_cost double precision := coalesce((payload->>'advertisingCost')::double precision, 0);
+  v_order_total double precision := (payload->>'orderTotal')::double precision;
+  v_sale public.sales;
+begin
+  if v_account is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  -- Matches MANAGER_ONLY.editSale on the client (which already blocks this
+  -- before the request is even sent) — checked again here since a security
+  -- definer function is the one place RLS and grants can't enforce it for us.
+  if v_role is distinct from 'manager' then
+    raise exception 'Only a manager can edit a sale.';
+  end if;
+
+  if v_sale_id is null then
+    raise exception 'Sale not found.';
+  end if;
+
+  -- Locks the row and confirms it's actually this account's sale before
+  -- anything else runs.
+  perform 1 from public.sales where id = v_sale_id and user_id = v_account for update;
+  if not found then
+    raise exception 'Sale not found.';
+  end if;
+
+  if jsonb_array_length(coalesce(payload->'lines', '[]'::jsonb)) = 0 then
+    raise exception 'Add at least one item before checking out.';
+  end if;
+
+  -- Reverse the stock effect of every original line first, so the reapply
+  -- step below always sees an accurate picture of what's on hand — mirrors
+  -- localRepository.ts's updateSale() exactly. A line whose product has
+  -- since been deleted is simply skipped, the same way the offline backend
+  -- drops it.
+  for v_old_line in
+    select product_id, quantity from public.sale_items
+    where sale_id = v_sale_id and user_id = v_account
+  loop
+    if v_old_line.product_id is null then
+      continue;
+    end if;
+
+    select * into v_product from public.products
+      where id = v_old_line.product_id and user_id = v_account
+      for update;
+
+    if not found then
+      continue;
+    end if;
+
+    v_new_qty := v_product.quantity + v_old_line.quantity;
+
+    update public.products
+      set quantity = v_new_qty, updated_at = now()
+      where id = v_product.id;
+
+    insert into public.stock_movements
+      (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+    values
+      (v_account, v_product.id, 'in', v_old_line.quantity, v_old_line.quantity, v_product.quantity, v_new_qty,
+       'Sale edit — reversal');
+  end loop;
+
+  delete from public.sale_items where sale_id = v_sale_id and user_id = v_account;
+
+  for v_line in select * from jsonb_array_elements(payload->'lines')
+  loop
+    v_qty := (v_line->>'quantity')::integer;
+    v_unit_price := (v_line->>'unitPrice')::double precision;
+
+    if v_qty is null or v_qty <= 0 then
+      raise exception 'Quantity must be greater than zero.';
+    end if;
+
+    select * into v_product from public.products
+      where id = (v_line->>'productId')::uuid and user_id = v_account
+      for update;
+
+    if not found then
+      raise exception 'Product not found.';
+    end if;
+
+    if v_product.quantity < v_qty then
+      raise exception 'Only % in stock for %.', v_product.quantity, v_product.name;
+    end if;
+
+    v_new_qty := v_product.quantity - v_qty;
+
+    update public.products
+      set quantity = v_new_qty, updated_at = now()
+      where id = v_product.id;
+
+    insert into public.stock_movements
+      (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+    values
+      (v_account, v_product.id, 'out', v_qty, -v_qty, v_product.quantity, v_new_qty,
+       'Sale edit — ' || coalesce(nullif(payload->>'channel', ''), 'Unspecified'));
+
+    insert into public.sale_items
+      (user_id, sale_id, product_id, sku, name, quantity, unit_price, unit_cost, line_total, line_profit)
+    values
+      (v_account, v_sale_id, v_product.id, v_product.sku, v_product.name, v_qty, v_unit_price, v_product.cost,
+       v_unit_price * v_qty, (v_unit_price - v_product.cost) * v_qty);
+
+    v_subtotal := v_subtotal + v_unit_price * v_qty;
+    v_total_cost := v_total_cost + v_product.cost * v_qty;
+    v_profit := v_profit + (v_unit_price - v_product.cost) * v_qty;
+  end loop;
+
+  -- Net of the marketplace fees, exactly like checkout_sale() — delivery
+  -- only comes off profit when the seller (not the buyer) paid it.
+  v_profit := v_profit - (
+    v_buyer_protection_fee + v_vat + v_advertising_cost +
+    case when v_delivery_paid_by = 'seller' then v_delivery_cost else 0 end
+  );
+
+  update public.sales
+    set
+      channel = coalesce(payload->>'channel', ''),
+      payment_method = payload->>'paymentMethod',
+      subtotal = v_subtotal,
+      total_cost = v_total_cost,
+      profit = v_profit,
+      buyer_protection_fee = v_buyer_protection_fee,
+      delivery_cost = v_delivery_cost,
+      delivery_paid_by = v_delivery_paid_by,
+      vat = v_vat,
+      advertising_cost = v_advertising_cost,
+      order_total = v_order_total
+    where id = v_sale_id and user_id = v_account
+    returning * into v_sale;
+
+  return v_sale;
+end;
+$$;
+
+grant execute on function public.edit_sale(jsonb) to authenticated;
 
 -- Returns, refunds, replacements and goodwill gestures ----------------------
 --
@@ -1180,13 +1415,18 @@ create table if not exists public.account_settings (
   -- Named, saved label layouts (e.g. "Shipping label", "RV") a user can
   -- switch back to over label_template at any time — see LabelPreset.
   label_presets jsonb not null default '[]'::jsonb,
+  -- Saved reference codes (printer maintenance commands, Wi-Fi joins,
+  -- supplier links, etc.) shown on screen for scanning — see QuickCode.
+  quick_codes jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
 -- `create table if not exists` above only helps on a brand new install —
 -- on an account_settings table that already existed before label presets
--- were added, this is what actually adds the column, safely, every re-run.
+-- or quick codes were added, this is what actually adds the column,
+-- safely, every re-run.
 alter table public.account_settings add column if not exists label_presets jsonb not null default '[]'::jsonb;
+alter table public.account_settings add column if not exists quick_codes jsonb not null default '[]'::jsonb;
 
 alter table public.account_settings enable row level security;
 

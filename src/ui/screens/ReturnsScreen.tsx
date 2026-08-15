@@ -6,7 +6,11 @@ import {
   addReplacementLine,
   addReturnLine,
   breakdownByAction,
+  buildEditReplacementCart,
+  buildEditReturnCart,
   buildReturnCaseInput,
+  editReplacementCartHasIssues,
+  editReplacementLineIssue,
   emptyReplacementCart,
   emptyReturnCart,
   removeReplacementLine,
@@ -40,6 +44,7 @@ import {
   type Sale,
   type StockDisposition,
 } from '../../domain/types'
+import { Dialog } from '../components/Dialog'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
 import { formatDateTime, formatNumber } from '../format'
 
@@ -50,6 +55,103 @@ export interface ReturnsScreenProps {
   sales: Sale[]
   returns: ReturnCase[]
   onRecordReturn: (input: ReturnCaseInput) => Promise<Result<ReturnCase>>
+  onUpdateReturn: (id: string, input: ReturnCaseInput) => Promise<Result<ReturnCase>>
+}
+
+/** Read-only drill-down for one past case, opened from a row in the list
+ * below. A manager can jump straight from here into editing it, reusing the
+ * same builder at the top of this screen. */
+function ReturnDetailDialog({
+  rc,
+  isManager,
+  onClose,
+  onEdit,
+}: {
+  rc: ReturnCase
+  isManager: boolean
+  onClose: () => void
+  onEdit: () => void
+}) {
+  const impact = returnImpact(rc)
+  return (
+    <Dialog title="Return case" onClose={onClose}>
+      <p className="muted">{formatDateTime(rc.createdAt)}</p>
+      {rc.updatedAt && <p className="muted">Last edited {formatDateTime(rc.updatedAt)}</p>}
+      <p className="muted">{rc.customerRef || rc.channel || 'Unspecified'}</p>
+      <div className="channel-picker">
+        {rc.actions.map((action) => (
+          <span key={action} className="badge">
+            {RETURN_ACTION_LABELS[action]}
+          </span>
+        ))}
+      </div>
+      {rc.reason && <p>Reason: {rc.reason}</p>}
+      {rc.notes && <p className="muted">{rc.notes}</p>}
+
+      {rc.returnLines.length > 0 && (
+        <>
+          <p className="muted">Items returned</p>
+          <table className="receipt-lines">
+            <tbody>
+              {rc.returnLines.map((line) => (
+                <tr key={line.id}>
+                  <td>
+                    {line.quantity} × {line.name} ({line.sku}) — {STOCK_DISPOSITION_LABELS[line.disposition]}
+                  </td>
+                  {isManager && (
+                    <td className="receipt-amount">{(line.unitCost * line.quantity).toFixed(2)}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {rc.replacementLines.length > 0 && (
+        <>
+          <p className="muted">Replacement sent</p>
+          <table className="receipt-lines">
+            <tbody>
+              {rc.replacementLines.map((line) => (
+                <tr key={line.id}>
+                  <td>
+                    {line.quantity} × {line.name} ({line.sku})
+                  </td>
+                  {isManager && (
+                    <td className="receipt-amount">{(line.unitCost * line.quantity).toFixed(2)}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {rc.refundAmount > 0 && (
+        <p>
+          Refund: {rc.refundAmount.toFixed(2)} ({rc.refundMethod ? PAYMENT_METHOD_LABELS[rc.refundMethod] : 'Unspecified'})
+        </p>
+      )}
+      {rc.goodwillValue > 0 && (
+        <p>
+          Goodwill: {rc.goodwillValue.toFixed(2)} ({rc.goodwillType || 'unspecified'})
+        </p>
+      )}
+      {isManager && <p className="muted">Total cost to business: {impact.totalCost.toFixed(2)}</p>}
+
+      <div className="dialog-actions">
+        {isManager && (
+          <button type="button" className="button" onClick={onEdit}>
+            Edit case
+          </button>
+        )}
+        <button type="button" className="button button-ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </Dialog>
+  )
 }
 
 type Range = 'today' | '7d' | '30d' | 'all'
@@ -96,7 +198,14 @@ const emptyDraft = (): {
   goodwillValue: '',
 })
 
-export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }: ReturnsScreenProps) {
+export function ReturnsScreen({
+  products,
+  role,
+  sales,
+  returns,
+  onRecordReturn,
+  onUpdateReturn,
+}: ReturnsScreenProps) {
   const isManager = role === 'manager'
   const saleId = useId()
   const channelId = useId()
@@ -118,6 +227,8 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
   const [saving, setSaving] = useState(false)
   const [lastCase, setLastCase] = useState<ReturnCase | null>(null)
   const [range, setRange] = useState<Range>('7d')
+  const [viewingCase, setViewingCase] = useState<ReturnCase | null>(null)
+  const [editingCaseId, setEditingCaseId] = useState<string | null>(null)
 
   const returnMatches = useMemo(() => {
     if (!returnQuery.trim()) return []
@@ -147,6 +258,11 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
     }))
   }
 
+  const editingCase = useMemo(
+    () => (editingCaseId ? returns.find((rc) => rc.id === editingCaseId) : undefined),
+    [editingCaseId, returns],
+  )
+
   const inRange = useMemo(() => returnsSince(returns, rangeStart(range)), [returns, range])
   const summary = useMemo(() => summariseReturns(inRange), [inRange])
   const byAction = useMemo(() => breakdownByAction(inRange), [inRange])
@@ -157,6 +273,36 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
     setDraft(emptyDraft())
     setReturnQuery('')
     setReplacementQuery('')
+  }
+
+  /** Seeds the case-builder above from a previously saved case, switching
+   * the screen into edit mode — rather than a separate dialog-based editor,
+   * this reuses the same builder the case was originally created in. */
+  const startEdit = (rc: ReturnCase) => {
+    setReturnCart(buildEditReturnCart(rc, products))
+    setReplacementCart(buildEditReplacementCart(rc, products))
+    setDraft({
+      saleId: rc.saleId,
+      channel: rc.channel,
+      customerRef: rc.customerRef,
+      reason: rc.reason,
+      notes: rc.notes,
+      actions: rc.actions,
+      refundAmount: rc.refundAmount ? String(rc.refundAmount) : '',
+      refundMethod: rc.refundMethod ?? 'cash',
+      goodwillType: rc.goodwillType,
+      goodwillValue: rc.goodwillValue ? String(rc.goodwillValue) : '',
+    })
+    setReturnQuery('')
+    setReplacementQuery('')
+    setError(null)
+    setEditingCaseId(rc.id)
+    setViewingCase(null)
+  }
+
+  const cancelEdit = () => {
+    setEditingCaseId(null)
+    resetForm()
   }
 
   const submit = async () => {
@@ -181,24 +327,42 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
       setError(validation.error)
       return
     }
-    if (replacementCartHasIssues(replacementCart)) {
+
+    const cartIssues = editingCase
+      ? editReplacementCartHasIssues(replacementCart, editingCase)
+      : replacementCartHasIssues(replacementCart)
+    if (cartIssues) {
       setError('Fix the stock issues below before saving.')
       return
     }
 
     setSaving(true)
-    const result = await onRecordReturn(input)
+    const result = editingCaseId
+      ? await onUpdateReturn(editingCaseId, input)
+      : await onRecordReturn(input)
     setSaving(false)
     if (!result.ok) {
       setError(result.error)
       return
     }
     setLastCase(result.value)
+    setEditingCaseId(null)
     resetForm()
   }
 
   return (
     <div className="screen">
+      {editingCaseId && (
+        <section className="panel" data-testid="return-edit-banner">
+          <div className="toolbar">
+            <p className="muted">Editing a past case — saving will replace it.</p>
+            <button type="button" className="button button-ghost" onClick={cancelEdit}>
+              Cancel edit
+            </button>
+          </div>
+        </section>
+      )}
+
       <section className="panel">
         <h2>Link to a sale</h2>
         <p className="muted">Optional — connects this case back to the original till transaction.</p>
@@ -354,7 +518,7 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
         {replacementCart.length > 0 && (
           <ul className="plain-list cart-list">
             {replacementCart.map((line) => {
-              const issue = replacementLineIssue(line)
+              const issue = editingCase ? editReplacementLineIssue(line, editingCase) : replacementLineIssue(line)
               return (
                 <li key={line.product.id} className="cart-row" data-testid="replacement-cart-row">
                   <div className="cart-identity">
@@ -543,7 +707,7 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
         disabled={saving}
         onClick={submit}
       >
-        {saving ? 'Saving case…' : 'Save case'}
+        {saving ? 'Saving…' : editingCaseId ? 'Save changes' : 'Save case'}
       </button>
 
       {lastCase && (
@@ -666,6 +830,7 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
                     </div>
                     <div className="history-meta">
                       <span className="muted">{formatDateTime(rc.createdAt)}</span>
+                      {rc.updatedAt && <span className="badge">Edited</span>}
                       {rc.reason && <span className="reason">{rc.reason}</span>}
                       {rc.returnLines.length > 0 && (
                         <span className="muted">
@@ -675,6 +840,15 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
                         </span>
                       )}
                     </div>
+                    <div className="dialog-actions">
+                      <button
+                        type="button"
+                        className="button button-ghost"
+                        onClick={() => setViewingCase(rc)}
+                      >
+                        View details
+                      </button>
+                    </div>
                   </li>
                 )
               })}
@@ -682,6 +856,15 @@ export function ReturnsScreen({ products, role, sales, returns, onRecordReturn }
           </>
         )}
       </section>
+
+      {viewingCase && (
+        <ReturnDetailDialog
+          rc={viewingCase}
+          isManager={isManager}
+          onClose={() => setViewingCase(null)}
+          onEdit={() => startEdit(viewingCase)}
+        />
+      )}
     </div>
   )
 }

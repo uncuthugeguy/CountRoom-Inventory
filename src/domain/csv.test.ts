@@ -120,8 +120,31 @@ describe('salesToCsv', () => {
 
   it('exports the sale columns with items summarised', () => {
     const lines = salesToCsv([sale]).split('\r\n')
-    expect(lines[0]).toBe('Timestamp,Channel,Payment Method,Items,Subtotal,Cost,Profit')
-    expect(lines[1]).toBe('2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,15.00')
+    expect(lines[0]).toBe(
+      'Timestamp,Channel,Payment Method,Items,Subtotal,Cost,Buyer Protection Fee,Delivery Cost,Delivery Paid By,VAT,Advertising Cost,Order Total,Profit',
+    )
+    // No fees were entered on this sale, so every fee column reads as a
+    // plain 0.00 (or blank, for the reconciliation-only order total) rather
+    // than throwing on the missing/optional fields.
+    expect(lines[1]).toBe(
+      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,0.00,0.00,Me,0.00,0.00,,15.00',
+    )
+  })
+
+  it('exports marketplace fees and a buyer-paid order total when they were entered', () => {
+    const withFees: Sale = {
+      ...sale,
+      buyerProtectionFee: 1.5,
+      deliveryCost: 3.99,
+      deliveryPaidBy: 'buyer',
+      vat: 2.1,
+      advertisingCost: 0.75,
+      orderTotal: 30.49,
+    }
+    const lines = salesToCsv([withFees]).split('\r\n')
+    expect(lines[1]).toBe(
+      '2026-02-02T10:00:00.000Z,eBay,Card,5x BLT-M6,25.00,10.00,1.50,3.99,Buyer,2.10,0.75,30.49,15.00',
+    )
   })
 })
 

@@ -299,6 +299,7 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
   const [team, setTeam] = useState<TeamMember[] | null>(null)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = async () => {
@@ -316,6 +317,7 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
     const trimmed = email.trim()
     if (!trimmed) return
     setError(null)
+    setInfo(null)
     setBusy(true)
     const result = await inventory.inviteEmployee(trimmed)
     setBusy(false)
@@ -323,6 +325,13 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
       setError(result.error)
       return
     }
+    setInfo(
+      result.value.emailSent === true
+        ? `Invited — a sign-in email is on its way to ${trimmed}.`
+        : result.value.emailSent === false
+          ? `Added ${trimmed} to your team, but the sign-in email couldn't be sent automatically — ask them to visit the site and sign in with this exact email themselves.`
+          : `Added ${trimmed} to your team.`,
+    )
     setEmail('')
     await load()
   }
@@ -341,8 +350,8 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
     <section className="panel">
       <h2>Team</h2>
       <p className="muted">
-        Invite an employee by email — they sign up for StockFlow themselves with that exact
-        address and land in this business automatically, with restricted access: no cost or
+        Invite an employee by email — we'll send them a sign-in link at that address, and once
+        they use it they land in this business automatically, with restricted access: no cost or
         profit figures, no deleting products, no price overrides at checkout, no refunds,
         goodwill gestures or write-offs, and no approving a stocktake recount.
       </p>
@@ -379,6 +388,7 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
           {error}
         </p>
       )}
+      {info && <p className="preview">{info}</p>}
 
       <form className="toolbar" onSubmit={invite}>
         <div className="field field-grow">
@@ -391,7 +401,10 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
             placeholder="their.email@example.com"
             onChange={(event) => setEmail(event.target.value)}
           />
-          <p className="hint">Invite first, then have them sign up using this exact email.</p>
+          <p className="hint">
+            We'll email them a sign-in link. If it doesn't arrive, they can still sign in any time
+            with this exact email to join.
+          </p>
         </div>
         <div className="toolbar-actions">
           <button type="submit" className="button button-primary" disabled={busy}>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createSettingsStore } from '../data/settingsStorage'
 import type { Settings } from '../data/settingsStorage'
+import type { QuickCode, QuickCodeDraft } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
 
 export interface SettingsApi extends Settings {
@@ -15,11 +16,15 @@ export interface SettingsApi extends Settings {
   applyLabelPreset(id: string): void
   renameLabelPreset(id: string, newName: string): void
   deleteLabelPreset(id: string): void
+  addQuickCode(draft: QuickCodeDraft): string
+  updateQuickCode(id: string, patch: Partial<QuickCodeDraft>): void
+  deleteQuickCode(id: string): void
   applyRemote(remote: {
     logoDataUrl?: string
     labelTemplate?: LabelTemplate
     saleChannels?: string[]
     labelPresets?: LabelPreset[]
+    quickCodes?: QuickCode[]
   }): void
 }
 
@@ -72,6 +77,19 @@ export function useSettings(storage?: Storage): SettingsApi {
     },
     deleteLabelPreset: (id: string) => {
       store.deleteLabelPreset(id)
+      setSettings(store.get())
+    },
+    addQuickCode: (draft: QuickCodeDraft) => {
+      const id = store.addQuickCode(draft)
+      setSettings(store.get())
+      return id
+    },
+    updateQuickCode: (id: string, patch: Partial<QuickCodeDraft>) => {
+      store.updateQuickCode(id, patch)
+      setSettings(store.get())
+    },
+    deleteQuickCode: (id: string) => {
+      store.deleteQuickCode(id)
       setSettings(store.get())
     },
     applyRemote: (remote) => {

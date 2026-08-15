@@ -1,6 +1,12 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import type { Role } from '../../data/repository'
 import { emptyDraft, knownVariations, nextSku, validateDraft } from '../../domain/products'
+import {
+  clearProductDraft,
+  loadProductDraftFor,
+  saveProductDraft,
+  type ProductDraftContext,
+} from '../../data/productDraftStorage'
 import type { Product, ProductDraft, Result } from '../../domain/types'
 import { Dialog } from './Dialog'
 
@@ -20,6 +26,8 @@ export interface ProductFormDialogProps {
    * instead of just surfacing the error.
    */
   onSubmit: (draft: ProductDraft, opts: { autoSku: boolean }) => Promise<Result<Product>>
+  /** Overridden in tests so the suite never touches the host's real localStorage. */
+  draftStorage?: Storage
 }
 
 const toDraft = (product: Product): ProductDraft => ({
@@ -50,17 +58,42 @@ export function ProductFormDialog({
   role,
   onClose,
   onSubmit,
+  draftStorage,
 }: ProductFormDialogProps) {
   const ids = useId()
+  // Which slot in the autosave a draft for this dialog belongs to — a
+  // specific product being edited, or "new" for the create form (shared by
+  // every "new product" attempt, scanned barcode or not).
+  const context: ProductDraftContext = product ? { kind: 'edit', productId: product.id } : { kind: 'new' }
+  const fallback = () => (product ? toDraft(product) : emptyDraft(barcode ?? ''))
   const [draft, setDraft] = useState<ProductDraft>(
-    product ? toDraft(product) : emptyDraft(barcode ?? ''),
+    () => loadProductDraftFor(context, draftStorage) ?? fallback(),
   )
+  // Whether this dialog opened with unsaved work already sitting in the
+  // autosave — shown as a note with the option to start over instead.
+  const [restored, setRestored] = useState(() => loadProductDraftFor(context, draftStorage) !== null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const variations = knownVariations(products)
 
+  // Autosaves on every change so the form survives a tab switch, the phone
+  // backgrounding the PWA, or an accidental close — cleared only by a
+  // successful save (below) or by signing out (see App.tsx).
+  useEffect(() => {
+    saveProductDraft(context, draft, draftStorage)
+    // context depends only on product?.id/kind, which are already props —
+    // re-deriving it every render is cheap and always current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, draftStorage, product?.id])
+
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }))
+
+  const discardDraft = () => {
+    clearProductDraft(draftStorage)
+    setDraft(fallback())
+    setRestored(false)
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -86,6 +119,7 @@ export function ProductFormDialog({
       setError(result.error)
       return
     }
+    clearProductDraft(draftStorage)
     onClose()
   }
 
@@ -94,6 +128,17 @@ export function ProductFormDialog({
   return (
     <Dialog title={product ? `Edit ${product.name}` : 'New product'} onClose={onClose}>
       <form className="form" onSubmit={submit} noValidate>
+        {restored && (
+          // Text only, deliberately not a focusable control — Dialog focuses
+          // the first input/button on mount so a scan or a keystroke lands
+          // in the barcode field right away; an interactive element here
+          // would steal that focus. The "Discard draft" button lives down in
+          // the actions row instead.
+          <p className="hint" role="status">
+            Picked up where you left off — this wasn't saved yet.
+          </p>
+        )}
+
         <div className="field">
           <label htmlFor={field('barcode')}>Barcode (optional)</label>
           <input
@@ -239,6 +284,11 @@ export function ProductFormDialog({
         )}
 
         <div className="dialog-actions">
+          {restored && (
+            <button type="button" className="button button-ghost" onClick={discardDraft}>
+              Discard draft
+            </button>
+          )}
           <button type="button" className="button button-ghost" onClick={onClose}>
             Cancel
           </button>

@@ -6,6 +6,7 @@ export const TABS = [
   'returns',
   'stocktake',
   'history',
+  'codes',
   'settings',
 ] as const
 
@@ -19,6 +20,7 @@ const LABELS: Record<Tab, string> = {
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
+  codes: 'Quick codes',
   settings: 'Settings',
 }
 
@@ -30,19 +32,23 @@ const ICONS: Record<Tab, string> = {
   returns: '↩',
   stocktake: '☑',
   history: '↻',
+  codes: '⊞',
   settings: '⚙',
 }
 
 export interface NavProps {
   tab: Tab
   onChange: (tab: Tab) => void
+  /** Tabs left out of the bar entirely — e.g. 'codes' for an employee, since
+   * the quick codes library is manager-only. */
+  hiddenTabs?: readonly Tab[]
 }
 
 /** A bottom tab bar on a phone, a sidebar on a desktop — same markup. */
-export function Nav({ tab, onChange }: NavProps) {
+export function Nav({ tab, onChange, hiddenTabs = [] }: NavProps) {
   return (
     <nav className="nav" aria-label="Main">
-      {TABS.map((value) => (
+      {TABS.filter((value) => !hiddenTabs.includes(value)).map((value) => (
         <button
           key={value}
           type="button"

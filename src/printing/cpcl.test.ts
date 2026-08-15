@@ -4,10 +4,12 @@ import type { CpclLogo } from './bitmap'
 import { DEFAULT_LABEL_TEMPLATE } from './labelTemplate'
 
 describe('buildCpclLabel', () => {
-  it('opens with a CPCL header and ends with FORM/PRINT', () => {
+  it('opens with darkness/speed setvars then the CPCL header, and ends with FORM/PRINT', () => {
     const cpcl = buildCpclLabel({ name: 'Widget', sku: 'SKU-001' })
     const lines = cpcl.trim().split('\r\n')
-    expect(lines[0]).toBe(`! 0 ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.heightDots} 1`)
+    expect(lines[0]).toBe(`! U1 setvar "print.tone" "${DEFAULT_LABEL_TEMPLATE.darkness.toFixed(1)}"`)
+    expect(lines[1]).toBe(`! U1 setvar "media.speed" "${DEFAULT_LABEL_TEMPLATE.printSpeedIps}"`)
+    expect(lines[2]).toBe(`! 0 ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.dpi} ${DEFAULT_LABEL_TEMPLATE.heightDots} 1`)
     expect(lines.at(-2)).toBe('FORM')
     expect(lines.at(-1)).toBe('PRINT')
   })
@@ -71,6 +73,9 @@ describe('buildCpclLabel', () => {
         variation: { x: 160, y: 65 },
         barcode: { x: 160, y: 100 },
         sku: { x: 160, y: 180 },
+        darkness: 14,
+        printSpeedIps: 2,
+        include: { name: true, variation: true, barcode: true, sku: true, logo: true },
       },
     })
     const match = /EG 30 100 (\d+) (\d+) /.exec(cpcl)
@@ -87,6 +92,34 @@ describe('buildCpclLabel', () => {
       template: { ...DEFAULT_LABEL_TEMPLATE, barcodeModuleWidth: 4 },
     })
     expect(cpcl).toMatch(/BARCODE 128 4 1 /)
+  })
+
+  it('omits an unticked element from the printed CPCL entirely, keeping the rest', () => {
+    const logo: CpclLogo = { widthBytes: 10, heightDots: 40, hex: 'AB'.repeat(10 * 40) }
+    const cpcl = buildCpclLabel({
+      name: 'Widget',
+      sku: 'SKU-001',
+      variation: 'Blue',
+      logo,
+      template: {
+        ...DEFAULT_LABEL_TEMPLATE,
+        include: { name: false, variation: true, barcode: true, sku: true, logo: false },
+      },
+    })
+    expect(cpcl).not.toContain('Widget')
+    expect(cpcl).not.toContain('EG ')
+    expect(cpcl).toContain('Variation: Blue')
+    expect(cpcl).toMatch(/BARCODE 128 .* SKU-001/)
+  })
+
+  it('drops the barcode line when barcode is unticked but keeps the SKU text', () => {
+    const cpcl = buildCpclLabel({
+      name: 'Widget',
+      sku: 'SKU-001',
+      template: { ...DEFAULT_LABEL_TEMPLATE, include: { name: true, variation: true, barcode: false, sku: true, logo: true } },
+    })
+    expect(cpcl).not.toMatch(/BARCODE 128/)
+    expect(cpcl).toContain('SKU-001')
   })
 
   it('strips embedded line breaks so a rogue value cannot inject a CPCL command', () => {

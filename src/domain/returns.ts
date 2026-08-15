@@ -98,6 +98,55 @@ export function replacementCartHasIssues(cart: ReplacementCart): boolean {
   return cart.some((line) => replacementLineIssue(line) !== null)
 }
 
+/** Rebuilds an editable return cart from a previously recorded case, looking
+ * up each line's current Product by id. A line whose product has since been
+ * deleted is dropped, the same way buildEditCart handles a sale. */
+export function buildEditReturnCart(rc: ReturnCase, products: Product[]): ReturnCart {
+  const byId = new Map(products.map((p) => [p.id, p]))
+  const lines: ReturnCart = []
+  for (const line of rc.returnLines) {
+    const product = byId.get(line.productId)
+    if (!product) continue
+    lines.push({ product, quantity: line.quantity, disposition: line.disposition })
+  }
+  return lines
+}
+
+/** Same idea for the replacement side of a case. */
+export function buildEditReplacementCart(rc: ReturnCase, products: Product[]): ReplacementCart {
+  const byId = new Map(products.map((p) => [p.id, p]))
+  const lines: ReplacementCart = []
+  for (const line of rc.replacementLines) {
+    const product = byId.get(line.productId)
+    if (!product) continue
+    lines.push({ product, quantity: line.quantity })
+  }
+  return lines
+}
+
+/** Stock available for a product while editing this case's replacement
+ * lines, as if the case's original replacement lines had already been
+ * reversed — mirrors the backend's reverse-then-reapply on save, so the
+ * warning doesn't fire for a line that hasn't actually changed. */
+export function editableReplacementStock(product: Product, originalCase: ReturnCase): number {
+  const original = originalCase.replacementLines
+    .filter((line) => line.productId === product.id)
+    .reduce((sum, line) => sum + line.quantity, 0)
+  return product.quantity + original
+}
+
+export function editReplacementLineIssue(line: ReplacementCartLine, originalCase: ReturnCase): string | null {
+  const available = editableReplacementStock(line.product, originalCase)
+  if (line.quantity > available) {
+    return `Only ${available} in stock.`
+  }
+  return null
+}
+
+export function editReplacementCartHasIssues(cart: ReplacementCart, originalCase: ReturnCase): boolean {
+  return cart.some((line) => editReplacementLineIssue(line, originalCase) !== null)
+}
+
 export interface ReturnCaseDraft {
   saleId: string
   channel: string

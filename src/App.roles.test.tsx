@@ -31,7 +31,13 @@ async function renderAs(role: 'manager' | 'employee') {
   const base = createLocalRepository({ storage: memoryStorage(), seed: true })
   const repository = role === 'manager' ? base : asEmployee(base)
   const user = userEvent.setup()
-  render(<App openRepository={async () => repository} settingsStorage={memoryStorage()} />)
+  render(
+    <App
+      openRepository={async () => repository}
+      settingsStorage={memoryStorage()}
+      productDraftStorage={memoryStorage()}
+    />,
+  )
   await screen.findByTestId('stat-products')
   return { user }
 }
@@ -108,5 +114,39 @@ describe('employee role', () => {
 
     const approve = screen.queryByRole('button', { name: /approve/i })
     if (approve) expect(approve).toBeDisabled()
+  })
+
+  it('hides the Quick codes tab from an employee', async () => {
+    await renderAs('employee')
+
+    expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /quick codes/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the Quick codes tab for a manager', async () => {
+    const { user } = await renderAs('manager')
+
+    expect(within(screen.getByRole('navigation')).getByRole('button', { name: /quick codes/i })).toBeInTheDocument()
+    await go(user, /quick codes/i)
+    expect(await screen.findByText(/no codes saved yet/i)).toBeInTheDocument()
+  })
+
+  it('hides marketplace fees (and the profit they feed into) from an employee at checkout', async () => {
+    const { user } = await renderAs('employee')
+    await go(user, /checkout/i)
+
+    expect(screen.queryByRole('heading', { name: /marketplace fees/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/est\. profit/i)).not.toBeInTheDocument()
+  })
+
+  it('shows marketplace fees to a manager at checkout', async () => {
+    const { user } = await renderAs('manager')
+    await go(user, /checkout/i)
+
+    expect(screen.getByRole('heading', { name: /marketplace fees/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/buyer protection fee/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^vat$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/delivery cost/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/advertising cost/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/order total/i)).toBeInTheDocument()
   })
 })

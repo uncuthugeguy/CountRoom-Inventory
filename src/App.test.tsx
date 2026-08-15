@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -58,10 +58,12 @@ function buildStaleSkuRepo(): InventoryRepository {
       return []
     },
     recordSale: vi.fn(),
+    updateSale: vi.fn(),
     async listReturns() {
       return []
     },
     recordReturn: vi.fn(),
+    updateReturn: vi.fn(),
     async listTeam() {
       return [{ id: 'you', email: 'You', role: 'manager' as const, status: 'active' as const, isYou: true }]
     },
@@ -97,7 +99,11 @@ async function renderApp(repo?: InventoryRepository) {
   const repository = repo ?? createLocalRepository({ storage: memoryStorage(), seed: true })
   const user = userEvent.setup()
   render(
-    <App openRepository={async () => repository} settingsStorage={memoryStorage()} />,
+    <App
+      openRepository={async () => repository}
+      settingsStorage={memoryStorage()}
+      productDraftStorage={memoryStorage()}
+    />,
   )
   await screen.findByTestId('stat-products')
   return { user, repository }
@@ -410,6 +416,97 @@ describe('history', () => {
     expect(text).toContain('Timestamp,Product,Type,Quantity,Delta,Previous,New,Reason')
     expect(text).toContain('Nitrile Gloves (L)')
   })
+
+  it('shows the full detail for a stock movement on click', async () => {
+    const { user } = await renderApp()
+    await go(user, /products/i)
+
+    await user.click(screen.getByRole('button', { name: /stock out m6 flat washer/i }))
+    const dialog = screen.getByRole('dialog')
+    await user.clear(within(dialog).getByLabelText(/quantity/i))
+    await user.type(within(dialog).getByLabelText(/quantity/i), '4')
+    await user.type(within(dialog).getByLabelText(/reason/i), 'Job 42')
+    await user.click(within(dialog).getByRole('button', { name: /record movement/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await go(user, /history/i)
+    const row = screen.getByTestId('movement-row')
+    await user.click(within(row).getByRole('button', { name: /view details/i }))
+
+    const detail = screen.getByRole('dialog')
+    expect(detail).toHaveTextContent('M6 Flat Washer')
+    expect(detail).toHaveTextContent('Job 42')
+    expect(detail).toHaveTextContent('64 → 60')
+  })
+})
+
+describe('editing a past sale', () => {
+  it('lets a manager change quantities on a completed sale, reflecting in stock and the sale record', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: quantity 64, price 0.05.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+
+    const receipt = screen.getByRole('dialog')
+    await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
+
+    const editDialog = screen.getByRole('dialog')
+    const qty = within(editDialog).getByLabelText(/quantity for m6 flat washer/i)
+    // number inputs don't support setSelectionRange in jsdom, so clear+type
+    // can't select-and-replace the existing digit; fire the change directly.
+    fireEvent.change(qty, { target: { value: '3' } })
+    await user.click(within(editDialog).getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByTestId('sale-row')).toHaveTextContent('0.15')
+    expect(screen.getByTestId('sale-row')).toHaveTextContent('Edited')
+
+    await go(user, /products/i)
+    const productRow = screen
+      .getAllByTestId('product-row')
+      .find((r) => r.textContent?.includes('M6 Flat Washer'))
+    // 64 in stock originally, -3 after the edit replaces the original -1 sale.
+    expect(productRow).toHaveTextContent('61')
+  })
+
+  it('refuses to save an edit that oversells the current stock', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // Battery Pack 18V 4Ah: quantity 2, price 34.99.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '4006381333948')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '40')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    const receipt = screen.getByRole('dialog')
+    await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
+
+    const editDialog = screen.getByRole('dialog')
+    const qty = within(editDialog).getByLabelText(/quantity for battery pack/i)
+    fireEvent.change(qty, { target: { value: '9' } })
+    expect(within(editDialog).getByText(/only 2 in stock/i)).toBeInTheDocument()
+
+    await user.click(within(editDialog).getByRole('button', { name: /save changes/i }))
+    expect(await within(editDialog).findByText(/fix the stock issues/i)).toBeInTheDocument()
+  })
 })
 
 describe('stocktake', () => {
@@ -614,6 +711,42 @@ describe('checkout', () => {
     expect(productBreakdown).toHaveTextContent('1 sold')
     expect(productBreakdown).toHaveTextContent('revenue 0.05')
     expect(productBreakdown).toHaveTextContent('profit 0.04')
+  })
+
+  it('nets marketplace fees out of profit, deducting delivery only when the seller paid it', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: cost 0.01, price 0.05 → cart profit 0.04 before fees.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+
+    await user.type(screen.getByLabelText(/buyer protection fee/i), '1')
+    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
+    await user.type(screen.getByLabelText(/advertising cost/i), '0.25')
+    await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    // Buyer paid for delivery themselves, so it should NOT come off profit —
+    // only the buyer protection fee, VAT and advertising cost should.
+    await user.click(screen.getByRole('button', { name: /^buyer$/i }))
+
+    // 0.04 - (1 + 0.5 + 0.25) = -1.71; delivery excluded since the buyer paid it.
+    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: -1.71')
+
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+
+    const lastSale = await screen.findByTestId('last-sale')
+    expect(lastSale).toHaveTextContent('profit -1.71')
+    const feesLine = screen.getByTestId('last-sale-fees')
+    expect(feesLine).toHaveTextContent('Buyer protection 1.00')
+    expect(feesLine).toHaveTextContent('Delivery 2.00 (Buyer paid)')
+    expect(feesLine).toHaveTextContent('VAT 0.50')
+    expect(feesLine).toHaveTextContent('Advertising 0.25')
+
+    // The marketplace fees reset for the next sale rather than carrying over.
+    expect(screen.getByLabelText(/buyer protection fee/i)).toHaveValue(null)
   })
 
   it('routes a wedge scan to the cart instead of the scan screen while on checkout', async () => {
@@ -837,5 +970,40 @@ describe('returns', () => {
     await user.click(screen.getByRole('button', { name: /save case/i }))
 
     expect(await screen.findByTestId('last-return')).toBeInTheDocument()
+  })
+
+  it('drills into a past case and lets a manager edit it', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await user.type(screen.getByLabelText(/search products to return/i), 'washer')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByTestId('return-cart-row')
+
+    await user.click(screen.getByRole('button', { name: 'Refund' }))
+    await user.type(screen.getByLabelText(/refund amount/i), '2.50')
+    await user.type(screen.getByLabelText(/^channel$/i), 'eBay')
+    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await screen.findByTestId('last-return')
+
+    const row = screen.getByTestId('return-case-row')
+    await user.click(within(row).getByRole('button', { name: /view details/i }))
+
+    const detail = screen.getByRole('dialog')
+    expect(detail).toHaveTextContent('Refund')
+    expect(detail).toHaveTextContent('2.50')
+
+    await user.click(within(detail).getByRole('button', { name: /edit case/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    expect(screen.getByTestId('return-edit-banner')).toBeInTheDocument()
+    const refundInput = screen.getByLabelText(/refund amount/i)
+    await user.clear(refundInput)
+    await user.type(refundInput, '5.00')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(screen.queryByTestId('return-edit-banner')).toBeNull())
+    expect(screen.getByTestId('returns-refund-total')).toHaveTextContent('5.00')
+    expect(screen.getByTestId('return-case-row')).toHaveTextContent('Edited')
   })
 })

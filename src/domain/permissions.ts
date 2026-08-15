@@ -59,4 +59,6 @@ export const MANAGER_ONLY = {
   refundOrGoodwillOrWriteoff:
     'Only a manager can process a refund, goodwill gesture, or write-off.',
   inviteTeam: 'Only a manager can invite team members.',
+  editSale: 'Only a manager can edit a sale.',
+  editReturn: 'Only a manager can edit a return.',
 } as const

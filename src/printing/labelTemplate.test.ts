@@ -83,4 +83,29 @@ describe('sanitiseLabelTemplate', () => {
     expect(result.barcode.y).toBeLessThanOrEqual(DEFAULT_LABEL_TEMPLATE.heightDots - 60)
     expect(result.barcode.x).toBeLessThan(nearEdge.x)
   })
+
+  it('clamps darkness and print speed to Zebra\'s documented SGD ranges', () => {
+    expect(sanitiseLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, darkness: -5 }).darkness).toBe(0)
+    expect(sanitiseLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, darkness: 999 }).darkness).toBe(30)
+    expect(sanitiseLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, printSpeedIps: 0 }).printSpeedIps).toBe(2)
+    expect(sanitiseLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, printSpeedIps: 999 }).printSpeedIps).toBe(12)
+  })
+
+  it('fills in darkness/print speed from an older saved template that predates them', () => {
+    const { darkness: _d, printSpeedIps: _s, ...withoutPrintSettings } = DEFAULT_LABEL_TEMPLATE
+    const result = sanitiseLabelTemplate(withoutPrintSettings as typeof DEFAULT_LABEL_TEMPLATE)
+    expect(result.darkness).toBe(DEFAULT_LABEL_TEMPLATE.darkness)
+    expect(result.printSpeedIps).toBe(DEFAULT_LABEL_TEMPLATE.printSpeedIps)
+  })
+
+  it('defaults every element to visible on a template saved before per-element visibility existed', () => {
+    const { include: _i, ...withoutInclude } = DEFAULT_LABEL_TEMPLATE
+    const result = sanitiseLabelTemplate(withoutInclude as typeof DEFAULT_LABEL_TEMPLATE)
+    expect(result.include).toEqual({ name: true, variation: true, barcode: true, sku: true, logo: true })
+  })
+
+  it('keeps an explicitly hidden element hidden, and defaults any other missing key to visible', () => {
+    const result = sanitiseLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, include: { logo: false } as never })
+    expect(result.include).toEqual({ name: true, variation: true, barcode: true, sku: true, logo: false })
+  })
 })

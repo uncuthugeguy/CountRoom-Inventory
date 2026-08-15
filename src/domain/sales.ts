@@ -1,4 +1,4 @@
-import type { PaymentMethod, Product, Sale, SaleInput } from './types'
+import type { DeliveryPaidBy, PaymentMethod, Product, Sale, SaleInput } from './types'
 
 /** One line of a sale in progress — not yet submitted to the repository. */
 export interface CartLine {
@@ -68,12 +68,101 @@ export function cartHasIssues(cart: Cart): boolean {
   return cart.some((line) => cartLineIssue(line) !== null)
 }
 
+/** Order-level marketplace fees, as free-text form state — a blank field
+ * reads as "not entered" rather than as a hard zero, so a form can start
+ * empty without every field showing a misleading `0.00`. */
+export interface SaleFeesDraft {
+  buyerProtectionFee: string
+  deliveryCost: string
+  deliveryPaidBy: DeliveryPaidBy
+  vat: string
+  advertisingCost: string
+  /** The buyer's total from the marketplace's own order summary — a
+   * reconciliation figure only, not part of the profit calculation. */
+  orderTotal: string
+}
+
+export const EMPTY_SALE_FEES_DRAFT: SaleFeesDraft = {
+  buyerProtectionFee: '',
+  deliveryCost: '',
+  deliveryPaidBy: 'seller',
+  vat: '',
+  advertisingCost: '',
+  orderTotal: '',
+}
+
+/** A `SaleFeesDraft`'s fields, resolved down to concrete numbers/choices —
+ * what actually gets sent to a repository and what profit math runs against.
+ * A blank amount resolves to 0; a blank order total resolves to `null`
+ * ("not entered") rather than 0, since 0 would be a real (if unusual) value. */
+export interface ResolvedSaleFees {
+  buyerProtectionFee: number
+  deliveryCost: number
+  deliveryPaidBy: DeliveryPaidBy
+  vat: number
+  advertisingCost: number
+  orderTotal: number | null
+}
+
+const parseAmount = (raw: string): number => {
+  const n = Number(raw)
+  return raw.trim() !== '' && Number.isFinite(n) ? n : 0
+}
+
+export function resolveSaleFeesDraft(draft: SaleFeesDraft): ResolvedSaleFees {
+  const orderTotalRaw = Number(draft.orderTotal)
+  const orderTotal = draft.orderTotal.trim() !== '' && Number.isFinite(orderTotalRaw) ? orderTotalRaw : null
+  return {
+    buyerProtectionFee: parseAmount(draft.buyerProtectionFee),
+    deliveryCost: parseAmount(draft.deliveryCost),
+    deliveryPaidBy: draft.deliveryPaidBy,
+    vat: parseAmount(draft.vat),
+    advertisingCost: parseAmount(draft.advertisingCost),
+    orderTotal,
+  }
+}
+
+/** Rebuilds an editable fees draft from a previously recorded sale, the
+ * `SaleFeesDraft` counterpart to `buildEditCart` below — a missing/zero
+ * amount is shown as a blank field rather than a literal "0", matching how
+ * the field looked before anything was typed into it. */
+export function saleFeesDraftFromSale(sale: Pick<Sale, 'buyerProtectionFee' | 'deliveryCost' | 'deliveryPaidBy' | 'vat' | 'advertisingCost' | 'orderTotal'>): SaleFeesDraft {
+  const str = (n: number | undefined): string => (n ? String(n) : '')
+  return {
+    buyerProtectionFee: str(sale.buyerProtectionFee),
+    deliveryCost: str(sale.deliveryCost),
+    deliveryPaidBy: sale.deliveryPaidBy ?? 'seller',
+    vat: str(sale.vat),
+    advertisingCost: str(sale.advertisingCost),
+    orderTotal: sale.orderTotal !== null && sale.orderTotal !== undefined ? String(sale.orderTotal) : '',
+  }
+}
+
+/** How much of a sale's order-level fees actually come out of the seller's
+ * own pocket — delivery only counts here when the seller (not the buyer)
+ * paid for it; buyer-paid delivery never touches what the seller keeps. */
+export function saleFeeTotal(fees: {
+  buyerProtectionFee: number
+  deliveryCost: number
+  deliveryPaidBy: DeliveryPaidBy
+  vat: number
+  advertisingCost: number
+}): number {
+  return (
+    fees.buyerProtectionFee +
+    fees.vat +
+    fees.advertisingCost +
+    (fees.deliveryPaidBy === 'seller' ? fees.deliveryCost : 0)
+  )
+}
+
 export function buildSaleInput(
   cart: Cart,
   channel: string,
   paymentMethod: PaymentMethod,
+  feesDraft?: SaleFeesDraft,
 ): SaleInput {
-  return {
+  const base: SaleInput = {
     channel: channel.trim(),
     paymentMethod,
     lines: cart.map((line) => ({
@@ -82,6 +171,46 @@ export function buildSaleInput(
       unitPrice: line.unitPrice,
     })),
   }
+  if (!feesDraft) return base
+  return { ...base, ...resolveSaleFeesDraft(feesDraft) }
+}
+
+/** Rebuilds an editable cart from a previously recorded sale, looking up each
+ * line's current Product by id so quantity/price edits — or removing a line
+ * entirely — work exactly like Checkout. A line whose product has since been
+ * deleted is dropped; there's no way to edit a line with nothing left to sell. */
+export function buildEditCart(sale: Sale, products: Product[]): Cart {
+  const byId = new Map(products.map((p) => [p.id, p]))
+  const lines: Cart = []
+  for (const line of sale.lines) {
+    const product = byId.get(line.productId)
+    if (!product) continue
+    lines.push({ product, quantity: line.quantity, unitPrice: line.unitPrice })
+  }
+  return lines
+}
+
+/** Stock available for a product while editing this sale, as if the sale's
+ * original lines had already been reversed — mirrors the reverse-then-reapply
+ * logic the backend applies on save, so the on-screen warning doesn't fire
+ * for a line that hasn't actually changed. */
+export function editableStock(product: Product, originalSale: Sale): number {
+  const original = originalSale.lines
+    .filter((line) => line.productId === product.id)
+    .reduce((sum, line) => sum + line.quantity, 0)
+  return product.quantity + original
+}
+
+export function editCartLineIssue(line: CartLine, originalSale: Sale): string | null {
+  const available = editableStock(line.product, originalSale)
+  if (line.quantity > available) {
+    return `Only ${available} in stock.`
+  }
+  return null
+}
+
+export function editCartHasIssues(cart: Cart, originalSale: Sale): boolean {
+  return cart.some((line) => editCartLineIssue(line, originalSale) !== null)
 }
 
 export interface SalesSummary {

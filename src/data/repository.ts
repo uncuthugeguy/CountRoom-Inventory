@@ -14,19 +14,22 @@ import type {
   SaleInput,
   StockMovement,
 } from '../domain/types'
+import type { QuickCode } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
 
 /**
- * The label logo, label template, saved label presets and sale channels —
- * shared account-wide (not per-person, unlike Profile), so whoever last
- * saved a change is what everyone on the account sees next time they open
- * the app. Any field left out of a `setAccountSettings` patch is left as-is.
+ * The label logo, label template, saved label presets, sale channels and
+ * quick-reference codes — shared account-wide (not per-person, unlike
+ * Profile), so whoever last saved a change is what everyone on the account
+ * sees next time they open the app. Any field left out of a
+ * `setAccountSettings` patch is left as-is.
  */
 export interface AccountSettingsSync {
   logoDataUrl?: string
   labelTemplate?: LabelTemplate
   saleChannels?: string[]
   labelPresets?: LabelPreset[]
+  quickCodes?: QuickCode[]
 }
 
 /**
@@ -51,6 +54,16 @@ export interface TeamMember {
   status: 'active' | 'pending'
   /** True when this row is the person currently signed in. */
   isYou: boolean
+  /**
+   * Only meaningful on the row `inviteEmployee` just returned, never on rows
+   * from `listTeam`. `true` once a sign-in email has actually been sent to a
+   * brand-new invite so they can get started without being told to visit the
+   * site themselves; `false` if sending it failed (they were still added to
+   * the team — just tell them to sign in manually); `undefined` when no
+   * email was attempted at all (e.g. they already had a StockFlow login
+   * elsewhere and were linked in immediately).
+   */
+  emailSent?: boolean
 }
 
 export interface InventoryRepository {
@@ -67,12 +80,25 @@ export interface InventoryRepository {
   listSales(): Promise<Sale[]>
   /** Decrements stock for every line and records the sale as one atomic unit. */
   recordSale(input: SaleInput): Promise<Result<Sale>>
+  /**
+   * Manager-only. Fully replaces a past sale's items, quantities and prices.
+   * Atomically reverses the original sale's stock effect and reapplies the
+   * edited one — so the product catalogue always reflects the *current*
+   * version of the sale, no matter how many times it's been edited.
+   */
+  updateSale(id: string, input: SaleInput): Promise<Result<Sale>>
   listReturns(): Promise<ReturnCase[]>
   /**
    * Applies the stock effects of a return case (restocking, writing off,
    * handing out a replacement) and records the case as one atomic unit.
    */
   recordReturn(input: ReturnCaseInput): Promise<Result<ReturnCase>>
+  /**
+   * Manager-only. Fully replaces a past return case — items, quantities,
+   * dispositions, replacements, refund/goodwill — atomically reversing the
+   * original case's stock effect and reapplying the edited one.
+   */
+  updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>>
   /** The account owner plus every invited employee, active or still pending. */
   listTeam(): Promise<TeamMember[]>
   /** Manager-only. Invites (or re-links) an employee by email. */
@@ -109,5 +135,7 @@ export const DUPLICATE_BARCODE = 'That barcode is already used by another produc
 export const DUPLICATE_SKU = 'That SKU is already used by another product.'
 export const EMPTY_SALE = 'Add at least one item before checking out.'
 export const EMPTY_RETURN = 'Add at least one action, item, refund, or note before saving.'
+export const SALE_NOT_FOUND = 'Sale not found.'
+export const RETURN_NOT_FOUND = 'Return not found.'
 export const TEAM_NOT_SUPPORTED = 'Team accounts need the Supabase backend — this device is running the offline demo store.'
 export const NO_PENDING_CHANGE = "That change request isn't pending any more."

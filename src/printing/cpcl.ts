@@ -31,12 +31,25 @@ export function buildCpclLabel({
   const t = template
 
   const lines: string[] = [
+    // Zebra SGD (Set/Get/Do) commands, embedded ahead of the label format
+    // itself — darkness and speed aren't things CPCL's own TEXT/BARCODE/EG
+    // commands control, they're printer state. Sending them on every label
+    // (rather than relying on whatever's already set on the printer) means
+    // a print always comes out the same regardless of what the front panel
+    // was last left at.
+    `! U1 setvar "print.tone" "${t.darkness.toFixed(1)}"`,
+    `! U1 setvar "media.speed" "${t.printSpeedIps}"`,
     // offset, x-resolution, y-resolution, label length in dots, copies
     `! 0 ${t.dpi} ${t.dpi} ${t.heightDots} 1`,
     `PAGE-WIDTH ${t.widthDots}`,
   ]
 
-  if (logo) {
+  // An unticked element (see LabelElementVisibility) keeps its saved
+  // position, size and font — it just doesn't emit a command this time, so
+  // re-ticking it later prints exactly where it was left.
+  const include = t.include ?? { name: true, variation: true, barcode: true, sku: true, logo: true }
+
+  if (logo && include.logo) {
     // Belt-and-braces: the saved template is already sanitised to keep the
     // logo on the label, but this uses the *real* rasterised bitmap's size
     // (rather than the fixed size the editor assumes every logo scales to)
@@ -49,16 +62,22 @@ export function buildCpclLabel({
     lines.push(`EG ${logo.widthBytes} ${logo.heightDots} ${logoX} ${logoY} ${logo.hex}`)
   }
 
-  lines.push(`TEXT ${t.nameFont} 0 ${t.name.x} ${t.name.y} ${sanitiseText(name)}`)
+  if (include.name) {
+    lines.push(`TEXT ${t.nameFont} 0 ${t.name.x} ${t.name.y} ${sanitiseText(name)}`)
+  }
 
-  if (variation) {
+  if (variation && include.variation) {
     lines.push(`TEXT ${t.variationFont} 0 ${t.variation.x} ${t.variation.y} ${sanitiseText(`Variation: ${variation}`)}`)
   }
 
   const cleanSku = sanitiseText(sku)
   const moduleWidth = t.barcodeModuleWidth ?? 1
-  lines.push(`BARCODE 128 ${moduleWidth} 1 ${t.barcodeHeight} ${t.barcode.x} ${t.barcode.y} ${cleanSku}`)
-  lines.push(`TEXT ${t.skuFont} 0 ${t.sku.x} ${t.sku.y} ${cleanSku}`)
+  if (include.barcode) {
+    lines.push(`BARCODE 128 ${moduleWidth} 1 ${t.barcodeHeight} ${t.barcode.x} ${t.barcode.y} ${cleanSku}`)
+  }
+  if (include.sku) {
+    lines.push(`TEXT ${t.skuFont} 0 ${t.sku.x} ${t.sku.y} ${cleanSku}`)
+  }
 
   lines.push('FORM')
   lines.push('PRINT')

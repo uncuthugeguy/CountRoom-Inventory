@@ -1,6 +1,7 @@
 import { applyMovement } from '../domain/movements'
 import { validateDraft } from '../domain/products'
 import { validateReturnCaseInput } from '../domain/returns'
+import { saleFeeTotal } from '../domain/sales'
 import type { AppliedMovement } from '../domain/movements'
 import type {
   MovementInput,
@@ -27,6 +28,8 @@ import {
   DUPLICATE_SKU,
   EMPTY_SALE,
   NOT_FOUND,
+  RETURN_NOT_FOUND,
+  SALE_NOT_FOUND,
   TEAM_NOT_SUPPORTED,
   type InventoryRepository,
   type TeamMember,
@@ -194,6 +197,18 @@ export function createLocalRepository(
     async recordSale(input: SaleInput): Promise<Result<Sale>> {
       if (input.lines.length === 0) return { ok: false, error: EMPTY_SALE }
 
+      // Every marketplace fee is optional on the input — most sales (cash,
+      // walk-in) have none — so every amount defaults to 0 and delivery
+      // defaults to seller-paid, exactly like the Supabase-backed
+      // checkout_sale() function does for the cloud repository.
+      const buyerProtectionFee = input.buyerProtectionFee ?? 0
+      const deliveryCost = input.deliveryCost ?? 0
+      const deliveryPaidBy = input.deliveryPaidBy ?? 'seller'
+      const vat = input.vat ?? 0
+      const advertisingCost = input.advertisingCost ?? 0
+      const orderTotal = input.orderTotal ?? null
+      const feeTotal = saleFeeTotal({ buyerProtectionFee, deliveryCost, deliveryPaidBy, vat, advertisingCost })
+
       const at = new Date().toISOString()
       const saleId = newId()
       const nextProducts = [...state.products]
@@ -241,7 +256,16 @@ export function createLocalRepository(
         paymentMethod: input.paymentMethod,
         subtotal: saleLines.reduce((sum, l) => sum + l.lineTotal, 0),
         totalCost: saleLines.reduce((sum, l) => sum + l.unitCost * l.quantity, 0),
-        profit: saleLines.reduce((sum, l) => sum + l.lineProfit, 0),
+        buyerProtectionFee,
+        deliveryCost,
+        deliveryPaidBy,
+        vat,
+        advertisingCost,
+        orderTotal,
+        // Net of the marketplace fees above, not just item price minus item
+        // cost — the whole point of tracking them is that they come out of
+        // what you actually keep.
+        profit: saleLines.reduce((sum, l) => sum + l.lineProfit, 0) - feeTotal,
         createdAt: at,
         lines: saleLines,
       }
@@ -254,6 +278,98 @@ export function createLocalRepository(
       }
       persist()
       return { ok: true, value: sale }
+    },
+
+    async updateSale(id: string, input: SaleInput): Promise<Result<Sale>> {
+      const existing = state.sales.find((s) => s.id === id)
+      if (!existing) return { ok: false, error: SALE_NOT_FOUND }
+      if (input.lines.length === 0) return { ok: false, error: EMPTY_SALE }
+
+      const buyerProtectionFee = input.buyerProtectionFee ?? 0
+      const deliveryCost = input.deliveryCost ?? 0
+      const deliveryPaidBy = input.deliveryPaidBy ?? 'seller'
+      const vat = input.vat ?? 0
+      const advertisingCost = input.advertisingCost ?? 0
+      const orderTotal = input.orderTotal ?? null
+      const feeTotal = saleFeeTotal({ buyerProtectionFee, deliveryCost, deliveryPaidBy, vat, advertisingCost })
+
+      const at = new Date().toISOString()
+      const nextProducts = [...state.products]
+      const newMovements: StockMovement[] = []
+
+      // Reverse the stock effect of every existing line first, so the
+      // reapply step below always has an accurate picture of what's on
+      // hand — mirrors edit_sale() in supabase/schema.sql exactly. A
+      // product that's since been deleted just has its old line dropped.
+      for (const line of existing.lines) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) continue
+        const applied = applyMovement(
+          nextProducts[idx],
+          { type: 'in', quantity: line.quantity, reason: 'Sale edit — reversal' },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+      }
+
+      const saleLines: SaleLine[] = []
+      for (const line of input.lines) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) return { ok: false, error: NOT_FOUND }
+        const product = nextProducts[idx]
+
+        const applied = applyMovement(
+          product,
+          { type: 'out', quantity: line.quantity, reason: `Sale edit — ${input.channel || 'Unspecified'}` },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+
+        const lineTotal = line.unitPrice * line.quantity
+        const lineCost = product.cost * line.quantity
+        saleLines.push({
+          id: newId(),
+          saleId: id,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          unitCost: product.cost,
+          lineTotal,
+          lineProfit: lineTotal - lineCost,
+        })
+      }
+
+      const updated: Sale = {
+        ...existing,
+        channel: input.channel,
+        paymentMethod: input.paymentMethod,
+        subtotal: saleLines.reduce((sum, l) => sum + l.lineTotal, 0),
+        totalCost: saleLines.reduce((sum, l) => sum + l.unitCost * l.quantity, 0),
+        buyerProtectionFee,
+        deliveryCost,
+        deliveryPaidBy,
+        vat,
+        advertisingCost,
+        orderTotal,
+        profit: saleLines.reduce((sum, l) => sum + l.lineProfit, 0) - feeTotal,
+        updatedAt: at,
+        lines: saleLines,
+      }
+
+      state = {
+        ...state,
+        products: nextProducts,
+        movements: [...newMovements, ...state.movements],
+        sales: state.sales.map((s) => (s.id === id ? updated : s)),
+      }
+      persist()
+      return { ok: true, value: updated }
     },
 
     async listReturns() {
@@ -359,6 +475,142 @@ export function createLocalRepository(
       }
       persist()
       return { ok: true, value: returnCase }
+    },
+
+    async updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>> {
+      const existing = state.returns.find((r) => r.id === id)
+      if (!existing) return { ok: false, error: RETURN_NOT_FOUND }
+
+      const validated = validateReturnCaseInput(input)
+      if (!validated.ok) return validated
+
+      const at = new Date().toISOString()
+      const nextProducts = [...state.products]
+      const newMovements: StockMovement[] = []
+      const noted = input.reason?.trim() ? `: ${input.reason.trim()}` : ''
+
+      // Reverse every existing return line's stock effect first — mirrors
+      // edit_return() in supabase/schema.sql. A restocked line put stock
+      // back on the shelf, so un-doing it has to take that stock back out;
+      // if some of it has since been sold, editing is blocked rather than
+      // letting stock go negative.
+      for (const line of existing.returnLines) {
+        if (line.disposition !== 'restock') continue
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) continue
+        const product = nextProducts[idx]
+        if (product.quantity < line.quantity) {
+          return {
+            ok: false,
+            error: `Cannot edit — ${line.quantity - product.quantity} of the restocked ${line.name} has already been sold.`,
+          }
+        }
+        const applied = applyMovement(
+          product,
+          { type: 'out', quantity: line.quantity, reason: 'Return edit — reversal' },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+      }
+
+      // Reverse every existing replacement line's stock effect (give back
+      // the item that was handed to the customer at no charge).
+      for (const line of existing.replacementLines) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) continue
+        const applied = applyMovement(
+          nextProducts[idx],
+          { type: 'in', quantity: line.quantity, reason: 'Return edit — reversal' },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+      }
+
+      const returnLines: ReturnLine[] = []
+      for (const line of input.returnLines ?? []) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) return { ok: false, error: NOT_FOUND }
+        const product = nextProducts[idx]
+
+        if (line.disposition === 'restock') {
+          const applied = applyMovement(
+            product,
+            { type: 'in', quantity: line.quantity, reason: `Return edit — restock${noted}` },
+            { id: newId(), at },
+          )
+          if (!applied.ok) return applied
+          nextProducts[idx] = applied.value.product
+          newMovements.push(applied.value.movement)
+        }
+
+        returnLines.push({
+          id: newId(),
+          returnId: id,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          disposition: line.disposition,
+          unitCost: product.cost,
+        })
+      }
+
+      const replacementLines: ReplacementLine[] = []
+      for (const line of input.replacementLines ?? []) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) return { ok: false, error: NOT_FOUND }
+        const product = nextProducts[idx]
+
+        const applied = applyMovement(
+          product,
+          { type: 'out', quantity: line.quantity, reason: `Return edit — replacement${noted}` },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+
+        replacementLines.push({
+          id: newId(),
+          returnId: id,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unitCost: product.cost,
+        })
+      }
+
+      const actions = input.actions ?? []
+      const updated: ReturnCase = {
+        ...existing,
+        saleId: input.saleId ?? '',
+        channel: input.channel ?? '',
+        customerRef: input.customerRef ?? '',
+        reason: input.reason ?? '',
+        notes: input.notes ?? '',
+        actions,
+        refundAmount: actions.includes('refund') ? (input.refundAmount ?? 0) : 0,
+        refundMethod: actions.includes('refund') ? (input.refundMethod ?? null) : null,
+        goodwillType: actions.includes('goodwill') ? (input.goodwillType ?? '') : '',
+        goodwillValue: actions.includes('goodwill') ? (input.goodwillValue ?? 0) : 0,
+        returnLines,
+        replacementLines,
+        updatedAt: at,
+      }
+
+      state = {
+        ...state,
+        products: nextProducts,
+        movements: [...newMovements, ...state.movements],
+        returns: state.returns.map((r) => (r.id === id ? updated : r)),
+      }
+      persist()
+      return { ok: true, value: updated }
     },
 
     async listTeam(): Promise<TeamMember[]> {

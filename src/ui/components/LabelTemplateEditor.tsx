@@ -45,6 +45,8 @@ const FIELD_LIMITS = {
   barcodeModuleWidth: { min: 1, max: 10 },
   logoWidthDots: { min: MIN_LOGO_DOTS, max: MAX_LOGO_DOTS },
   logoHeightDots: { min: MIN_LOGO_DOTS, max: MAX_LOGO_DOTS },
+  darkness: { min: 0, max: 30 },
+  printSpeedIps: { min: 2, max: 12 },
 } as const
 
 const PREVIEW_MAX_WIDTH = 420
@@ -556,16 +558,32 @@ function LabelCanvas({
   const barcodePos = positionOf('barcode')
   const skuPos = positionOf('sku')
 
+  // An unticked element (see LabelElementVisibility) isn't drawn at all, so
+  // it can't be off-label either — no point warning about something that
+  // isn't printing.
   const offLabel: string[] = []
-  if (logoDataUrl && (logoPos.x + logoWidth > t.widthDots || logoPos.y + logoHeight > t.heightDots)) offLabel.push('Logo')
-  if (namePos.x + nameWidth > t.widthDots || namePos.y + nameSize > t.heightDots) offLabel.push('Name')
-  if (variationPos.x + variationWidth > t.widthDots || variationPos.y + variationSize > t.heightDots) offLabel.push('Variation')
-  if (barcodePos.x + barcodeWidth > t.widthDots || barcodePos.y + barcodeHeight > t.heightDots) offLabel.push('Barcode')
-  if (skuPos.x + skuWidth > t.widthDots || skuPos.y + skuSize > t.heightDots) offLabel.push('SKU text')
+  if (t.include.logo && logoDataUrl && (logoPos.x + logoWidth > t.widthDots || logoPos.y + logoHeight > t.heightDots))
+    offLabel.push('Logo')
+  if (t.include.name && (namePos.x + nameWidth > t.widthDots || namePos.y + nameSize > t.heightDots)) offLabel.push('Name')
+  if (t.include.variation && (variationPos.x + variationWidth > t.widthDots || variationPos.y + variationSize > t.heightDots))
+    offLabel.push('Variation')
+  if (t.include.barcode && (barcodePos.x + barcodeWidth > t.widthDots || barcodePos.y + barcodeHeight > t.heightDots))
+    offLabel.push('Barcode')
+  if (t.include.sku && (skuPos.x + skuWidth > t.widthDots || skuPos.y + skuSize > t.heightDots)) offLabel.push('SKU text')
+
+  // The decorative/hit-area box drawn around every element is padded out
+  // slightly beyond its real footprint so it's easier to grab and to read
+  // its label tag — purely a visual and click-target aid. It's deliberately
+  // small (not the old 4/8) so it doesn't eat into how close two elements
+  // (e.g. a circular logo and neighbouring text) can visually sit to each
+  // other or the label edge — this padding has never affected the real
+  // clamp/print bounds, which are governed by each element's actual
+  // footprint in `clampToLabel`, not by this box.
+  const FRAME_PAD = 2
 
   const handlePosition = (corner: Corner, width: number, height: number) => ({
-    cx: corner === 'ne' || corner === 'se' ? width + 4 : -4,
-    cy: corner === 'sw' || corner === 'se' ? height + 4 : -4,
+    cx: corner === 'ne' || corner === 'se' ? width + FRAME_PAD : -FRAME_PAD,
+    cy: corner === 'sw' || corner === 'se' ? height + FRAME_PAD : -FRAME_PAD,
   })
 
   /** A draggable bounding box with a small tag naming the element, a
@@ -594,10 +612,10 @@ function LabelCanvas({
       className={drag?.key === key ? 'label-canvas-dragging' : undefined}
     >
       <rect
-        x={-4}
-        y={-4}
-        width={width + 8}
-        height={height + 8}
+        x={-FRAME_PAD}
+        y={-FRAME_PAD}
+        width={width + FRAME_PAD * 2}
+        height={height + FRAME_PAD * 2}
         fill="rgba(57,211,187,0.06)"
         stroke={drag?.key === key ? '#39d3bb' : 'rgba(57,211,187,0.55)'}
         strokeDasharray={drag?.key === key ? undefined : '5 4'}
@@ -659,81 +677,86 @@ function LabelCanvas({
       >
         <rect x={0} y={0} width={t.widthDots} height={t.heightDots} fill="#fff" stroke="#243b55" />
 
-        {logoDataUrl
-          ? draggable(
-              'logo',
-              logoPos.x,
-              logoPos.y,
-              logoWidth,
-              logoHeight,
-              <image href={logoDataUrl} width={logoWidth} height={logoHeight} preserveAspectRatio="xMidYMid meet" style={{ pointerEvents: 'none' }} />,
-              'logo',
-            )
-          : draggable(
-              'logo',
-              logoPos.x,
-              logoPos.y,
-              logoWidth,
-              logoHeight,
-              <text x={logoWidth / 2} y={logoHeight / 2 + 4} textAnchor="middle" fontSize={11} fill="#94a3b8" style={{ pointerEvents: 'none' }}>
-                (no logo uploaded)
-              </text>,
-              'logo',
-            )}
+        {t.include.logo &&
+          (logoDataUrl
+            ? draggable(
+                'logo',
+                logoPos.x,
+                logoPos.y,
+                logoWidth,
+                logoHeight,
+                <image href={logoDataUrl} width={logoWidth} height={logoHeight} preserveAspectRatio="xMidYMid meet" style={{ pointerEvents: 'none' }} />,
+                'logo',
+              )
+            : draggable(
+                'logo',
+                logoPos.x,
+                logoPos.y,
+                logoWidth,
+                logoHeight,
+                <text x={logoWidth / 2} y={logoHeight / 2 + 4} textAnchor="middle" fontSize={11} fill="#94a3b8" style={{ pointerEvents: 'none' }}>
+                  (no logo uploaded)
+                </text>,
+                'logo',
+              ))}
 
-        {draggable(
-          'name',
-          namePos.x,
-          namePos.y,
-          nameWidth,
-          nameSize,
-          <text x={0} y={nameSize} fontSize={nameSize} fontFamily="ui-monospace, monospace" fill="#0a0a0a" style={{ pointerEvents: 'none' }}>
-            {SAMPLE_PRODUCT.name}
-          </text>,
-          'name',
-        )}
+        {t.include.name &&
+          draggable(
+            'name',
+            namePos.x,
+            namePos.y,
+            nameWidth,
+            nameSize,
+            <text x={0} y={nameSize} fontSize={nameSize} fontFamily="ui-monospace, monospace" fill="#0a0a0a" style={{ pointerEvents: 'none' }}>
+              {SAMPLE_PRODUCT.name}
+            </text>,
+            'name',
+          )}
 
-        {draggable(
-          'variation',
-          variationPos.x,
-          variationPos.y,
-          variationWidth,
-          variationSize,
-          <text x={0} y={variationSize} fontSize={variationSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
-            Variation: {SAMPLE_PRODUCT.variation}
-          </text>,
-          'variation',
-        )}
+        {t.include.variation &&
+          draggable(
+            'variation',
+            variationPos.x,
+            variationPos.y,
+            variationWidth,
+            variationSize,
+            <text x={0} y={variationSize} fontSize={variationSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
+              Variation: {SAMPLE_PRODUCT.variation}
+            </text>,
+            'variation',
+          )}
 
-        {draggable(
-          'barcode',
-          barcodePos.x,
-          barcodePos.y,
-          barcodeWidth,
-          barcodeHeight,
-          <g style={{ pointerEvents: 'none' }}>
-            {/* Fake barcode bars — a layout guide, not a real Code 128 encode —
-                spaced and sized to track the module width so the preview shows
-                roughly how much wider the barcode gets. */}
-            {Array.from({ length: 26 }, (_, i) => {
-              const barWidth = (i % 3 === 0 ? 3 : 1) * barcodeModuleWidth
-              return <rect key={i} x={i * 4 * barcodeModuleWidth} y={0} width={barWidth} height={barcodeHeight} fill="#0a0a0a" />
-            })}
-          </g>,
-          'barcode',
-        )}
+        {t.include.barcode &&
+          draggable(
+            'barcode',
+            barcodePos.x,
+            barcodePos.y,
+            barcodeWidth,
+            barcodeHeight,
+            <g style={{ pointerEvents: 'none' }}>
+              {/* Fake barcode bars — a layout guide, not a real Code 128 encode —
+                  spaced and sized to track the module width so the preview shows
+                  roughly how much wider the barcode gets. */}
+              {Array.from({ length: 26 }, (_, i) => {
+                const barWidth = (i % 3 === 0 ? 3 : 1) * barcodeModuleWidth
+                return <rect key={i} x={i * 4 * barcodeModuleWidth} y={0} width={barWidth} height={barcodeHeight} fill="#0a0a0a" />
+              })}
+            </g>,
+            'barcode',
+          )}
 
-        {draggable(
-          'sku',
-          skuPos.x,
-          skuPos.y,
-          skuWidth,
-          skuSize,
-          <text x={0} y={skuSize} fontSize={skuSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
-            {SAMPLE_PRODUCT.sku}
-          </text>,
-          'sku',
-        )}
+        {t.include.sku &&
+          draggable(
+            'sku',
+            skuPos.x,
+            skuPos.y,
+            skuWidth,
+            skuSize,
+            <text x={0} y={skuSize} fontSize={skuSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
+              {SAMPLE_PRODUCT.sku}
+            </text>,
+            'sku',
+          )}
       </svg>
 
       {offLabel.length > 0 && (
@@ -891,6 +914,29 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
     )
   }
 
+  const ELEMENT_TOGGLES: { key: keyof LabelTemplate['include']; label: string }[] = [
+    { key: 'name', label: 'Name' },
+    { key: 'variation', label: 'Variation' },
+    { key: 'barcode', label: 'Barcode' },
+    { key: 'sku', label: 'SKU text' },
+    { key: 'logo', label: 'Logo' },
+  ]
+
+  const visibilityField = (key: keyof LabelTemplate['include'], label: string) => {
+    const fieldId = `${idPrefix}-include-${key}`
+    return (
+      <label key={key} className="checkbox-field" htmlFor={fieldId}>
+        <input
+          id={fieldId}
+          type="checkbox"
+          checked={template.include[key]}
+          onChange={(event) => update({ include: { ...template.include, [key]: event.target.checked } })}
+        />
+        {label}
+      </label>
+    )
+  }
+
   const printTest = async () => {
     setPrinting(true)
     setPrintStatus('Sending test label to the printer…')
@@ -898,6 +944,7 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       logoDataUrl: settings.logoDataUrl,
       saleChannels: settings.saleChannels,
       labelPresets: settings.labelPresets,
+      quickCodes: settings.quickCodes,
       labelTemplate: template,
     })
     setPrintStatus(result.ok ? 'Test label sent to the printer.' : `Print failed: ${result.error}`)
@@ -917,6 +964,15 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
         logo is scaled to fit its box without stretching, so resizing it never distorts it.
         Changes are saved as you go and used the next time a label is printed.
       </p>
+
+      <div className="field">
+        <span className="label-like">What's on this label</span>
+        <div className="checkbox-field-row">{ELEMENT_TOGGLES.map(({ key, label }) => visibilityField(key, label))}</div>
+        <span className="hint">
+          Untick anything you don't want printed — its position and size are kept, so ticking it
+          back on later (a bigger label, a different printer) puts it right back where it was.
+        </span>
+      </div>
 
       <LabelCanvas
         template={template}
@@ -963,6 +1019,17 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       <div className="field-row label-template-grid">
         {numberField('logoWidthDots', 'Logo width')}
         {numberField('logoHeightDots', 'Logo height')}
+      </div>
+
+      <div className="field-row label-template-grid">
+        {numberField('darkness', 'Print darkness', {
+          dimension: false,
+          hint: 'Higher = darker (0–30). If the name or other text prints lighter than the barcode, raise this.',
+        })}
+        {numberField('printSpeedIps', 'Print speed (in/sec)', {
+          dimension: false,
+          hint: 'Lower = slower, giving the print head more time per label (2–12). Slower usually prints darker and cleaner.',
+        })}
       </div>
 
       <div className="field-row label-template-grid">

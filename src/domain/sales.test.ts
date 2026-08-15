@@ -9,11 +9,16 @@ import {
   cartHasIssues,
   cartLineIssue,
   cartTotals,
+  EMPTY_SALE_FEES_DRAFT,
   removeFromCart,
+  resolveSaleFeesDraft,
+  saleFeesDraftFromSale,
+  saleFeeTotal,
   salesSince,
   setCartPrice,
   setCartQuantity,
   summariseSales,
+  type SaleFeesDraft,
 } from './sales'
 
 const product = (overrides: Partial<Product> & { id: string }): Product => ({
@@ -116,6 +121,117 @@ describe('buildSaleInput', () => {
       paymentMethod: 'card',
       lines: [{ productId: bolt.id, quantity: 1, unitPrice: 5 }],
     })
+  })
+
+  it('omits fee fields entirely when no fees draft is given', () => {
+    const cart = addToCart([], bolt)
+    const input = buildSaleInput(cart, 'eBay', 'card')
+    expect(input).not.toHaveProperty('buyerProtectionFee')
+    expect(input).not.toHaveProperty('orderTotal')
+  })
+
+  it('resolves and includes a fees draft when one is given', () => {
+    const cart = addToCart([], bolt)
+    const feesDraft: SaleFeesDraft = {
+      buyerProtectionFee: '1.50',
+      deliveryCost: '3',
+      deliveryPaidBy: 'buyer',
+      vat: '0.75',
+      advertisingCost: '',
+      orderTotal: '10.25',
+    }
+    expect(buildSaleInput(cart, 'eBay', 'card', feesDraft)).toEqual({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.id, quantity: 1, unitPrice: 5 }],
+      buyerProtectionFee: 1.5,
+      deliveryCost: 3,
+      deliveryPaidBy: 'buyer',
+      vat: 0.75,
+      advertisingCost: 0,
+      orderTotal: 10.25,
+    })
+  })
+})
+
+describe('resolveSaleFeesDraft', () => {
+  it('reads a blank field as 0 (or, for order total, as not-entered)', () => {
+    expect(resolveSaleFeesDraft(EMPTY_SALE_FEES_DRAFT)).toEqual({
+      buyerProtectionFee: 0,
+      deliveryCost: 0,
+      deliveryPaidBy: 'seller',
+      vat: 0,
+      advertisingCost: 0,
+      orderTotal: null,
+    })
+  })
+
+  it('parses entered amounts, keeping a real 0 order total distinct from "not entered"', () => {
+    expect(
+      resolveSaleFeesDraft({
+        buyerProtectionFee: '1.20',
+        deliveryCost: '4',
+        deliveryPaidBy: 'buyer',
+        vat: '0.5',
+        advertisingCost: '2',
+        orderTotal: '0',
+      }),
+    ).toEqual({
+      buyerProtectionFee: 1.2,
+      deliveryCost: 4,
+      deliveryPaidBy: 'buyer',
+      vat: 0.5,
+      advertisingCost: 2,
+      orderTotal: 0,
+    })
+  })
+
+  it('treats non-numeric text the same as blank', () => {
+    expect(resolveSaleFeesDraft({ ...EMPTY_SALE_FEES_DRAFT, buyerProtectionFee: 'abc' }).buyerProtectionFee).toBe(0)
+  })
+})
+
+describe('saleFeesDraftFromSale', () => {
+  it('rebuilds a draft from a recorded sale, showing a zero amount as blank', () => {
+    expect(
+      saleFeesDraftFromSale({
+        buyerProtectionFee: 0,
+        deliveryCost: 2.5,
+        deliveryPaidBy: 'buyer',
+        vat: 0,
+        advertisingCost: 1,
+        orderTotal: null,
+      }),
+    ).toEqual({
+      buyerProtectionFee: '',
+      deliveryCost: '2.5',
+      deliveryPaidBy: 'buyer',
+      vat: '',
+      advertisingCost: '1',
+      orderTotal: '',
+    })
+  })
+
+  it('defaults missing fields on an older sale to blank/seller-paid', () => {
+    expect(saleFeesDraftFromSale({})).toEqual(EMPTY_SALE_FEES_DRAFT)
+  })
+
+  it('preserves an explicit order total of 0 rather than showing it as blank', () => {
+    expect(saleFeesDraftFromSale({ orderTotal: 0 }).orderTotal).toBe('0')
+  })
+})
+
+describe('saleFeeTotal', () => {
+  it('sums buyer protection fee, VAT and advertising cost unconditionally', () => {
+    expect(
+      saleFeeTotal({ buyerProtectionFee: 1, deliveryCost: 0, deliveryPaidBy: 'seller', vat: 2, advertisingCost: 3 }),
+    ).toBe(6)
+  })
+
+  it('adds delivery cost only when the seller paid for it', () => {
+    const base = { buyerProtectionFee: 0, vat: 0, advertisingCost: 0 }
+    expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'seller' })).toBe(5)
+    expect(saleFeeTotal({ ...base, deliveryCost: 5, deliveryPaidBy: 'buyer' })).toBe(0)
   })
 })
 

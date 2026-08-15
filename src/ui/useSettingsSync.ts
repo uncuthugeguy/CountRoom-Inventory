@@ -59,16 +59,25 @@ export function useSettingsSync(inventory: Inventory, settings: SettingsApi): vo
       labelTemplate?: SettingsApi['labelTemplate']
       saleChannels: string[]
       labelPresets: SettingsApi['labelPresets']
+      quickCodes: SettingsApi['quickCodes']
     } = {
       ...(settings.logoDataUrl !== undefined ? { logoDataUrl: settings.logoDataUrl } : {}),
       ...(settings.labelTemplate !== undefined ? { labelTemplate: settings.labelTemplate } : {}),
       saleChannels: settings.saleChannels,
       labelPresets: settings.labelPresets,
+      quickCodes: settings.quickCodes,
     }
     void inventory.setAccountSettings(current)
     // Deliberately excludes `inventory` from deps beyond what's used above —
     // it's a fresh object every render, and the fields actually read here
     // are the primitives/objects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inventory.backend, settings.logoDataUrl, settings.labelTemplate, settings.saleChannels, settings.labelPresets])
+  }, [
+    inventory.backend,
+    settings.logoDataUrl,
+    settings.labelTemplate,
+    settings.saleChannels,
+    settings.labelPresets,
+    settings.quickCodes,
+  ])
 }

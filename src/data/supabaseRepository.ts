@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { applyMovement } from '../domain/movements'
-import { MANAGER_ONLY, productEditNeedsManager } from '../domain/permissions'
+import { MANAGER_ONLY, isManager, productEditNeedsManager } from '../domain/permissions'
 import { validateDraft } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
 import type {
+  DeliveryPaidBy,
   MovementInput,
   PaymentMethod,
   Product,
@@ -25,6 +26,7 @@ import type {
   StockMovement,
 } from '../domain/types'
 import { EMPTY_PROFILE_DRAFT } from '../domain/types'
+import type { QuickCode } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
 import { getSupabaseClient } from './supabaseClient'
 import {
@@ -77,6 +79,15 @@ interface SaleRow {
   total_cost: number
   profit: number
   created_at: string
+  updated_at?: string | null
+  // Masked to null for a non-manager by sales_view, the same way total_cost
+  // and profit are — see the view's definition in supabase/schema.sql.
+  buyer_protection_fee?: number | null
+  delivery_cost?: number | null
+  delivery_paid_by?: DeliveryPaidBy | null
+  vat?: number | null
+  advertising_cost?: number | null
+  order_total?: number | null
 }
 
 interface SaleItemRow {
@@ -105,6 +116,7 @@ interface ReturnRow {
   goodwill_type: string
   goodwill_value: number
   created_at: string
+  updated_at?: string | null
 }
 
 interface ReturnLineRow {
@@ -177,6 +189,13 @@ const toSale = (row: SaleRow, lines: SaleLine[]): Sale => ({
   totalCost: row.total_cost,
   profit: row.profit,
   createdAt: row.created_at,
+  updatedAt: row.updated_at ?? undefined,
+  buyerProtectionFee: row.buyer_protection_fee ?? undefined,
+  deliveryCost: row.delivery_cost ?? undefined,
+  deliveryPaidBy: row.delivery_paid_by ?? undefined,
+  vat: row.vat ?? undefined,
+  advertisingCost: row.advertising_cost ?? undefined,
+  orderTotal: row.order_total ?? undefined,
   lines,
 })
 
@@ -220,6 +239,7 @@ const toReturnCase = (
   returnLines,
   replacementLines,
   createdAt: row.created_at,
+  updatedAt: row.updated_at ?? undefined,
 })
 
 const toRow = (draft: ProductDraft) => ({
@@ -494,6 +514,12 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
           channel: input.channel,
           paymentMethod: input.paymentMethod,
           lines: input.lines,
+          buyerProtectionFee: input.buyerProtectionFee ?? 0,
+          deliveryCost: input.deliveryCost ?? 0,
+          deliveryPaidBy: input.deliveryPaidBy ?? 'seller',
+          vat: input.vat ?? 0,
+          advertisingCost: input.advertisingCost ?? 0,
+          orderTotal: input.orderTotal ?? null,
         },
       })
       if (error) return { ok: false, error: error.message }
@@ -502,6 +528,51 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       // the base table directly) — re-read it through the view so an
       // employee's own just-completed sale is just as cost/profit-hidden as
       // every other sale in their list, rather than a one-time exception.
+      const rawSale = data as SaleRow
+      const { data: saleViewRow, error: saleViewError } = await db
+        .from('sales_view')
+        .select('*')
+        .eq('id', rawSale.id)
+        .single()
+      if (saleViewError) return { ok: false, error: saleViewError.message }
+      const saleRow = saleViewRow as SaleRow
+
+      const { data: itemRows, error: itemsError } = await db
+        .from('sale_items_view')
+        .select('*')
+        .eq('sale_id', saleRow.id)
+      if (itemsError) return { ok: false, error: itemsError.message }
+
+      return {
+        ok: true,
+        value: toSale(saleRow, (itemRows as SaleItemRow[]).map(toSaleLine)),
+      }
+    },
+
+    async updateSale(id: string, input: SaleInput): Promise<Result<Sale>> {
+      if (!isManager(role)) return { ok: false, error: MANAGER_ONLY.editSale }
+      if (input.lines.length === 0) return { ok: false, error: EMPTY_SALE }
+
+      // Runs server-side as one Postgres transaction (see edit_sale in
+      // supabase/schema.sql) — it reverses the sale's original stock effect
+      // and reapplies the edited lines atomically, the same way checkout_sale
+      // applies a new sale.
+      const { data, error } = await db.rpc('edit_sale', {
+        payload: {
+          id,
+          channel: input.channel,
+          paymentMethod: input.paymentMethod,
+          lines: input.lines,
+          buyerProtectionFee: input.buyerProtectionFee ?? 0,
+          deliveryCost: input.deliveryCost ?? 0,
+          deliveryPaidBy: input.deliveryPaidBy ?? 'seller',
+          vat: input.vat ?? 0,
+          advertisingCost: input.advertisingCost ?? 0,
+          orderTotal: input.orderTotal ?? null,
+        },
+      })
+      if (error) return { ok: false, error: error.message }
+
       const rawSale = data as SaleRow
       const { data: saleViewRow, error: saleViewError } = await db
         .from('sales_view')
@@ -603,6 +674,51 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       }
     },
 
+    async updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>> {
+      if (!isManager(role)) return { ok: false, error: MANAGER_ONLY.editReturn }
+
+      // Runs server-side as one Postgres transaction (see edit_return in
+      // supabase/schema.sql) — it reverses the case's original stock effect
+      // and reapplies the edited one atomically, the same way process_return
+      // applies a new case.
+      const { data, error } = await db.rpc('edit_return', {
+        payload: {
+          id,
+          saleId: input.saleId ?? '',
+          channel: input.channel ?? '',
+          customerRef: input.customerRef ?? '',
+          reason: input.reason ?? '',
+          notes: input.notes ?? '',
+          actions: input.actions,
+          refundAmount: input.refundAmount,
+          refundMethod: input.refundMethod,
+          goodwillType: input.goodwillType,
+          goodwillValue: input.goodwillValue,
+          returnLines: input.returnLines ?? [],
+          replacementLines: input.replacementLines ?? [],
+        },
+      })
+      if (error) return { ok: false, error: error.message }
+
+      const returnRow = data as ReturnRow
+      const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
+        await Promise.all([
+          db.from('return_lines_view').select('*').eq('return_id', returnRow.id),
+          db.from('replacement_lines_view').select('*').eq('return_id', returnRow.id),
+        ])
+      if (linesError) return { ok: false, error: linesError.message }
+      if (replacementError) return { ok: false, error: replacementError.message }
+
+      return {
+        ok: true,
+        value: toReturnCase(
+          returnRow,
+          (lineRows as ReturnLineRow[]).map(toReturnLine),
+          (replacementRows as ReplacementLineRow[]).map(toReplacementLine),
+        ),
+      }
+    },
+
     async listTeam(): Promise<TeamMember[]> {
       const myId = await currentUserId()
       const { data, error } = await db
@@ -626,14 +742,38 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       const { data, error } = await db.rpc('invite_employee', { p_email: email })
       if (error) return { ok: false, error: error.message }
       const row = data as { id: string; invited_email: string | null; role: Role; status: 'active' | 'pending' }
+      const invitedEmail = row.invited_email ?? email
+
+      // The membership row above is what actually grants access — the email
+      // below is just a courtesy so the new person doesn't have to be told
+      // by hand to go sign in. Only send it for a genuinely new invite
+      // (status 'pending'); someone who already had a StockFlow login
+      // elsewhere (status 'active', linked in immediately) doesn't need one.
+      // A failed send never fails the invite itself — the membership already
+      // exists either way — it only changes what the caller tells the
+      // manager to do next (see `emailSent` on TeamMember).
+      let emailSent: boolean | undefined
+      if (row.status === 'pending') {
+        try {
+          const { error: otpError } = await db.auth.signInWithOtp({
+            email: invitedEmail,
+            options: { emailRedirectTo: window.location.origin },
+          })
+          emailSent = !otpError
+        } catch {
+          emailSent = false
+        }
+      }
+
       return {
         ok: true,
         value: {
           id: row.id,
-          email: row.invited_email ?? email,
+          email: invitedEmail,
           role: row.role,
           status: row.status,
           isYou: false,
+          emailSent,
         },
       }
     },
@@ -734,7 +874,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     async getAccountSettings(): Promise<AccountSettingsSync | null> {
       const { data, error } = await db
         .from('account_settings')
-        .select('logo_data_url, label_template, sale_channels, label_presets')
+        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes')
         .maybeSingle()
       if (error) throw new Error(error.message)
       if (!data) return null
@@ -744,12 +884,14 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         label_template: LabelTemplate | null
         sale_channels: string[] | null
         label_presets: LabelPreset[] | null
+        quick_codes: QuickCode[] | null
       }
       return {
         ...(row.logo_data_url ? { logoDataUrl: row.logo_data_url } : {}),
         ...(row.label_template ? { labelTemplate: row.label_template } : {}),
         ...(row.sale_channels ? { saleChannels: row.sale_channels } : {}),
         ...(row.label_presets ? { labelPresets: row.label_presets } : {}),
+        ...(row.quick_codes ? { quickCodes: row.quick_codes } : {}),
       }
     },
 
@@ -761,6 +903,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (patch.labelTemplate !== undefined) payload.label_template = patch.labelTemplate
       if (patch.saleChannels !== undefined) payload.sale_channels = patch.saleChannels
       if (patch.labelPresets !== undefined) payload.label_presets = patch.labelPresets
+      if (patch.quickCodes !== undefined) payload.quick_codes = patch.quickCodes
 
       const { error } = await db.from('account_settings').upsert(payload, { onConflict: 'account_id' })
       if (error) return { ok: false, error: error.message }

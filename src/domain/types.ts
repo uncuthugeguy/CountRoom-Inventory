@@ -73,7 +73,49 @@ export interface SaleLineInput {
   unitPrice: number
 }
 
-export interface SaleInput {
+/** Who actually paid for delivery — a Vinted/eBay-style listing can go
+ * either way (buyer pays shipping on top, or the seller offers "free"
+ * delivery and eats the cost). Only 'seller'-paid delivery counts as an
+ * expense against profit; buyer-paid delivery passes straight through and
+ * never touches what the seller keeps. */
+export type DeliveryPaidBy = 'seller' | 'buyer'
+
+export const DELIVERY_PAID_BY_LABELS: Record<DeliveryPaidBy, string> = {
+  seller: 'Me',
+  buyer: 'Buyer',
+}
+
+/**
+ * Order-level marketplace fees on top of the item price itself — the kind a
+ * platform like Vinted or eBay charges per order rather than per line item.
+ * Every field is optional because most channels (cash, walk-in, a private
+ * FB Marketplace sale) have none of these at all; a repository treats a
+ * missing amount as 0 and a missing `deliveryPaidBy` as 'seller'.
+ */
+export interface SaleFeesFields {
+  /** Charged to the buyer by some platforms as an add-on to the item price
+   * (Vinted calls this "Buyer Protection"). Recorded here because on some
+   * platforms/sellers it's deducted from the payout rather than being
+   * purely buyer-side — see the checkout screen's own note on this. */
+  buyerProtectionFee?: number
+  deliveryCost?: number
+  /** Who actually paid for delivery — determines whether `deliveryCost`
+   * reduces profit (seller-paid) or is cost-neutral to the seller (buyer
+   * paid it themselves, on top of the item price). Defaults to 'seller'. */
+  deliveryPaidBy?: DeliveryPaidBy
+  /** VAT owed on this sale — reduces what you actually keep. */
+  vat?: number
+  /** What you spent promoting this specific listing (a boosted/promoted
+   * listing fee, an ad campaign, etc.) — always comes out of your pocket. */
+  advertisingCost?: number
+  /** The total the buyer actually paid, exactly as shown on the
+   * marketplace's own order summary — kept purely for reconciling against
+   * that summary. Does not feed into the profit calculation, which is
+   * derived from the line items and the fee fields above instead. */
+  orderTotal?: number | null
+}
+
+export interface SaleInput extends SaleFeesFields {
   /** Where it sold — eBay, Facebook Marketplace, a walk-in sale, etc. Free text, user-managed list. */
   channel: string
   paymentMethod: PaymentMethod
@@ -95,7 +137,13 @@ export interface SaleLine {
   lineProfit: number
 }
 
-export interface Sale {
+/** A sale as recorded — same fee fields as `SaleFeesFields`, but always
+ * concretely present (a repository resolves every optional input down to a
+ * real number/choice before persisting) rather than possibly-absent. Kept
+ * optional here too, though, so older records synced before these fields
+ * existed — and hand-built fixtures in tests — stay valid without a
+ * migration; `domain/sales.ts`'s helpers treat a missing value as 0. */
+export interface Sale extends SaleFeesFields {
   id: string
   channel: string
   paymentMethod: PaymentMethod
@@ -103,6 +151,8 @@ export interface Sale {
   totalCost: number
   profit: number
   createdAt: string
+  /** Set once this sale has been edited after the fact — absent otherwise. */
+  updatedAt?: string
   lines: SaleLine[]
 }
 
@@ -208,6 +258,8 @@ export interface ReturnCase {
   returnLines: ReturnLine[]
   replacementLines: ReplacementLine[]
   createdAt: string
+  /** Set once this case has been edited after the fact — absent otherwise. */
+  updatedAt?: string
 }
 
 // --- Account settings: personal/employee details ---------------------------

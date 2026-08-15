@@ -1,8 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { addRecentEmail, loadRecentEmails } from '../../data/recentEmailsStorage'
 
 export interface AuthScreenProps {
   client: SupabaseClient
+  /** Overridden in tests so the suite never touches the host's real localStorage. */
+  emailStorage?: Storage
 }
 
 /**
@@ -15,19 +18,46 @@ export interface AuthScreenProps {
  * mandatory TOTP enrollment/verification (see MfaEnrollScreen /
  * MfaChallengeScreen) before reaching the app.
  */
-export function AuthScreen({ client }: AuthScreenProps) {
+export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [magicLinkSent, setMagicLinkSent] = useState(false)
+  // Previously used emails on this device, offered below the field as
+  // click-to-fill suggestions — see recentEmailsStorage.ts for why: a typo'd
+  // retype is exactly how someone ends up siloed in a brand new, empty
+  // account instead of the shared one.
+  const [recentEmails, setRecentEmails] = useState<string[]>(() => loadRecentEmails(emailStorage))
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const fieldRef = useRef<HTMLDivElement>(null)
+
+  // Closes the suggestion list on a click anywhere outside the field.
+  useEffect(() => {
+    if (!showSuggestions) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!fieldRef.current?.contains(event.target as Node)) setShowSuggestions(false)
+    }
+    window.addEventListener('mousedown', onPointerDown)
+    return () => window.removeEventListener('mousedown', onPointerDown)
+  }, [showSuggestions])
+
+  const matchingSuggestions = recentEmails.filter((saved) =>
+    saved.toLowerCase().includes(email.trim().toLowerCase()),
+  )
+
+  const pickSuggestion = (value: string) => {
+    setEmail(value)
+    setShowSuggestions(false)
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
     setBusy(true)
 
+    const trimmed = email.trim()
     const { error } = await client.auth.signInWithOtp({
-      email: email.trim(),
+      email: trimmed,
       options: { emailRedirectTo: window.location.origin },
     })
     setBusy(false)
@@ -35,6 +65,7 @@ export function AuthScreen({ client }: AuthScreenProps) {
       setError(error.message)
       return
     }
+    setRecentEmails(addRecentEmail(trimmed, emailStorage))
     setMagicLinkSent(true)
   }
 
@@ -62,16 +93,37 @@ export function AuthScreen({ client }: AuthScreenProps) {
       <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
         <h2>Sign in</h2>
         <form className="form" onSubmit={submit} noValidate>
-          <div className="field">
+          <div className="field email-field" ref={fieldRef}>
             <label htmlFor="auth-email">Email</label>
             <input
               id="auth-email"
               type="email"
               autoComplete="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                setShowSuggestions(true)
+              }}
+              onFocus={() => setShowSuggestions(true)}
               required
             />
+            {showSuggestions && matchingSuggestions.length > 0 && (
+              <ul className="email-suggestions" role="listbox" aria-label="Previously used addresses">
+                {matchingSuggestions.map((saved) => (
+                  <li key={saved}>
+                    <button
+                      type="button"
+                      className="email-suggestion"
+                      role="option"
+                      aria-selected={saved === email}
+                      onClick={() => pickSuggestion(saved)}
+                    >
+                      {saved}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {error && (
