@@ -900,6 +900,18 @@ create table if not exists public.returns (
 
 alter table public.returns add column if not exists created_by uuid references auth.users(id);
 
+-- No default and nullable, same as sales.updated_at — a return that's never
+-- been edited should show no updated_at at all (matching the client's
+-- optional ReturnCase.updatedAt). The trigger below only ever fires on
+-- UPDATE, never INSERT, so a freshly recorded return stays NULL here until
+-- edit_return() actually touches it.
+alter table public.returns add column if not exists updated_at timestamptz;
+
+drop trigger if exists returns_set_updated_at on public.returns;
+create trigger returns_set_updated_at
+  before update on public.returns
+  for each row execute function public.set_updated_at();
+
 drop trigger if exists returns_stamp_account_actor on public.returns;
 create trigger returns_stamp_account_actor
   before insert on public.returns
@@ -1158,6 +1170,247 @@ end;
 $$;
 
 grant execute on function public.process_return(jsonb) to authenticated;
+
+-- edit_return(): reverses the case's original stock effect and reapplies the
+-- edited one atomically, the same way process_return applies a new case —
+-- mirrors localRepository.ts's updateReturn() exactly, including blocking
+-- the edit when a restocked line's stock has since been sold elsewhere.
+-- Needs security definer (like edit_sale) since returns/return_lines/
+-- replacement_lines only grant authenticated select+insert, never
+-- update/delete — those are audit rows, immutable from the browser except
+-- through this one controlled path.
+create or replace function public.edit_return(payload jsonb)
+returns public.returns
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_account uuid := public.current_account_id();
+  v_role text := public.current_role();
+  v_return_id uuid := (payload->>'id')::uuid;
+  v_old_line record;
+  v_line jsonb;
+  v_product public.products;
+  v_qty integer;
+  v_disposition text;
+  v_new_qty integer;
+  v_actions text[];
+  v_reason text := nullif(payload->>'reason', '');
+  v_note_suffix text := case when v_reason is not null then ': ' || v_reason else '' end;
+  v_return public.returns;
+begin
+  if v_account is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  -- Matches MANAGER_ONLY.editReturn on the client (which already blocks this
+  -- before the request is even sent) — checked again here since a security
+  -- definer function is the one place RLS and grants can't enforce it for
+  -- us. Unlike process_return's narrower per-action check (which still lets
+  -- an employee log a plain restock), editing is manager-only across the
+  -- board, so one blanket check covers it.
+  if v_role is distinct from 'manager' then
+    raise exception 'Only a manager can edit a return.';
+  end if;
+
+  if v_return_id is null then
+    raise exception 'Return not found.';
+  end if;
+
+  -- Locks the row and confirms it's actually this account's return before
+  -- anything else runs.
+  perform 1 from public.returns where id = v_return_id and user_id = v_account for update;
+  if not found then
+    raise exception 'Return not found.';
+  end if;
+
+  select coalesce(array_agg(value #>> '{}'), '{}')
+    into v_actions
+    from jsonb_array_elements(coalesce(payload->'actions', '[]'::jsonb));
+
+  if jsonb_array_length(coalesce(payload->'returnLines', '[]'::jsonb)) = 0
+     and jsonb_array_length(coalesce(payload->'replacementLines', '[]'::jsonb)) = 0
+     and coalesce(array_length(v_actions, 1), 0) = 0
+     and coalesce(nullif(payload->>'refundAmount', '')::double precision, 0) = 0
+     and coalesce(nullif(payload->>'goodwillValue', '')::double precision, 0) = 0
+     and coalesce(payload->>'goodwillType', '') = ''
+     and coalesce(payload->>'reason', '') = ''
+     and coalesce(payload->>'notes', '') = '' then
+    raise exception 'Add at least one action, item, refund, or note before saving.';
+  end if;
+
+  -- Reverse the stock effect of every existing return line first, so the
+  -- reapply step below always sees an accurate picture of what's on hand.
+  -- A restocked line put stock back on the shelf, so undoing it takes that
+  -- stock back out — blocked if some of it has already been sold. A
+  -- write-off never touched stock, so there's nothing to reverse for it.
+  for v_old_line in
+    select product_id, quantity, disposition from public.return_lines
+    where return_id = v_return_id and user_id = v_account
+  loop
+    if v_old_line.disposition <> 'restock' or v_old_line.product_id is null then
+      continue;
+    end if;
+
+    select * into v_product from public.products
+      where id = v_old_line.product_id and user_id = v_account
+      for update;
+
+    if not found then
+      continue;
+    end if;
+
+    if v_product.quantity < v_old_line.quantity then
+      raise exception 'Cannot edit — % of the restocked % has already been sold.',
+        v_old_line.quantity - v_product.quantity, v_product.name;
+    end if;
+
+    v_new_qty := v_product.quantity - v_old_line.quantity;
+
+    update public.products
+      set quantity = v_new_qty, updated_at = now()
+      where id = v_product.id;
+
+    insert into public.stock_movements
+      (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+    values
+      (v_account, v_product.id, 'out', v_old_line.quantity, -v_old_line.quantity, v_product.quantity, v_new_qty,
+       'Return edit — reversal');
+  end loop;
+
+  -- Reverse every existing replacement line's stock effect (give back the
+  -- item that was handed to the customer at no charge).
+  for v_old_line in
+    select product_id, quantity from public.replacement_lines
+    where return_id = v_return_id and user_id = v_account
+  loop
+    if v_old_line.product_id is null then
+      continue;
+    end if;
+
+    select * into v_product from public.products
+      where id = v_old_line.product_id and user_id = v_account
+      for update;
+
+    if not found then
+      continue;
+    end if;
+
+    v_new_qty := v_product.quantity + v_old_line.quantity;
+
+    update public.products
+      set quantity = v_new_qty, updated_at = now()
+      where id = v_product.id;
+
+    insert into public.stock_movements
+      (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+    values
+      (v_account, v_product.id, 'in', v_old_line.quantity, v_old_line.quantity, v_product.quantity, v_new_qty,
+       'Return edit — reversal');
+  end loop;
+
+  delete from public.return_lines where return_id = v_return_id and user_id = v_account;
+  delete from public.replacement_lines where return_id = v_return_id and user_id = v_account;
+
+  for v_line in select * from jsonb_array_elements(coalesce(payload->'returnLines', '[]'::jsonb))
+  loop
+    v_qty := (v_line->>'quantity')::integer;
+    v_disposition := v_line->>'disposition';
+
+    if v_qty is null or v_qty <= 0 then
+      raise exception 'Returned item quantity must be greater than zero.';
+    end if;
+    if v_disposition not in ('restock', 'writeoff') then
+      raise exception 'Unknown disposition: %', v_disposition;
+    end if;
+
+    select * into v_product from public.products
+      where id = (v_line->>'productId')::uuid and user_id = v_account
+      for update;
+
+    if not found then
+      raise exception 'Product not found.';
+    end if;
+
+    if v_disposition = 'restock' then
+      v_new_qty := v_product.quantity + v_qty;
+
+      update public.products
+        set quantity = v_new_qty, updated_at = now()
+        where id = v_product.id;
+
+      insert into public.stock_movements
+        (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+      values
+        (v_account, v_product.id, 'in', v_qty, v_qty, v_product.quantity, v_new_qty,
+         'Return edit — restock' || v_note_suffix);
+    end if;
+
+    insert into public.return_lines
+      (user_id, return_id, product_id, sku, name, quantity, disposition, unit_cost)
+    values
+      (v_account, v_return_id, v_product.id, v_product.sku, v_product.name, v_qty, v_disposition, v_product.cost);
+  end loop;
+
+  for v_line in select * from jsonb_array_elements(coalesce(payload->'replacementLines', '[]'::jsonb))
+  loop
+    v_qty := (v_line->>'quantity')::integer;
+
+    if v_qty is null or v_qty <= 0 then
+      raise exception 'Replacement item quantity must be greater than zero.';
+    end if;
+
+    select * into v_product from public.products
+      where id = (v_line->>'productId')::uuid and user_id = v_account
+      for update;
+
+    if not found then
+      raise exception 'Product not found.';
+    end if;
+
+    if v_product.quantity < v_qty then
+      raise exception 'Only % in stock for %.', v_product.quantity, v_product.name;
+    end if;
+
+    v_new_qty := v_product.quantity - v_qty;
+
+    update public.products
+      set quantity = v_new_qty, updated_at = now()
+      where id = v_product.id;
+
+    insert into public.stock_movements
+      (user_id, product_id, type, quantity, delta, previous_quantity, new_quantity, reason)
+    values
+      (v_account, v_product.id, 'out', v_qty, -v_qty, v_product.quantity, v_new_qty,
+       'Return edit — replacement' || v_note_suffix);
+
+    insert into public.replacement_lines
+      (user_id, return_id, product_id, sku, name, quantity, unit_cost)
+    values
+      (v_account, v_return_id, v_product.id, v_product.sku, v_product.name, v_qty, v_product.cost);
+  end loop;
+
+  update public.returns
+    set
+      sale_id = nullif(payload->>'saleId', '')::uuid,
+      channel = coalesce(payload->>'channel', ''),
+      customer_ref = coalesce(payload->>'customerRef', ''),
+      reason = coalesce(payload->>'reason', ''),
+      notes = coalesce(payload->>'notes', ''),
+      actions = v_actions,
+      refund_amount = case when 'refund' = any(v_actions) then coalesce(nullif(payload->>'refundAmount', '')::double precision, 0) else 0 end,
+      refund_method = case when 'refund' = any(v_actions) then payload->>'refundMethod' else null end,
+      goodwill_type = case when 'goodwill' = any(v_actions) then coalesce(payload->>'goodwillType', '') else '' end,
+      goodwill_value = case when 'goodwill' = any(v_actions) then coalesce(nullif(payload->>'goodwillValue', '')::double precision, 0) else 0 end
+    where id = v_return_id and user_id = v_account
+    returning * into v_return;
+
+  return v_return;
+end;
+$$;
+
+grant execute on function public.edit_return(jsonb) to authenticated;
 
 -- Account settings: personal/employee details --------------------------------
 --
