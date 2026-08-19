@@ -207,17 +207,30 @@ export const PRINTER_LABELS: Record<PrinterKind, string> = {
  * barcode wider and taller and the SKU text bigger, and space every
  * on-by-default element (name/barcode/sku) down the label with only a
  * small margin, so a fresh Polono setup — or a "Reset to defaults" — fills
- * the label edge-to-edge for a typical short product name/SKU. A very long
- * product name or SKU can still run past the right edge (see
- * `sanitiseLabelTemplate`'s doc comment on why horizontal text overrun
- * isn't clamped at save time) — the editor's live preview flags that per
- * product if it happens; drag elements or drop font sizes there if it
- * does. */
+ * the label edge-to-edge for a typical short product name/SKU.
+ *
+ * `nameFont` is deliberately smaller here (2, not the 4 a first pass at this
+ * left it at) — font 4 was already too big for this label's width on its
+ * own, independent of the width/height-filling pass above: at font 4, the
+ * editor's own bundled preview name ("Sample Product Name", 20 characters —
+ * see `SAMPLE_PRODUCT` in `LabelTemplateEditor.tsx`) is about 472 dots wide
+ * by `approxTextWidthDots`'s estimate, comfortably wider than the whole
+ * 406-dot-wide label — so the "Name runs past the edge of the label"
+ * warning fired on the *default* template's *own* sample data, before a
+ * real product was ever involved. Font 2 keeps a 20-character name under
+ * ~340 dots (with the 15-dot left margin), leaving real headroom instead of
+ * sitting right at the edge. A genuinely long real product name can still
+ * overflow at any font size — that's what the live warning is for — but the
+ * out-of-the-box default shouldn't warn against its own sample text.
+ * Barcode and SKU stay large (module width 3, sku font 4) since neither of
+ * those overflows at this width; only the name needed to come down, and
+ * barcode/sku moved up to reclaim the vertical space the smaller name frees
+ * up. */
 export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   widthDots: 406,
   heightDots: 203,
   dpi: 203,
-  nameFont: 4,
+  nameFont: 2,
   variationFont: 2,
   skuFont: 4,
   barcodeHeight: 90,
@@ -226,9 +239,9 @@ export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   logoHeightDots: 40,
   logo: { x: 330, y: 8 },
   name: { x: 15, y: 8 },
-  variation: { x: 15, y: 50 },
-  barcode: { x: 15, y: 58 },
-  sku: { x: 15, y: 155 },
+  variation: { x: 15, y: 36 },
+  barcode: { x: 15, y: 42 },
+  sku: { x: 15, y: 140 },
   darkness: 14,
   printSpeedIps: 2,
   include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY, variation: false, logo: false },
