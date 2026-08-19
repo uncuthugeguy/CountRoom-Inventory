@@ -195,23 +195,40 @@ export const PRINTER_LABELS: Record<PrinterKind, string> = {
  * all work the same way. Smaller label than the Zebra's default, so the
  * logo and variation line start switched off to keep the name, barcode and
  * SKU legible — turn them back on (Settings › Label template) if your
- * labels have room. */
+ * labels have room.
+ *
+ * Positions/sizes below are deliberately generous relative to the 406x203
+ * dot canvas: a real physical test print (2026-08-19) showed the previous,
+ * more conservative defaults (module width 2, barcode height 70, sku font
+ * 3, tight top-left positions) only used roughly the left half and top
+ * two-thirds of the actual label, leaving a large unused strip on the
+ * right and along the bottom — the label itself was the right physical
+ * size, the *content* just wasn't sized to fill it. These values push the
+ * barcode wider and taller and the SKU text bigger, and space every
+ * on-by-default element (name/barcode/sku) down the label with only a
+ * small margin, so a fresh Polono setup — or a "Reset to defaults" — fills
+ * the label edge-to-edge for a typical short product name/SKU. A very long
+ * product name or SKU can still run past the right edge (see
+ * `sanitiseLabelTemplate`'s doc comment on why horizontal text overrun
+ * isn't clamped at save time) — the editor's live preview flags that per
+ * product if it happens; drag elements or drop font sizes there if it
+ * does. */
 export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   widthDots: 406,
   heightDots: 203,
   dpi: 203,
   nameFont: 4,
   variationFont: 2,
-  skuFont: 3,
-  barcodeHeight: 70,
-  barcodeModuleWidth: 2,
+  skuFont: 4,
+  barcodeHeight: 90,
+  barcodeModuleWidth: 3,
   logoWidthDots: 60,
   logoHeightDots: 40,
   logo: { x: 330, y: 8 },
-  name: { x: 10, y: 8 },
-  variation: { x: 10, y: 165 },
-  barcode: { x: 10, y: 50 },
-  sku: { x: 10, y: 130 },
+  name: { x: 15, y: 8 },
+  variation: { x: 15, y: 50 },
+  barcode: { x: 15, y: 58 },
+  sku: { x: 15, y: 155 },
   darkness: 14,
   printSpeedIps: 2,
   include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY, variation: false, logo: false },
