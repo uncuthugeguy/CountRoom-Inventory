@@ -12,6 +12,7 @@ import {
   estimateBarcodeWidthDots,
   sanitiseLabelTemplate,
   textHeightDots,
+  truncateToFitDots,
   type ElementPosition,
   type LabelTemplate,
   type PrinterKind,
@@ -352,6 +353,19 @@ function LabelCanvas({
   const nameWidth = approxTextWidthDots(SAMPLE_PRODUCT.name, nameSize)
   const variationWidth = approxTextWidthDots(`Variation: ${SAMPLE_PRODUCT.variation}`, variationSize)
   const skuWidth = approxTextWidthDots(SAMPLE_PRODUCT.sku, skuSize)
+
+  // What actually prints — see `truncateToFitDots` in `labelTemplate.ts`.
+  // The dashed hit-box below still uses the full, untruncated width above
+  // (a slightly more generous drag boundary than strictly necessary is
+  // harmless; what matters is that the *text drawn inside it* matches the
+  // real, possibly-shortened print output).
+  const nameDisplay = truncateToFitDots(SAMPLE_PRODUCT.name, t.widthDots - positionOf('name').x, nameSize)
+  const variationDisplay = truncateToFitDots(
+    `Variation: ${SAMPLE_PRODUCT.variation}`,
+    t.widthDots - positionOf('variation').x,
+    variationSize,
+  )
+  const skuDisplay = truncateToFitDots(SAMPLE_PRODUCT.sku, t.widthDots - positionOf('sku').x, skuSize)
   const barcodeWidth = estimateBarcodeWidthDots(barcodeModuleWidth)
 
   const footprintOf = (key: ElementKey): Footprint => {
@@ -564,15 +578,26 @@ function LabelCanvas({
   // An unticked element (see LabelElementVisibility) isn't drawn at all, so
   // it can't be off-label either — no point warning about something that
   // isn't printing.
+  //
+  // Name/variation/SKU text no longer get a *horizontal* off-label check —
+  // `truncateToFitDots` (see `labelTemplate.ts`) now shortens each of them
+  // at print time (and in the preview below) to whatever room they have
+  // left before the label's right edge, so a long product name can't
+  // actually run off the label horizontally any more; it just prints
+  // shorter, with a "…" showing something was cut. Vertical overflow still
+  // gets flagged — dropping a text element too close to the bottom isn't
+  // something shortening the text can fix, only dragging it up can. The
+  // logo and barcode keep both checks: neither can be auto-shrunk the way
+  // text can (a barcode's encoded value must stay intact — see
+  // `truncateToFitDots`'s doc comment — and a logo would just distort).
   const offLabel: string[] = []
   if (t.include.logo && logoDataUrl && (logoPos.x + logoWidth > t.widthDots || logoPos.y + logoHeight > t.heightDots))
     offLabel.push('Logo')
-  if (t.include.name && (namePos.x + nameWidth > t.widthDots || namePos.y + nameSize > t.heightDots)) offLabel.push('Name')
-  if (t.include.variation && (variationPos.x + variationWidth > t.widthDots || variationPos.y + variationSize > t.heightDots))
-    offLabel.push('Variation')
+  if (t.include.name && namePos.y + nameSize > t.heightDots) offLabel.push('Name')
+  if (t.include.variation && variationPos.y + variationSize > t.heightDots) offLabel.push('Variation')
   if (t.include.barcode && (barcodePos.x + barcodeWidth > t.widthDots || barcodePos.y + barcodeHeight > t.heightDots))
     offLabel.push('Barcode')
-  if (t.include.sku && (skuPos.x + skuWidth > t.widthDots || skuPos.y + skuSize > t.heightDots)) offLabel.push('SKU text')
+  if (t.include.sku && skuPos.y + skuSize > t.heightDots) offLabel.push('SKU text')
 
   // The decorative/hit-area box drawn around every element is padded out
   // slightly beyond its real footprint so it's easier to grab and to read
@@ -711,7 +736,7 @@ function LabelCanvas({
             nameWidth,
             nameSize,
             <text x={0} y={nameSize} fontSize={nameSize} fontFamily="ui-monospace, monospace" fill="#0a0a0a" style={{ pointerEvents: 'none' }}>
-              {SAMPLE_PRODUCT.name}
+              {nameDisplay}
             </text>,
             'name',
           )}
@@ -724,7 +749,7 @@ function LabelCanvas({
             variationWidth,
             variationSize,
             <text x={0} y={variationSize} fontSize={variationSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
-              Variation: {SAMPLE_PRODUCT.variation}
+              {variationDisplay}
             </text>,
             'variation',
           )}
@@ -756,7 +781,7 @@ function LabelCanvas({
             skuWidth,
             skuSize,
             <text x={0} y={skuSize} fontSize={skuSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
-              {SAMPLE_PRODUCT.sku}
+              {skuDisplay}
             </text>,
             'sku',
           )}

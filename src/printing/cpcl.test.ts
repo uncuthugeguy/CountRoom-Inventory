@@ -15,8 +15,26 @@ describe('buildCpclLabel', () => {
   })
 
   it('includes the product name as a TEXT command', () => {
-    const cpcl = buildCpclLabel({ name: 'Cordless Drill 18V', sku: 'SKU-001' })
+    // Wide enough that the name isn't shortened by `truncateToFitDots` —
+    // this test is about the TEXT command showing up at all, not about
+    // fitting the label; the dedicated truncation tests below cover that.
+    const cpcl = buildCpclLabel({
+      name: 'Cordless Drill 18V',
+      sku: 'SKU-001',
+      template: { ...DEFAULT_LABEL_TEMPLATE, widthDots: 4000 },
+    })
     expect(cpcl).toContain('Cordless Drill 18V')
+  })
+
+  it('shortens a name too long for the label, rather than printing it past the right edge', () => {
+    const longName = 'A'.repeat(200)
+    const cpcl = buildCpclLabel({ name: longName, sku: 'SKU-001' })
+    expect(cpcl).not.toContain(longName)
+    const match = /TEXT 7 0 160 20 (.+)/.exec(cpcl)
+    expect(match).not.toBeNull()
+    const printed = match![1]
+    expect(printed.length).toBeLessThan(longName.length)
+    expect(printed.endsWith('…')).toBe(true)
   })
 
   it('encodes the SKU as a Code 128 barcode', () => {
@@ -123,7 +141,13 @@ describe('buildCpclLabel', () => {
   })
 
   it('strips embedded line breaks so a rogue value cannot inject a CPCL command', () => {
-    const cpcl = buildCpclLabel({ name: 'Widget\r\nEXTRA COMMAND', sku: 'SKU-001' })
+    // Wide template for the same reason as the "includes the product name"
+    // test above — this is testing sanitisation, not truncation.
+    const cpcl = buildCpclLabel({
+      name: 'Widget\r\nEXTRA COMMAND',
+      sku: 'SKU-001',
+      template: { ...DEFAULT_LABEL_TEMPLATE, widthDots: 4000 },
+    })
     const lines = cpcl.trim().split('\r\n')
     expect(lines.some((line) => line === 'EXTRA COMMAND')).toBe(false)
     expect(cpcl).toContain('Widget EXTRA COMMAND')

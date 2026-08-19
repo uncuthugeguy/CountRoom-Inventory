@@ -3,8 +3,32 @@ import {
   DEFAULT_LABEL_TEMPLATE,
   MAX_LOGO_DOTS,
   MIN_LOGO_DOTS,
+  approxTextWidthDots,
   sanitiseLabelTemplate,
+  truncateToFitDots,
 } from './labelTemplate'
+
+describe('truncateToFitDots', () => {
+  it('returns the text unchanged when it already fits', () => {
+    expect(truncateToFitDots('Widget', 1000, 38)).toBe('Widget')
+  })
+
+  it('shortens text that is too wide, ending with an ellipsis', () => {
+    const result = truncateToFitDots('A very long product name indeed', 100, 38)
+    expect(result.length).toBeLessThan('A very long product name indeed'.length)
+    expect(result.endsWith('…')).toBe(true)
+    expect(approxTextWidthDots(result, 38)).toBeLessThanOrEqual(100)
+  })
+
+  it('returns an empty string when there is no room at all', () => {
+    expect(truncateToFitDots('Widget', 0, 38)).toBe('')
+    expect(truncateToFitDots('Widget', -5, 38)).toBe('')
+  })
+
+  it('falls back to just the ellipsis when even one character does not fit', () => {
+    expect(truncateToFitDots('Widget', 1, 38)).toBe('…')
+  })
+})
 
 describe('sanitiseLabelTemplate', () => {
   it('clamps the logo position so its whole footprint stays on the label, not just its origin', () => {

@@ -142,6 +142,46 @@ const BARCODE_REPRESENTATIVE_WIDTH_AT_MODULE_1 = 104
 export const estimateBarcodeWidthDots = (moduleWidth: number): number =>
   BARCODE_REPRESENTATIVE_WIDTH_AT_MODULE_1 * moduleWidth
 
+/** The character used to show "there's more, and it's been cut off" — one
+ * glyph, unlike three periods, so it costs the least of the shrinking
+ * budget in `truncateToFitDots` below. */
+const TRUNCATION_MARK = '…'
+
+/**
+ * Shortens `text` from the end — just enough to fit `maxWidthDots` at
+ * `fontHeightDots`, appending `TRUNCATION_MARK` when it actually had to cut
+ * anything — using the same `approxTextWidthDots` estimate the editor's own
+ * overflow warning is built on (see that function's doc comment for why
+ * it's an estimate, not an exact glyph measurement: a real product name is
+ * trimmed to *roughly* what fits, with a character or two of slack either
+ * way, not a pixel-exact cut).
+ *
+ * Used at print time for the name, variation and human-readable SKU text
+ * elements (`printing/cpcl.ts`, `printing/browserLabelPrint.ts`) and by the
+ * Settings › Label template editor's own live preview, so a product name
+ * that's genuinely too long for the label it's printing to gets shortened
+ * automatically instead of running off the physical label or needing a
+ * manual per-product fix. Deliberately NOT used for the barcode's own
+ * encoded value (`cleanSku` in `cpcl.ts`, the SKU passed to
+ * `encodeCode128` in `browserLabelPrint.ts`) — cutting that down would
+ * print a barcode that scans back to the wrong, truncated SKU, which is
+ * far worse than a barcode running past the label edge (already flagged by
+ * its own separate warning, since a barcode can't be auto-shrunk the way
+ * text can — only its module width or the label layout can fix that).
+ * `maxWidthDots <= 0` (e.g. the element's own position already sits at or
+ * past the label's edge) returns '' rather than looping forever or
+ * printing at a negative offset.
+ */
+export function truncateToFitDots(text: string, maxWidthDots: number, fontHeightDots: number): string {
+  if (maxWidthDots <= 0) return ''
+  if (approxTextWidthDots(text, fontHeightDots) <= maxWidthDots) return text
+  for (let len = text.length - 1; len > 0; len--) {
+    const candidate = text.slice(0, len) + TRUNCATION_MARK
+    if (approxTextWidthDots(candidate, fontHeightDots) <= maxWidthDots) return candidate
+  }
+  return TRUNCATION_MARK
+}
+
 /** A 3in x 1.5in label at 203 dpi — the Zebra QLn220's fixed print
  * resolution (it doesn't come in any other DPI; the "220" denotes its 2in
  * print width, not resolution) — with room for a logo beside the name and

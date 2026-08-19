@@ -1,5 +1,5 @@
 import type { CpclLogo } from './bitmap'
-import { DEFAULT_LABEL_TEMPLATE, type LabelTemplate } from './labelTemplate'
+import { DEFAULT_LABEL_TEMPLATE, textHeightDots, truncateToFitDots, type LabelTemplate } from './labelTemplate'
 
 export interface CpclLabelInput {
   name: string
@@ -62,12 +62,22 @@ export function buildCpclLabel({
     lines.push(`EG ${logo.widthBytes} ${logo.heightDots} ${logoX} ${logoY} ${logo.hex}`)
   }
 
+  // Text elements (unlike the barcode below) are shortened to fit whatever
+  // horizontal room they have left on the label — see `truncateToFitDots`'s
+  // doc comment for why this is safe for these three but never for the
+  // barcode's own encoded value.
   if (include.name) {
-    lines.push(`TEXT ${t.nameFont} 0 ${t.name.x} ${t.name.y} ${sanitiseText(name)}`)
+    const fitted = truncateToFitDots(sanitiseText(name), t.widthDots - t.name.x, textHeightDots(t.nameFont))
+    lines.push(`TEXT ${t.nameFont} 0 ${t.name.x} ${t.name.y} ${fitted}`)
   }
 
   if (variation && include.variation) {
-    lines.push(`TEXT ${t.variationFont} 0 ${t.variation.x} ${t.variation.y} ${sanitiseText(`Variation: ${variation}`)}`)
+    const fitted = truncateToFitDots(
+      sanitiseText(`Variation: ${variation}`),
+      t.widthDots - t.variation.x,
+      textHeightDots(t.variationFont),
+    )
+    lines.push(`TEXT ${t.variationFont} 0 ${t.variation.x} ${t.variation.y} ${fitted}`)
   }
 
   const cleanSku = sanitiseText(sku)
@@ -76,7 +86,8 @@ export function buildCpclLabel({
     lines.push(`BARCODE 128 ${moduleWidth} 1 ${t.barcodeHeight} ${t.barcode.x} ${t.barcode.y} ${cleanSku}`)
   }
   if (include.sku) {
-    lines.push(`TEXT ${t.skuFont} 0 ${t.sku.x} ${t.sku.y} ${cleanSku}`)
+    const fitted = truncateToFitDots(cleanSku, t.widthDots - t.sku.x, textHeightDots(t.skuFont))
+    lines.push(`TEXT ${t.skuFont} 0 ${t.sku.x} ${t.sku.y} ${fitted}`)
   }
 
   lines.push('FORM')

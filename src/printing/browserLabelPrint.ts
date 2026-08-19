@@ -1,6 +1,6 @@
 import type { Result } from '../domain/types'
 import { encodeCode128 } from './code128Render'
-import { textHeightDots, type LabelTemplate } from './labelTemplate'
+import { textHeightDots, truncateToFitDots, type LabelTemplate } from './labelTemplate'
 
 /** Minimal shape this module needs from a product — kept narrow so the
  * "print test label" sample product in the label editor doesn't need to be
@@ -60,17 +60,23 @@ export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, 
     )
   }
 
+  // Text elements (unlike the barcode below) are shortened to fit whatever
+  // horizontal room they have left on the label — see `truncateToFitDots`'s
+  // doc comment for why this is safe for these three but never for the
+  // barcode's own encoded value.
   if (t.include.name && product.name) {
     const nameSize = textHeightDots(t.nameFont)
+    const fitted = truncateToFitDots(product.name, t.widthDots - t.name.x, nameSize)
     parts.push(
-      `<text x="${t.name.x}" y="${t.name.y + nameSize}" font-size="${nameSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(product.name)}</text>`,
+      `<text x="${t.name.x}" y="${t.name.y + nameSize}" font-size="${nameSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 
   if (t.include.variation && product.variation) {
     const variationSize = textHeightDots(t.variationFont)
+    const fitted = truncateToFitDots(`Variation: ${product.variation}`, t.widthDots - t.variation.x, variationSize)
     parts.push(
-      `<text x="${t.variation.x}" y="${t.variation.y + variationSize}" font-size="${variationSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(`Variation: ${product.variation}`)}</text>`,
+      `<text x="${t.variation.x}" y="${t.variation.y + variationSize}" font-size="${variationSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 
@@ -80,8 +86,9 @@ export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, 
 
   if (t.include.sku && product.sku) {
     const skuSize = textHeightDots(t.skuFont)
+    const fitted = truncateToFitDots(product.sku, t.widthDots - t.sku.x, skuSize)
     parts.push(
-      `<text x="${t.sku.x}" y="${t.sku.y + skuSize}" font-size="${skuSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(product.sku)}</text>`,
+      `<text x="${t.sku.x}" y="${t.sku.y + skuSize}" font-size="${skuSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 

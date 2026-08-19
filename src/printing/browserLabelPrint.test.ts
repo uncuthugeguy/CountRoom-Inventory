@@ -52,11 +52,22 @@ describe('buildLabelSvg', () => {
   })
 
   it('escapes text so a product name cannot break out of the SVG markup', () => {
-    const svg = buildLabelSvg({ ...PRODUCT, name: '<script>alert(1)</script> & "quoted"' }, DEFAULT_POLONO_LABEL_TEMPLATE, undefined)
+    // Wide template so the whole name survives — this test is about
+    // escaping, not about `truncateToFitDots` shortening it first; the
+    // dedicated truncation test below covers that.
+    const wideTemplate = { ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 4000 }
+    const svg = buildLabelSvg({ ...PRODUCT, name: '<script>alert(1)</script> & "quoted"' }, wideTemplate, undefined)
     expect(svg).not.toContain('<script>')
     expect(svg).toContain('&lt;script&gt;')
     expect(svg).toContain('&amp;')
     expect(svg).toContain('&quot;quoted&quot;')
+  })
+
+  it('shortens a name too long for the label instead of letting it run past the right edge', () => {
+    const longName = 'A'.repeat(200)
+    const svg = buildLabelSvg({ ...PRODUCT, name: longName }, DEFAULT_POLONO_LABEL_TEMPLATE, undefined)
+    expect(svg).not.toContain(longName)
+    expect(svg).toContain('…')
   })
 
   it('drops an element entirely when its `include` flag is off, regardless of content', () => {
