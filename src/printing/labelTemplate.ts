@@ -263,9 +263,24 @@ export const PRINTER_LABELS: Record<PrinterKind, string> = {
  * overflow at any font size — that's what the live warning is for — but the
  * out-of-the-box default shouldn't warn against its own sample text.
  * Barcode and SKU stay large (module width 3, sku font 4) since neither of
- * those overflows at this width; only the name needed to come down, and
- * barcode/sku moved up to reclaim the vertical space the smaller name frees
- * up. */
+ * those overflows at this width; only the name needed to come down.
+ *
+ * `barcodeHeight` and the `barcode`/`sku` y-positions went through one more
+ * pass after a physical test print of the above still showed a clear band
+ * of unused label below the SKU text — the first widening pass fixed the
+ * *width* but was still leaving roughly a fifth of the *height* (name/
+ * barcode/sku plus their gaps only reached to dot 178 of 203) sitting
+ * blank at the bottom. `barcodeHeight` doesn't affect a barcode's *width*
+ * at all (only `barcodeModuleWidth` does — see that field's doc comment),
+ * so it was free to grow a lot further without reopening the width-overrun
+ * problem `nameFont` above was fixed for: 90 → 118 dots, with the gaps
+ * between name/barcode/sku trimmed to a snug 4 dots each and the SKU text
+ * pushed down to sit just 5 dots off the bottom edge instead of 25. Name
+ * stays where it was — its height is tied to `nameFont`, which stays small
+ * on purpose (see above) — so the barcode is what grows to fill the
+ * reclaimed space. End result: name(8–34) + gap + barcode(38–156) + gap +
+ * sku(160–198) uses 198 of the label's 203 dots, not 178 — under 3% left
+ * over, down from about 12%. */
 export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   widthDots: 406,
   heightDots: 203,
@@ -273,15 +288,15 @@ export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   nameFont: 2,
   variationFont: 2,
   skuFont: 4,
-  barcodeHeight: 90,
+  barcodeHeight: 118,
   barcodeModuleWidth: 3,
   logoWidthDots: 60,
   logoHeightDots: 40,
   logo: { x: 330, y: 8 },
   name: { x: 15, y: 8 },
   variation: { x: 15, y: 36 },
-  barcode: { x: 15, y: 42 },
-  sku: { x: 15, y: 140 },
+  barcode: { x: 15, y: 38 },
+  sku: { x: 15, y: 160 },
   darkness: 14,
   printSpeedIps: 2,
   include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY, variation: false, logo: false },
