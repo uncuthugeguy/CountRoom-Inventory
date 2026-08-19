@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { createLocalRepository } from './data/localRepository'
-import { DUPLICATE_SKU, type InventoryRepository } from './data/repository'
+import { DUPLICATE_SKU, type InventoryRepository, type TeamMember } from './data/repository'
 import { memoryStorage } from './test/memoryStorage'
-import type { Product } from './domain/types'
+import type { ActivityLogEntry, Product } from './domain/types'
 
 /**
  * A repository double that simulates the exact failure mode reported by
@@ -82,6 +82,24 @@ function buildStaleSkuRepo(): InventoryRepository {
       return null
     },
     setAccountSettings: vi.fn(),
+    listSuppliers: vi.fn(async () => []),
+    createSupplier: vi.fn(),
+    updateSupplier: vi.fn(),
+    deleteSupplier: vi.fn(),
+    linkSupplierProduct: vi.fn(),
+    updateSupplierProduct: vi.fn(),
+    unlinkSupplierProduct: vi.fn(),
+    listSupplierProducts: vi.fn(async () => []),
+    listPurchaseOrders: vi.fn(async () => []),
+    createPurchaseOrder: vi.fn(),
+    sendPurchaseOrder: vi.fn(),
+    confirmPurchaseOrder: vi.fn(),
+    receivePurchaseOrder: vi.fn(),
+    cancelPurchaseOrder: vi.fn(),
+    async listActivity() {
+      return []
+    },
+    logActivity: vi.fn(),
   }
 }
 
@@ -103,6 +121,7 @@ async function renderApp(repo?: InventoryRepository) {
       openRepository={async () => repository}
       settingsStorage={memoryStorage()}
       productDraftStorage={memoryStorage()}
+      saleEditDraftStorage={memoryStorage()}
     />,
   )
   await screen.findByTestId('stat-products')
@@ -193,7 +212,10 @@ describe('products', () => {
     await user.type(within(dialog).getByLabelText(/^barcode/i), '1234567890128')
     await user.type(within(dialog).getByLabelText(/^sku$/i), 'HAM-500')
     await user.type(within(dialog).getByLabelText(/^name$/i), 'Claw Hammer 500g')
-    await user.type(within(dialog).getByLabelText(/^category$/i), 'Hand Tools')
+    // Category is a manager-curated dropdown, not free text (see
+    // ProductFormDialog) — pick one already in use by the demo catalogue
+    // rather than typing a new one.
+    await user.selectOptions(within(dialog).getByLabelText(/^category$/i), 'Power Tools')
     await user.type(within(dialog).getByLabelText(/^location$/i), 'E1')
     await user.clear(within(dialog).getByLabelText(/^quantity$/i))
     await user.type(within(dialog).getByLabelText(/^quantity$/i), '6')
@@ -201,11 +223,37 @@ describe('products', () => {
     await user.type(within(dialog).getByLabelText(/reorder level/i), '2')
     await user.click(within(dialog).getByRole('button', { name: /save product/i }))
 
+    // Saving asks for confirmation first rather than saving immediately —
+    // see the next test for the point of this.
+    expect(await within(dialog).findByText(/save "claw hammer 500g" as a new product/i)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
+
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByText('Claw Hammer 500g')).toBeInTheDocument()
 
     await go(user, /dashboard/i)
     expect(screen.getByTestId('stat-products')).toHaveTextContent('9')
+  })
+
+  it('asks for confirmation before saving instead of saving immediately, so pressing Enter in an earlier field cannot accidentally save and close the dialog', async () => {
+    const { user } = await renderApp()
+    await go(user, /products/i)
+    await user.click(screen.getByRole('button', { name: /new product/i }))
+
+    const dialog = screen.getByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/^name$/i), 'Claw Hammer 500g')
+    // Pressing Enter in a field submits the form the same way clicking Save
+    // does — this used to save and close immediately.
+    await user.type(within(dialog).getByLabelText(/^name$/i), '{Enter}')
+
+    // Still open, now showing a confirmation instead of having saved.
+    expect(await within(dialog).findByText(/save "claw hammer 500g" as a new product/i)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    // Backing out returns to the form with nothing lost and nothing saved.
+    await user.click(within(dialog).getByRole('button', { name: /^back$/i }))
+    expect(within(dialog).getByLabelText(/^name$/i)).toHaveValue('Claw Hammer 500g')
+    expect(screen.queryByText('Claw Hammer 500g')).not.toBeInTheDocument()
   })
 
   it('keeps the dialog open and explains why an invalid draft was rejected', async () => {
@@ -231,6 +279,7 @@ describe('products', () => {
     const dialog = screen.getByRole('dialog')
     await user.type(within(dialog).getByLabelText(/^name$/i), 'Claw Hammer 500g')
     await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const row = screen
@@ -248,6 +297,7 @@ describe('products', () => {
     const dialog = screen.getByRole('dialog')
     await user.type(within(dialog).getByLabelText(/^name$/i), 'Claw Hammer 500g')
     await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
 
     // No confusing "barcode already used" error, and no dialog left hanging
     // open — the app quietly regenerated the SKU and saved.
@@ -268,6 +318,7 @@ describe('products', () => {
     await user.type(within(dialog).getByLabelText(/^sku$/i), 'DUP-1')
     await user.type(within(dialog).getByLabelText(/^name$/i), 'Duplicate')
     await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/already used/i)
   })
@@ -282,6 +333,7 @@ describe('products', () => {
     await user.clear(name)
     await user.type(name, 'M6 Washer (zinc)')
     await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
 
     expect(await screen.findByText('M6 Washer (zinc)')).toBeInTheDocument()
   })
@@ -440,6 +492,219 @@ describe('history', () => {
   })
 })
 
+describe('activity log', () => {
+  it('records an edit to a product and shows it, attributed, on the Activity tab', async () => {
+    const { user } = await renderApp()
+    await go(user, /products/i)
+    await user.click(screen.getByRole('button', { name: /edit m6 flat washer/i }))
+
+    const dialog = screen.getByRole('dialog')
+    const quantity = within(dialog).getByLabelText(/^quantity$/i)
+    await user.clear(quantity)
+    await user.type(quantity, '50')
+    await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+
+    const row = screen.getByTestId('activity-row')
+    expect(row).toHaveTextContent('You')
+    expect(row).toHaveTextContent('edited')
+    expect(row).toHaveTextContent('M6 Flat Washer')
+    expect(row).toHaveTextContent('qty 64 → 50')
+  })
+
+  it('records a newly added product and a deleted product too', async () => {
+    const { user } = await renderApp()
+    await go(user, /products/i)
+
+    await user.click(screen.getByRole('button', { name: /new product/i }))
+    let dialog = screen.getByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/^name$/i), 'Brand New Widget')
+    await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await user.click(screen.getByRole('button', { name: /delete m6 nyloc nut/i }))
+    dialog = screen.getByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }))
+    await waitFor(() => expect(screen.queryByText('M6 Nyloc Nut')).toBeNull())
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+
+    const rows = screen.getAllByTestId('activity-row')
+    const text = rows.map((r) => r.textContent).join(' | ')
+    expect(text).toMatch(/added.*Brand New Widget/)
+    expect(text).toMatch(/removed.*M6 Nyloc Nut/)
+  })
+
+  it('does not log a save that changed nothing tracked', async () => {
+    const { user } = await renderApp()
+    await go(user, /products/i)
+    await user.click(screen.getByRole('button', { name: /edit m6 flat washer/i }))
+    const dialog = screen.getByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: /save product/i }))
+    await user.click(within(dialog).getByRole('button', { name: /yes, save/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    expect(screen.getByText(/no activity yet/i)).toBeInTheDocument()
+  })
+
+  it('records editing a past sale and shows it on the Activity tab', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    const receipt = screen.getByRole('dialog')
+    await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
+
+    const editDialog = screen.getByRole('dialog')
+    await user.click(within(editDialog).getByRole('button', { name: 'Vinted' }))
+    await user.click(within(editDialog).getByRole('button', { name: /save changes/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    const rows = screen.getAllByTestId('activity-row')
+    const text = rows.map((r) => r.textContent).join(' | ')
+    expect(text).toMatch(/edited.*Sale/)
+    expect(text).toMatch(/channel eBay → Vinted/)
+  })
+
+  it('records editing a past return case and shows it on the Activity tab', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await user.type(screen.getByLabelText(/search products to return/i), 'washer')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByTestId('return-cart-row')
+
+    await user.click(screen.getByRole('button', { name: 'Refund' }))
+    await user.type(screen.getByLabelText(/refund amount/i), '2.50')
+    await user.type(screen.getByLabelText(/^channel$/i), 'eBay')
+    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await screen.findByTestId('last-return')
+
+    const row = screen.getByTestId('return-case-row')
+    await user.click(within(row).getByRole('button', { name: /view details/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edit case/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const refundInput = screen.getByLabelText(/refund amount/i)
+    await user.clear(refundInput)
+    await user.type(refundInput, '5.00')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => expect(screen.queryByTestId('return-edit-banner')).toBeNull())
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    const rows = screen.getAllByTestId('activity-row')
+    const text = rows.map((r) => r.textContent).join(' | ')
+    expect(text).toMatch(/edited.*Return case/)
+    expect(text).toMatch(/refund 2\.50 → 5\.00/)
+  })
+})
+
+/**
+ * The local repository doesn't support team accounts at all (see
+ * repository.ts's TEAM_NOT_SUPPORTED), so exercising team-change activity
+ * logging needs a small repo double that does — same technique
+ * buildStaleSkuRepo above uses for a different edge case. Backed by a real
+ * local repository underneath for everything else, so products/sales still
+ * behave normally; only listTeam/inviteEmployee/removeTeamMember and the
+ * activity log itself are overridden.
+ */
+function buildTeamCapableRepo(base: InventoryRepository): InventoryRepository {
+  const activity: ActivityLogEntry[] = []
+  let nextId = 1
+  const team: TeamMember[] = [{ id: 'you', email: 'You', role: 'manager', status: 'active', isYou: true }]
+
+  return {
+    ...base,
+    async listTeam() {
+      return team
+    },
+    async inviteEmployee(email: string) {
+      const member = { id: `m${nextId++}`, email, role: 'employee' as const, status: 'pending' as const, isYou: false, emailSent: true }
+      team.push(member)
+      activity.unshift({
+        id: `a${nextId++}`,
+        actorName: 'You',
+        entityType: 'member',
+        action: 'invited',
+        entityId: member.id,
+        entityLabel: email,
+        detail: 'role: employee',
+        createdAt: new Date().toISOString(),
+      })
+      return { ok: true, value: member }
+    },
+    async removeTeamMember(membershipId: string) {
+      const idx = team.findIndex((m) => m.id === membershipId)
+      if (idx === -1) return { ok: false, error: 'Not found.' }
+      const [removed] = team.splice(idx, 1)
+      activity.unshift({
+        id: `a${nextId++}`,
+        actorName: 'You',
+        entityType: 'member',
+        action: 'removed',
+        entityId: membershipId,
+        entityLabel: removed.email,
+        detail: 'was employee',
+        createdAt: new Date().toISOString(),
+      })
+      return { ok: true, value: true }
+    },
+    async listActivity() {
+      // A fresh copy each call, same as the real repositories — proves the
+      // Activity tab actually re-fetches after invite/remove rather than
+      // happening to see a shared, in-place-mutated array.
+      return [...activity]
+    },
+  }
+}
+
+describe('activity log — team changes', () => {
+  it('records inviting and removing a team member, shown on the Activity tab for a manager', async () => {
+    const repository = buildTeamCapableRepo(createLocalRepository({ storage: memoryStorage(), seed: true }))
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await screen.findByRole('heading', { name: /^team$/i })
+    await user.type(screen.getByLabelText(/invite an employee/i), 'jane@example.com')
+    await user.click(screen.getByRole('button', { name: /^invite$/i }))
+    await screen.findByText('jane@example.com')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    let rows = screen.getAllByTestId('activity-row')
+    expect(rows.map((r) => r.textContent).join(' | ')).toMatch(/invited.*jane@example\.com/)
+
+    await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /remove jane@example\.com/i }))
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    rows = screen.getAllByTestId('activity-row')
+    const text = rows.map((r) => r.textContent).join(' | ')
+    expect(text).toMatch(/removed.*jane@example\.com/)
+  })
+})
+
 describe('editing a past sale', () => {
   it('lets a manager change quantities on a completed sale, reflecting in stock and the sale record', async () => {
     const { user } = await renderApp()
@@ -506,6 +771,93 @@ describe('editing a past sale', () => {
 
     await user.click(within(editDialog).getByRole('button', { name: /save changes/i }))
     expect(await within(editDialog).findByText(/fix the stock issues/i)).toBeInTheDocument()
+  })
+
+  it('keeps an in-progress sale edit when switching to another tab and back', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: quantity 64, price 0.05.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    const receipt = screen.getByRole('dialog')
+    await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
+
+    const editDialog = screen.getByRole('dialog')
+    fireEvent.change(within(editDialog).getByLabelText(/quantity for m6 flat washer/i), {
+      target: { value: '3' },
+    })
+
+    // The dialog used to live inside History's Sales view, so switching to
+    // a totally different tab unmounted it and silently threw away the
+    // edit. It's now rendered at the top of the app, alongside the product
+    // dialog, specifically so this survives — same as editing a product.
+    await go(user, /products/i)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await go(user, /history/i)
+    const stillOpenDialog = screen.getByRole('dialog')
+    expect(within(stillOpenDialog).getByLabelText(/quantity for m6 flat washer/i)).toHaveValue(3)
+
+    await user.click(within(stillOpenDialog).getByRole('button', { name: /save changes/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    // History remounted when we tabbed back to it, so it's showing Stock
+    // movements again rather than Sales — switch back to confirm the save
+    // actually landed.
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    expect(screen.getByTestId('sale-row')).toHaveTextContent('0.15')
+    expect(screen.getByTestId('sale-row')).toHaveTextContent('Edited')
+  })
+
+  it('picks up an unsaved sale edit if the dialog is reopened before saving', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: quantity 64, price 0.05.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await screen.findByTestId('last-sale')
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edit sale/i }))
+
+    fireEvent.change(within(screen.getByRole('dialog')).getByLabelText(/quantity for m6 flat washer/i), {
+      target: { value: '5' },
+    })
+
+    // Cancelling without saving stands in for the dialog getting torn down
+    // by a real tab/app switch (e.g. a backgrounded PWA reloading) —
+    // saleEditDraftStorage.ts deliberately never clears on close, only on a
+    // successful save or sign-out, same rule productDraftStorage.ts uses
+    // for the product form.
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edit sale/i }))
+
+    const reopened = screen.getByRole('dialog')
+    expect(within(reopened).getByText(/picked up where you left off/i)).toBeInTheDocument()
+    expect(within(reopened).getByLabelText(/quantity for m6 flat washer/i)).toHaveValue(5)
+
+    await user.click(within(reopened).getByRole('button', { name: /discard draft/i }))
+    expect(within(reopened).getByLabelText(/quantity for m6 flat washer/i)).toHaveValue(1)
   })
 })
 
@@ -862,6 +1214,33 @@ describe('checkout', () => {
     await user.type(screen.getByLabelText(/order total/i), '5')
     expect(screen.getByTestId('order-total-check')).toHaveTextContent(
       "You've itemised 3.55, but entered an order total of 5.00 — you're 1.45 short. Check you haven't missed a fee.",
+    )
+  })
+
+  it('flags the item-price-already-includes-a-fee mistake with an actionable message', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer, edited to (mistakenly) hold a marketplace's full order
+    // total rather than the item's own price — the exact real-world slip
+    // this message exists to catch.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    const cartRow = await screen.findByTestId('cart-row')
+
+    const itemPrice = within(cartRow).getByLabelText(/item price for m6 flat washer/i)
+    fireEvent.change(itemPrice, { target: { value: '3' } })
+
+    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
+    await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
+    // Itemised: 3 + 1 + 2 + 0.5 = 6.5, but the real order total was only 5 —
+    // the fees are already baked into the (too-high) item price above.
+    await user.type(screen.getByLabelText(/order total/i), '5')
+
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent(
+      "You've itemised 6.50, but entered an order total of 5.00 — that's 1.50 more than the order total. " +
+        "Check the item price above isn't already including a fee you've also entered below.",
     )
   })
 

@@ -1,9 +1,18 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
+import path from 'node:path'
+import os from 'node:os'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // node_modules lives inside the Google-Drive-synced project folder, whose
+  // FUSE mount refuses to unlink files mid-sync (same root cause as the
+  // schema.sql hardlink issue) -- Vite's default node_modules/.vite cache
+  // dir sits right in that sync path, so cache invalidation intermittently
+  // throws EPERM on unlink and the dev server won't start. Pointing the
+  // cache outside the synced tree avoids that entirely.
+  cacheDir: path.join(os.tmpdir(), 'stockflow-pwa-vite-cache'),
   plugins: [
     react(),
     VitePWA({

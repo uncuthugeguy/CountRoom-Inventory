@@ -32,3 +32,7 @@ npm-debug.log*
 
 # Stray local file, not part of the project
 sdk alias
+
+# Session scratch/trash (device_bash can't delete files on mounted drives, so
+# junk gets moved here instead of removed)
+_to_delete/

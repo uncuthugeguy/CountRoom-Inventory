@@ -1,9 +1,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  describeMemberInvited,
+  describeMemberRemoved,
+  describeProductCreated,
+  describeProductEdit,
+  describeProductRemoved,
+  describeReturnEdit,
+  describeSaleEdit,
+  returnEntityLabel,
+  saleEntityLabel,
+} from '../domain/activity'
 import { applyMovement } from '../domain/movements'
 import { MANAGER_ONLY, isManager, productEditNeedsManager } from '../domain/permissions'
 import { validateDraft } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
 import type {
+  ActivityAction,
+  ActivityEntityType,
+  ActivityLogEntry,
   MovementInput,
   PaidBy,
   PaymentMethod,
@@ -28,6 +42,7 @@ import type {
 import { EMPTY_PROFILE_DRAFT } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
+import type { Supplier, SupplierProduct, PurchaseOrder } from '../domain/suppliers'
 import { getSupabaseClient } from './supabaseClient'
 import {
   DUPLICATE_BARCODE,
@@ -141,6 +156,17 @@ interface ReplacementLineRow {
   unit_cost: number
 }
 
+interface ActivityLogRow {
+  id: string
+  actor_name: string
+  entity_type: ActivityEntityType
+  action: ActivityAction
+  entity_id: string | null
+  entity_label: string
+  detail: string
+  created_at: string
+}
+
 const toProduct = (row: ProductRow): Product => ({
   id: row.id,
   barcode: row.barcode ?? '',
@@ -210,6 +236,17 @@ const toReturnLine = (row: ReturnLineRow): ReturnLine => ({
   quantity: row.quantity,
   disposition: row.disposition,
   unitCost: row.unit_cost,
+})
+
+const toActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
+  id: row.id,
+  actorName: row.actor_name,
+  entityType: row.entity_type,
+  action: row.action,
+  entityId: row.entity_id,
+  entityLabel: row.entity_label,
+  detail: row.detail,
+  createdAt: row.created_at,
 })
 
 const toReplacementLine = (row: ReplacementLineRow): ReplacementLine => ({
@@ -314,6 +351,44 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
   const { data: accountIdData } = await db.rpc('current_account_id')
   const accountId = (accountIdData as string | null) ?? null
 
+  // Snapshotted at open time, same reasoning as `role` above — the activity
+  // log records who did it *at the time*, so a later email/name change (or
+  // this person leaving the team) shouldn't rewrite history.
+  const { data: userInfo } = await db.auth.getUser()
+  const actorName = userInfo.user?.email ?? 'Unknown'
+
+  // Best-effort by design: the write this rides alongside (a product,
+  // sale, return or membership change) has already succeeded by the time
+  // this is called, so a failure here (a stale session, a transient
+  // network blip) is logged to the console and swallowed rather than ever
+  // blocking or rolling back that write — same reasoning as the
+  // invite-email send in inviteEmployee below. account_id and actor_id are
+  // stamped server-side by a trigger (see stamp_activity_log() in
+  // supabase/schema.sql), not sent from here.
+  const logActivityBestEffort = async (
+    entityType: ActivityEntityType,
+    action: ActivityAction,
+    entityId: string | null,
+    entityLabel: string,
+    detail: string,
+  ): Promise<void> => {
+    try {
+      const { error } = await db.from('activity_log').insert({
+        actor_name: actorName,
+        entity_type: entityType,
+        action,
+        entity_id: entityId,
+        entity_label: entityLabel,
+        detail,
+      })
+      if (error) {
+        console.error('Failed to record activity log entry:', error.message)
+      }
+    } catch (cause) {
+      console.error('Failed to record activity log entry:', cause)
+    }
+  }
+
   return {
     kind: 'supabase',
     role,
@@ -353,29 +428,32 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (error) {
         return { ok: false, error: uniqueViolationMessage(error) ?? error.message }
       }
-      return { ok: true, value: toProduct(data as ProductRow) }
+      const product = toProduct(data as ProductRow)
+      await logActivityBestEffort('product', 'added', product.id, product.name, describeProductCreated(product))
+      return { ok: true, value: product }
     },
 
     async updateProduct(id, draft): Promise<Result<Product>> {
       const validated = validateDraft(draft)
       if (!validated.ok) return validated
 
+      // Read the real (unmasked) row first — needed to decide whether an
+      // employee's edit is actually trying to change cost/price, and to
+      // build the activity-log diff below either way.
+      const { data: existingRow, error: readError } = await db
+        .from('products')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle()
+      if (readError) return { ok: false, error: readError.message }
+      if (!existingRow) return { ok: false, error: NOT_FOUND }
+      const existing = toProduct(existingRow as ProductRow)
+
       const fullRow = toRow(validated.value)
       let payload: Partial<typeof fullRow> = fullRow
 
       if (role !== 'manager') {
-        // Fetch just enough of the real (unmasked) row to tell whether this
-        // edit is actually trying to change cost/price — an employee editing
-        // an unrelated field (location, quantity, …) must go through even
-        // though their own view of cost/price may be hidden.
-        const { data: existing, error: readError } = await db
-          .from('products')
-          .select('cost, price')
-          .eq('id', id)
-          .maybeSingle()
-        if (readError) return { ok: false, error: readError.message }
-        if (!existing) return { ok: false, error: NOT_FOUND }
-        if (productEditNeedsManager(validated.value, existing as { cost: number; price: number })) {
+        if (productEditNeedsManager(validated.value, existing)) {
           return { ok: false, error: MANAGER_ONLY.editCostOrPrice }
         }
         // Leave cost/price out of the update entirely rather than resending
@@ -398,11 +476,31 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         return { ok: false, error: uniqueViolationMessage(error) ?? error.message }
       }
       if (!data) return { ok: false, error: NOT_FOUND }
-      return { ok: true, value: toProduct(data as ProductRow) }
+      const updated = toProduct(data as ProductRow)
+
+      // Skip logging a save that changed nothing tracked (e.g. reopening the
+      // dialog and hitting Save without editing anything).
+      const detail = describeProductEdit(existing, updated)
+      if (detail) await logActivityBestEffort('product', 'edited', updated.id, updated.name, detail)
+
+      return { ok: true, value: updated }
     },
 
     async deleteProduct(id): Promise<Result<true>> {
       if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.deleteProduct }
+
+      // Read first and log *before* deleting — activity_log no longer has a
+      // hard foreign key to products (entity_id can point at a product,
+      // sale, return or membership row depending on entity_type), but
+      // reading first is still needed to snapshot the product's name/qty
+      // before it's gone. Best-effort either way: if the read or the log
+      // insert fails, the delete still goes ahead below.
+      const { data: existingRow } = await db.from('products').select('*').eq('id', id).maybeSingle()
+      if (existingRow) {
+        const existing = toProduct(existingRow as ProductRow)
+        await logActivityBestEffort('product', 'removed', existing.id, existing.name, describeProductRemoved(existing))
+      }
+
       const { error } = await db.from('products').delete().eq('id', id)
       if (error) return { ok: false, error: error.message }
       return { ok: true, value: true }
@@ -556,6 +654,18 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (!isManager(role)) return { ok: false, error: MANAGER_ONLY.editSale }
       if (input.lines.length === 0) return { ok: false, error: EMPTY_SALE }
 
+      // Read the pre-edit sale for the activity-log diff below — best-effort:
+      // if this read fails, the edit still proceeds, just without a logged
+      // diff (matching the same tolerance every other activity-log read has).
+      let before: Sale | null = null
+      {
+        const { data: beforeRow } = await db.from('sales_view').select('*').eq('id', id).maybeSingle()
+        if (beforeRow) {
+          const { data: beforeItemRows } = await db.from('sale_items_view').select('*').eq('sale_id', id)
+          before = toSale(beforeRow as SaleRow, ((beforeItemRows ?? []) as SaleItemRow[]).map(toSaleLine))
+        }
+      }
+
       // Runs server-side as one Postgres transaction (see edit_sale in
       // supabase/schema.sql) — it reverses the sale's original stock effect
       // and reapplies the edited lines atomically, the same way checkout_sale
@@ -592,10 +702,16 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         .eq('sale_id', saleRow.id)
       if (itemsError) return { ok: false, error: itemsError.message }
 
-      return {
-        ok: true,
-        value: toSale(saleRow, (itemRows as SaleItemRow[]).map(toSaleLine)),
+      const updated = toSale(saleRow, (itemRows as SaleItemRow[]).map(toSaleLine))
+
+      // Skip logging an edit that changed nothing tracked, same reasoning as
+      // the product edit above.
+      if (before) {
+        const saleDetail = describeSaleEdit(before, updated)
+        if (saleDetail) await logActivityBestEffort('sale', 'edited', updated.id, saleEntityLabel(updated), saleDetail)
       }
+
+      return { ok: true, value: updated }
     },
 
     async listReturns() {
@@ -681,6 +797,24 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     async updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>> {
       if (!isManager(role)) return { ok: false, error: MANAGER_ONLY.editReturn }
 
+      // Read the pre-edit case for the activity-log diff below — best-effort,
+      // same reasoning as updateSale's own pre-read above.
+      let before: ReturnCase | null = null
+      {
+        const { data: beforeRow } = await db.from('returns').select('*').eq('id', id).maybeSingle()
+        if (beforeRow) {
+          const [{ data: beforeLineRows }, { data: beforeReplacementRows }] = await Promise.all([
+            db.from('return_lines_view').select('*').eq('return_id', id),
+            db.from('replacement_lines_view').select('*').eq('return_id', id),
+          ])
+          before = toReturnCase(
+            beforeRow as ReturnRow,
+            ((beforeLineRows ?? []) as ReturnLineRow[]).map(toReturnLine),
+            ((beforeReplacementRows ?? []) as ReplacementLineRow[]).map(toReplacementLine),
+          )
+        }
+      }
+
       // Runs server-side as one Postgres transaction (see edit_return in
       // supabase/schema.sql) — it reverses the case's original stock effect
       // and reapplies the edited one atomically, the same way process_return
@@ -713,14 +847,22 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (linesError) return { ok: false, error: linesError.message }
       if (replacementError) return { ok: false, error: replacementError.message }
 
-      return {
-        ok: true,
-        value: toReturnCase(
-          returnRow,
-          (lineRows as ReturnLineRow[]).map(toReturnLine),
-          (replacementRows as ReplacementLineRow[]).map(toReplacementLine),
-        ),
+      const updated = toReturnCase(
+        returnRow,
+        (lineRows as ReturnLineRow[]).map(toReturnLine),
+        (replacementRows as ReplacementLineRow[]).map(toReplacementLine),
+      )
+
+      // Skip logging an edit that changed nothing tracked, same reasoning as
+      // updateSale/updateProduct above.
+      if (before) {
+        const returnDetail = describeReturnEdit(before, updated)
+        if (returnDetail) {
+          await logActivityBestEffort('return', 'edited', updated.id, returnEntityLabel(updated), returnDetail)
+        }
       }
+
+      return { ok: true, value: updated }
     },
 
     async listTeam(): Promise<TeamMember[]> {
@@ -768,6 +910,14 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
           emailSent = false
         }
       }
+
+      await logActivityBestEffort(
+        'member',
+        'invited',
+        row.id,
+        invitedEmail,
+        describeMemberInvited(row.role, row.status !== 'pending'),
+      )
 
       return {
         ok: true,
@@ -870,15 +1020,31 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     },
 
     async removeTeamMember(membershipId: string): Promise<Result<true>> {
+      // Read first and log *before* removing — best-effort, same reasoning
+      // as deleteProduct's own read-before-delete above: once the membership
+      // is gone, its email/role can't be looked back up for the log entry.
+      const { data: existingRow } = await db
+        .from('memberships')
+        .select('invited_email, role')
+        .eq('id', membershipId)
+        .maybeSingle()
+
       const { error } = await db.rpc('remove_team_member', { p_membership_id: membershipId })
       if (error) return { ok: false, error: error.message }
+
+      if (existingRow) {
+        const row = existingRow as { invited_email: string | null; role: Role }
+        const label = row.invited_email ?? '(unknown)'
+        await logActivityBestEffort('member', 'removed', membershipId, label, describeMemberRemoved(row.role))
+      }
+
       return { ok: true, value: true }
     },
 
     async getAccountSettings(): Promise<AccountSettingsSync | null> {
       const { data, error } = await db
         .from('account_settings')
-        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes')
+        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes, product_categories')
         .maybeSingle()
       if (error) throw new Error(error.message)
       if (!data) return null
@@ -889,6 +1055,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         sale_channels: string[] | null
         label_presets: LabelPreset[] | null
         quick_codes: QuickCode[] | null
+        product_categories: string[] | null
       }
       return {
         ...(row.logo_data_url ? { logoDataUrl: row.logo_data_url } : {}),
@@ -896,6 +1063,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         ...(row.sale_channels ? { saleChannels: row.sale_channels } : {}),
         ...(row.label_presets ? { labelPresets: row.label_presets } : {}),
         ...(row.quick_codes ? { quickCodes: row.quick_codes } : {}),
+        ...(row.product_categories ? { productCategories: row.product_categories } : {}),
       }
     },
 
@@ -908,10 +1076,75 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (patch.saleChannels !== undefined) payload.sale_channels = patch.saleChannels
       if (patch.labelPresets !== undefined) payload.label_presets = patch.labelPresets
       if (patch.quickCodes !== undefined) payload.quick_codes = patch.quickCodes
+      if (patch.productCategories !== undefined) payload.product_categories = patch.productCategories
 
       const { error } = await db.from('account_settings').upsert(payload, { onConflict: 'account_id' })
       if (error) return { ok: false, error: error.message }
       return { ok: true, value: true }
+    },
+
+    // Supplier & PO methods (manager-only, requires schema extension for Supabase)
+    async listSuppliers(): Promise<Supplier[]> {
+      return []
+    },
+    async createSupplier(): Promise<Result<Supplier>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async updateSupplier(): Promise<Result<Supplier>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async deleteSupplier(): Promise<Result<true>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async linkSupplierProduct(): Promise<Result<SupplierProduct>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async updateSupplierProduct(): Promise<Result<SupplierProduct>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async unlinkSupplierProduct(): Promise<Result<true>> {
+      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+    },
+    async listSupplierProducts(): Promise<SupplierProduct[]> {
+      return []
+    },
+    async listPurchaseOrders(): Promise<PurchaseOrder[]> {
+      return []
+    },
+    async createPurchaseOrder(): Promise<Result<PurchaseOrder>> {
+      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+    },
+    async sendPurchaseOrder(): Promise<Result<PurchaseOrder>> {
+      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+    },
+    async confirmPurchaseOrder(): Promise<Result<PurchaseOrder>> {
+      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+    },
+    async receivePurchaseOrder(): Promise<Result<PurchaseOrder>> {
+      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+    },
+    async cancelPurchaseOrder(): Promise<Result<PurchaseOrder>> {
+      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+    },
+
+    async listActivity(): Promise<ActivityLogEntry[]> {
+      const { data, error } = await db
+        .from('activity_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500)
+      if (error) throw new Error(error.message)
+      return (data as ActivityLogRow[]).map(toActivityLogEntry)
+    },
+
+    async logActivity(
+      entityType: ActivityEntityType,
+      action: ActivityAction,
+      entityId: string | null,
+      entityLabel: string,
+      detail: string,
+    ): Promise<void> {
+      await logActivityBestEffort(entityType, action, entityId, entityLabel, detail)
     },
   }
 }

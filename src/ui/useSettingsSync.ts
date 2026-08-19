@@ -3,12 +3,12 @@ import type { Inventory } from './useInventory'
 import type { SettingsApi } from './useSettings'
 
 /**
- * Keeps the label logo, label template, saved label presets and sale
- * channels in sync with the account in Supabase mode, so they're the same
- * on every device/browser signed into the same account rather than stuck on
- * whichever one happened to set them up. Local (offline demo) mode does
- * nothing here — there's no account to sync to, settings just live in that
- * device's storage, same as always.
+ * Keeps the label logo, label template, saved label presets, sale channels
+ * and product categories in sync with the account in Supabase mode, so
+ * they're the same on every device/browser signed into the same account
+ * rather than stuck on whichever one happened to set them up. Local
+ * (offline demo) mode does nothing here — there's no account to sync to,
+ * settings just live in that device's storage, same as always.
  *
  * Two directions:
  *  - On first load with a Supabase backend, pull whatever's already saved
@@ -60,12 +60,14 @@ export function useSettingsSync(inventory: Inventory, settings: SettingsApi): vo
       saleChannels: string[]
       labelPresets: SettingsApi['labelPresets']
       quickCodes: SettingsApi['quickCodes']
+      productCategories: string[]
     } = {
       ...(settings.logoDataUrl !== undefined ? { logoDataUrl: settings.logoDataUrl } : {}),
       ...(settings.labelTemplate !== undefined ? { labelTemplate: settings.labelTemplate } : {}),
       saleChannels: settings.saleChannels,
       labelPresets: settings.labelPresets,
       quickCodes: settings.quickCodes,
+      productCategories: settings.productCategories,
     }
     void inventory.setAccountSettings(current)
     // Deliberately excludes `inventory` from deps beyond what's used above —
@@ -79,5 +81,6 @@ export function useSettingsSync(inventory: Inventory, settings: SettingsApi): vo
     settings.saleChannels,
     settings.labelPresets,
     settings.quickCodes,
+    settings.productCategories,
   ])
 }

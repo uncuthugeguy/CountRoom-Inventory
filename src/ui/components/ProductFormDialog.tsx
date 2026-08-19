@@ -1,6 +1,6 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { Role } from '../../data/repository'
-import { emptyDraft, knownVariations, nextSku, validateDraft } from '../../domain/products'
+import { emptyDraft, knownCategories, knownVariations, nextSku, validateDraft } from '../../domain/products'
 import {
   clearProductDraft,
   loadProductDraftFor,
@@ -17,6 +17,15 @@ export interface ProductFormDialogProps {
   barcode?: string
   /** The full catalogue, used to auto-generate the next SKU and to suggest variations. */
   products: Product[]
+  /**
+   * The manager-curated category list (`settings.productCategories`) —
+   * offered as the category dropdown's options. Only a manager can add,
+   * rename or remove entries (see `SettingsScreen`'s "Product categories"
+   * panel); everyone else just picks from whatever's here. Falls back to
+   * whatever categories are already in use across `products` when this is
+   * empty — e.g. before a manager has set the list up at all.
+   */
+  categories: string[]
   role: Role
   onClose: () => void
   /**
@@ -55,6 +64,7 @@ export function ProductFormDialog({
   product,
   barcode,
   products,
+  categories,
   role,
   onClose,
   onSubmit,
@@ -74,7 +84,26 @@ export function ProductFormDialog({
   const [restored, setRestored] = useState(() => loadProductDraftFor(context, draftStorage) !== null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Set once a submit (via the Save button, or Enter in a field — both fire
+  // the same form submit event) has passed validation, holding the
+  // validated draft while a confirmation is shown instead of saving right
+  // away. Pressing Enter partway through the form used to save-and-close
+  // immediately, which was catching people out — this gives a chance to say
+  // "actually, back to editing" instead.
+  const [confirming, setConfirming] = useState<{ draft: ProductDraft; autoSku: boolean } | null>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const variations = knownVariations(products)
+  // The manager-curated list, falling back to whatever's already in use on
+  // existing products when no list has been set up yet — and always
+  // including the draft's own current value so opening an older product
+  // whose category has since been renamed/removed from the managed list
+  // doesn't silently blank it out.
+  const categoryOptions = useMemo(() => {
+    const base = categories.length > 0 ? categories : knownCategories(products)
+    const set = new Set(base)
+    if (draft.category.trim()) set.add(draft.category.trim())
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [categories, products, draft.category])
 
   // Autosaves on every change so the form survives a tab switch, the phone
   // backgrounding the PWA, or an accidental close — cleared only by a
@@ -95,7 +124,14 @@ export function ProductFormDialog({
     setRestored(false)
   }
 
-  const submit = async (event: FormEvent) => {
+  // The confirm step reuses this same Dialog rather than stacking a second
+  // one on top — Dialog focuses the first focusable element on *mount*, so
+  // swapping to the confirm buttons needs its own focus effect instead.
+  useEffect(() => {
+    if (confirming) confirmButtonRef.current?.focus()
+  }, [confirming])
+
+  const submit = (event: FormEvent) => {
     event.preventDefault()
     setError(null)
 
@@ -112,9 +148,17 @@ export function ProductFormDialog({
       return
     }
 
+    setConfirming({ draft: validated.value, autoSku })
+  }
+
+  const backToEditing = () => setConfirming(null)
+
+  const confirmSave = async () => {
+    if (!confirming) return
     setSaving(true)
-    const result = await onSubmit(validated.value, { autoSku })
+    const result = await onSubmit(confirming.draft, { autoSku: confirming.autoSku })
     setSaving(false)
+    setConfirming(null)
     if (!result.ok) {
       setError(result.error)
       return
@@ -127,6 +171,36 @@ export function ProductFormDialog({
 
   return (
     <Dialog title={product ? `Edit ${product.name}` : 'New product'} onClose={onClose}>
+      {confirming ? (
+        <div className="form">
+          <p className="dialog-message">
+            {product
+              ? `Save these changes to ${confirming.draft.name}?`
+              : `Save "${confirming.draft.name}" as a new product?`}
+          </p>
+
+          {error && (
+            <p className="alert" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div className="dialog-actions">
+            <button type="button" className="button button-ghost" onClick={backToEditing} disabled={saving}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              ref={confirmButtonRef}
+              onClick={confirmSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Yes, save'}
+            </button>
+          </div>
+        </div>
+      ) : (
       <form className="form" onSubmit={submit} noValidate>
         {restored && (
           // Text only, deliberately not a focusable control — Dialog focuses
@@ -176,12 +250,23 @@ export function ProductFormDialog({
         <div className="field-row">
           <div className="field">
             <label htmlFor={field('category')}>Category</label>
-            <input
+            <select
               id={field('category')}
               value={draft.category}
-              autoComplete="off"
               onChange={(e) => set('category', e.target.value)}
-            />
+            >
+              <option value="">No category</option>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <p className="hint">
+              {role === 'manager'
+                ? 'Manage this list from Settings → Product categories.'
+                : "Don't see the right one? Ask a manager to add it in Settings."}
+            </p>
           </div>
           <div className="field">
             <label htmlFor={field('location')}>Location</label>
@@ -297,6 +382,7 @@ export function ProductFormDialog({
           </button>
         </div>
       </form>
+      )}
     </Dialog>
   )
 }

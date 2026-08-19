@@ -174,7 +174,53 @@ export const DEFAULT_LABEL_TEMPLATE: LabelTemplate = {
   include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY },
 }
 
-/** CPCL's built-in bitmap fonts only go from 0 (smallest) to 7 (largest). */
+/** Which physical printer a label prints to — see `printing/printLabel.ts`
+ * for how this branches the actual print path (raw CPCL over the network
+ * for the Zebra, a browser print dialog for the Polono). Kept as a
+ * device-local `Settings` field (not synced via `AccountSettingsSync`, the
+ * way the label template/logo/channels are) since it describes which
+ * printer is physically wired to *this* machine, not something that should
+ * follow the business account to a different device. */
+export type PrinterKind = 'zebra' | 'polono'
+
+export const PRINTER_LABELS: Record<PrinterKind, string> = {
+  zebra: 'Zebra QLn220',
+  polono: 'Polono PL80E',
+}
+
+/** A 2in x 1in label at 203 dpi — the Polono PL80E's native resolution.
+ * Unlike the Zebra, the Polono prints through the OS's normal print dialog
+ * rather than raw commands (see `printing/browserLabelPrint.ts`), but it
+ * shares the same `LabelTemplate` shape and editor so positions/fonts/sizes
+ * all work the same way. Smaller label than the Zebra's default, so the
+ * logo and variation line start switched off to keep the name, barcode and
+ * SKU legible — turn them back on (Settings › Label template) if your
+ * labels have room. */
+export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
+  widthDots: 406,
+  heightDots: 203,
+  dpi: 203,
+  nameFont: 4,
+  variationFont: 2,
+  skuFont: 3,
+  barcodeHeight: 70,
+  barcodeModuleWidth: 2,
+  logoWidthDots: 60,
+  logoHeightDots: 40,
+  logo: { x: 330, y: 8 },
+  name: { x: 10, y: 8 },
+  variation: { x: 10, y: 165 },
+  barcode: { x: 10, y: 50 },
+  sku: { x: 10, y: 130 },
+  darkness: 14,
+  printSpeedIps: 2,
+  include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY, variation: false, logo: false },
+}
+
+/** CPCL's built-in bitmap fonts only go from 0 (smallest) to 7 (largest) —
+ * the Polono path (see `browserLabelPrint.ts`) reuses the same 0–7 scale via
+ * `textHeightDots` purely as a font-size unit, since it isn't limited to
+ * CPCL's built-in bitmap fonts the way the Zebra is. */
 export const MIN_FONT = 0
 export const MAX_FONT = 7
 
@@ -277,4 +323,18 @@ export function sanitiseLabelTemplate(partial: Partial<LabelTemplate> | undefine
     printSpeedIps: clampInt(merged.printSpeedIps, 2, 12),
     include: sanitiseVisibility(merged.include),
   }
+}
+
+/**
+ * Same clamping as `sanitiseLabelTemplate`, but falls back to the Polono's
+ * own defaults (`DEFAULT_POLONO_LABEL_TEMPLATE`) for any missing field
+ * instead of the Zebra's — otherwise a partially-saved Polono template (or
+ * one from before this field existed at all) would silently pick up the
+ * Zebra's 609x305 dimensions and off-label positions. Delegates to
+ * `sanitiseLabelTemplate` for the actual clamping once every field is
+ * filled in from the right defaults, so both printers share one set of
+ * range/overrun rules.
+ */
+export function sanitisePolonoLabelTemplate(partial: Partial<LabelTemplate> | undefined): LabelTemplate {
+  return sanitiseLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, ...partial })
 }

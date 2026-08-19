@@ -34,6 +34,11 @@ export function SaleFeesFields({ value, onChange }: SaleFeesFieldsProps) {
         Vinted's Buyer Protection fee). Every amount here comes off profit, except the buyer protection fee or
         delivery when the buyer paid for it themselves.
       </p>
+      <p className="muted">
+        <strong>Item price above should be what you got for the item alone</strong> — e.g. eBay's "Subtotal" line,
+        not its "Order total." These fees, plus the item price, should add up to the order total below; if they
+        don't, the check under Order total will tell you by how much.
+      </p>
 
       <div className="field-row">
         <div className="field">

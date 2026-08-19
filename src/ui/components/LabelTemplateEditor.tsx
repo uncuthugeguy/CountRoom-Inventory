@@ -2,16 +2,19 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent 
 import type { Product } from '../../domain/types'
 import {
   DEFAULT_LABEL_TEMPLATE,
+  DEFAULT_POLONO_LABEL_TEMPLATE,
   MAX_FONT,
   MAX_LOGO_DOTS,
   MIN_FONT,
   MIN_LOGO_DOTS,
+  PRINTER_LABELS,
   approxTextWidthDots,
   estimateBarcodeWidthDots,
   sanitiseLabelTemplate,
   textHeightDots,
   type ElementPosition,
   type LabelTemplate,
+  type PrinterKind,
 } from '../../printing/labelTemplate'
 import { printProductLabel } from '../../printing/printLabel'
 import type { SettingsApi } from '../useSettings'
@@ -853,13 +856,22 @@ function LabelPresetsPanel({ settings, template }: { settings: SettingsApi; temp
 
 export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
   const idPrefix = useId()
-  const template = settings.labelTemplate ?? DEFAULT_LABEL_TEMPLATE
+  const printerKind = settings.printerKind
+  const isPolono = printerKind === 'polono'
+  const template = isPolono
+    ? settings.polonoLabelTemplate ?? DEFAULT_POLONO_LABEL_TEMPLATE
+    : settings.labelTemplate ?? DEFAULT_LABEL_TEMPLATE
   const [printStatus, setPrintStatus] = useState<string | null>(null)
   const [printing, setPrinting] = useState(false)
   const [unit, setUnit] = useState<Unit>('dots')
 
   const update = (patch: Partial<LabelTemplate>) => {
-    settings.setLabelTemplate(sanitiseLabelTemplate({ ...template, ...patch }))
+    const merged = { ...template, ...patch }
+    if (isPolono) {
+      settings.setPolonoLabelTemplate(merged)
+    } else {
+      settings.setLabelTemplate(sanitiseLabelTemplate(merged))
+    }
   }
 
   const numberField = (
@@ -939,15 +951,23 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
 
   const printTest = async () => {
     setPrinting(true)
-    setPrintStatus('Sending test label to the printer…')
+    setPrintStatus(isPolono ? 'Opening the print dialog…' : 'Sending test label to the printer…')
     const result = await printProductLabel(SAMPLE_PRODUCT, {
       logoDataUrl: settings.logoDataUrl,
       saleChannels: settings.saleChannels,
+      printerKind,
       labelPresets: settings.labelPresets,
       quickCodes: settings.quickCodes,
-      labelTemplate: template,
+      productCategories: settings.productCategories,
+      ...(isPolono ? { polonoLabelTemplate: template } : { labelTemplate: template }),
     })
-    setPrintStatus(result.ok ? 'Test label sent to the printer.' : `Print failed: ${result.error}`)
+    setPrintStatus(
+      result.ok
+        ? isPolono
+          ? 'Print dialog opened — pick the Polono and confirm.'
+          : 'Test label sent to the printer.'
+        : `Print failed: ${result.error}`,
+    )
     setPrinting(false)
   }
 
@@ -964,6 +984,29 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
         logo is scaled to fit its box without stretching, so resizing it never distorts it.
         Changes are saved as you go and used the next time a label is printed.
       </p>
+
+      <div className="field">
+        <span className="label-like">Printer</span>
+        <div className="checkbox-field-row" role="radiogroup" aria-label="Printer">
+          {(Object.keys(PRINTER_LABELS) as PrinterKind[]).map((kind) => (
+            <label key={kind} className="checkbox-field">
+              <input
+                type="radio"
+                name={`${idPrefix}-printer-kind`}
+                checked={printerKind === kind}
+                onChange={() => settings.setPrinterKind(kind)}
+              />
+              {PRINTER_LABELS[kind]}
+            </label>
+          ))}
+        </div>
+        <span className="hint">
+          {isPolono
+            ? 'Prints through the normal system print dialog — pick the Polono there once its driver has it installed as a printer.'
+            : 'Prints straight to the Zebra over the network, no dialog.'}
+          {' '}Each printer keeps its own layout below, so switching back and forth doesn't lose either one.
+        </span>
+      </div>
 
       <div className="field">
         <span className="label-like">What's on this label</span>
@@ -1001,7 +1044,7 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
         </div>
         {numberField('dpi', 'Printer DPI', {
           dimension: false,
-          hint: "Must match your printer's real resolution (check its spec sheet or a printed config label) — if this is wrong, every inch/mm size below prints the wrong physical size no matter how you adjust it. The Zebra QLn220 is 203 dpi.",
+          hint: "Must match your printer's real resolution (check its spec sheet or a printed config label) — if this is wrong, every inch/mm size below prints the wrong physical size no matter how you adjust it. Both the Zebra QLn220 and the Polono PL80E are 203 dpi.",
         })}
       </div>
 
@@ -1021,16 +1064,18 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
         {numberField('logoHeightDots', 'Logo height')}
       </div>
 
-      <div className="field-row label-template-grid">
-        {numberField('darkness', 'Print darkness', {
-          dimension: false,
-          hint: 'Higher = darker (0–30). If the name or other text prints lighter than the barcode, raise this.',
-        })}
-        {numberField('printSpeedIps', 'Print speed (in/sec)', {
-          dimension: false,
-          hint: 'Lower = slower, giving the print head more time per label (2–12). Slower usually prints darker and cleaner.',
-        })}
-      </div>
+      {!isPolono && (
+        <div className="field-row label-template-grid">
+          {numberField('darkness', 'Print darkness', {
+            dimension: false,
+            hint: 'Higher = darker (0–30). If the name or other text prints lighter than the barcode, raise this.',
+          })}
+          {numberField('printSpeedIps', 'Print speed (in/sec)', {
+            dimension: false,
+            hint: 'Lower = slower, giving the print head more time per label (2–12). Slower usually prints darker and cleaner.',
+          })}
+        </div>
+      )}
 
       <div className="field-row label-template-grid">
         {fontField('nameFont', 'Name font')}
@@ -1039,7 +1084,11 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       </div>
 
       <div className="dialog-actions">
-        <button type="button" className="button button-ghost" onClick={() => settings.resetLabelTemplate()}>
+        <button
+          type="button"
+          className="button button-ghost"
+          onClick={() => (isPolono ? settings.resetPolonoLabelTemplate() : settings.resetLabelTemplate())}
+        >
           Reset to defaults
         </button>
         <button type="button" className="button button-primary" onClick={printTest} disabled={printing}>
@@ -1050,7 +1099,7 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       {printStatus && <p className="preview">{printStatus}</p>}
     </section>
 
-    <LabelPresetsPanel settings={settings} template={template} />
+    {!isPolono && <LabelPresetsPanel settings={settings} template={template} />}
     </>
   )
 }

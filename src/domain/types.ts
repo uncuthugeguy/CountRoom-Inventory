@@ -49,6 +49,64 @@ export interface StockMovement {
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string }
 
+// --- Shared activity log ----------------------------------------------------
+//
+// Every change worth attributing to who did it and when — product
+// add/edit/delete, sale/return edits, and team/membership changes — visible
+// to managers signed in on the account. Distinct from StockMovement above,
+// which only tracks *quantity* changes on a product; this tracks the
+// higher-level records themselves (a product renamed, a past sale edited, a
+// team member invited, …).
+
+export type ActivityEntityType = 'product' | 'sale' | 'return' | 'member'
+
+export const ACTIVITY_ENTITY_LABELS: Record<ActivityEntityType, string> = {
+  product: 'Product',
+  sale: 'Sale',
+  return: 'Return',
+  member: 'Team',
+}
+
+/** Kept flexible per entity type rather than one fixed verb set — a product
+ * is added/edited/removed, a sale/return is only ever edited (recording a
+ * brand-new sale or return already has its own history view), and a team
+ * member is invited/removed/role_changed. `role_changed` is defined for
+ * forward compatibility with a future "change an existing member's role"
+ * feature — nothing in the app calls it yet, since no such feature exists. */
+export type ActivityAction = 'added' | 'edited' | 'removed' | 'invited' | 'role_changed'
+
+export const ACTIVITY_ACTION_LABELS: Record<ActivityAction, string> = {
+  added: 'added',
+  edited: 'edited',
+  removed: 'removed',
+  invited: 'invited',
+  role_changed: 'changed the role of',
+}
+
+/** One entry in the shared activity log. `actorName` and `entityLabel` are
+ * snapshotted at the time of the action so a past entry still reads
+ * correctly even if the team member who did it is later removed, or the
+ * product/sale/return/member it refers to no longer exists — the same
+ * reasoning SaleLine/ReturnLine already snapshot sku/name for. `entityId`
+ * goes `null` once whatever it refers to no longer exists (mirrors the
+ * `on delete set null` pattern used elsewhere) — reads by `entityLabel`
+ * regardless. */
+export interface ActivityLogEntry {
+  id: string
+  actorName: string
+  entityType: ActivityEntityType
+  action: ActivityAction
+  entityId: string | null
+  /** A human-identifiable label for the thing this entry is about — a
+   * product's name, a short description of a sale/return, or a team
+   * member's email. */
+  entityLabel: string
+  /** Human-readable summary of what changed, e.g. "qty 12 → 8" — blank when
+   * there's nothing more to say than the action itself. */
+  detail: string
+  createdAt: string
+}
+
 export const MOVEMENT_LABELS: Record<MovementType, string> = {
   in: 'Stock in',
   out: 'Stock out',

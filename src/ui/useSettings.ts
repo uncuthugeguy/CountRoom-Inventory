@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { createSettingsStore } from '../data/settingsStorage'
 import type { Settings } from '../data/settingsStorage'
 import type { QuickCode, QuickCodeDraft } from '../domain/quickCodes'
-import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
+import type { LabelPreset, LabelTemplate, PrinterKind } from '../printing/labelTemplate'
 
 export interface SettingsApi extends Settings {
   setLogo(dataUrl: string): void
@@ -10,8 +10,11 @@ export interface SettingsApi extends Settings {
   addChannel(name: string): void
   renameChannel(oldName: string, newName: string): void
   removeChannel(name: string): void
+  setPrinterKind(kind: PrinterKind): void
   setLabelTemplate(template: LabelTemplate): void
   resetLabelTemplate(): void
+  setPolonoLabelTemplate(template: LabelTemplate): void
+  resetPolonoLabelTemplate(): void
   saveLabelPreset(name: string, template: LabelTemplate): void
   applyLabelPreset(id: string): void
   renameLabelPreset(id: string, newName: string): void
@@ -19,12 +22,16 @@ export interface SettingsApi extends Settings {
   addQuickCode(draft: QuickCodeDraft): string
   updateQuickCode(id: string, patch: Partial<QuickCodeDraft>): void
   deleteQuickCode(id: string): void
+  addProductCategory(name: string): void
+  renameProductCategory(oldName: string, newName: string): void
+  removeProductCategory(name: string): void
   applyRemote(remote: {
     logoDataUrl?: string
     labelTemplate?: LabelTemplate
     saleChannels?: string[]
     labelPresets?: LabelPreset[]
     quickCodes?: QuickCode[]
+    productCategories?: string[]
   }): void
 }
 
@@ -55,12 +62,24 @@ export function useSettings(storage?: Storage): SettingsApi {
       store.removeChannel(name)
       setSettings(store.get())
     },
+    setPrinterKind: (kind: PrinterKind) => {
+      store.setPrinterKind(kind)
+      setSettings(store.get())
+    },
     setLabelTemplate: (template: LabelTemplate) => {
       store.setLabelTemplate(template)
       setSettings(store.get())
     },
     resetLabelTemplate: () => {
       store.resetLabelTemplate()
+      setSettings(store.get())
+    },
+    setPolonoLabelTemplate: (template: LabelTemplate) => {
+      store.setPolonoLabelTemplate(template)
+      setSettings(store.get())
+    },
+    resetPolonoLabelTemplate: () => {
+      store.resetPolonoLabelTemplate()
       setSettings(store.get())
     },
     saveLabelPreset: (name: string, template: LabelTemplate) => {
@@ -90,6 +109,18 @@ export function useSettings(storage?: Storage): SettingsApi {
     },
     deleteQuickCode: (id: string) => {
       store.deleteQuickCode(id)
+      setSettings(store.get())
+    },
+    addProductCategory: (name: string) => {
+      store.addProductCategory(name)
+      setSettings(store.get())
+    },
+    renameProductCategory: (oldName: string, newName: string) => {
+      store.renameProductCategory(oldName, newName)
+      setSettings(store.get())
+    },
+    removeProductCategory: (name: string) => {
+      store.removeProductCategory(name)
       setSettings(store.get())
     },
     applyRemote: (remote) => {

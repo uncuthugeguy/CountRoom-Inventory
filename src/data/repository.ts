@@ -1,5 +1,8 @@
 import type { AppliedMovement } from '../domain/movements'
 import type {
+  ActivityAction,
+  ActivityEntityType,
+  ActivityLogEntry,
   MovementInput,
   Product,
   ProductDraft,
@@ -16,6 +19,14 @@ import type {
 } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
+import type {
+  Supplier,
+  SupplierDraft,
+  SupplierProduct,
+  SupplierProductDraft,
+  PurchaseOrder,
+  PurchaseOrderInput,
+} from '../domain/suppliers'
 
 /**
  * The label logo, label template, saved label presets, sale channels and
@@ -30,6 +41,8 @@ export interface AccountSettingsSync {
   saleChannels?: string[]
   labelPresets?: LabelPreset[]
   quickCodes?: QuickCode[]
+  /** Manager-curated product category list — see `Settings.productCategories`. */
+  productCategories?: string[]
 }
 
 /**
@@ -119,6 +132,37 @@ export interface InventoryRepository {
   approveProfileChange(requestId: string): Promise<Result<true>>
   /** Manager-only. Discards a pending edit without applying it. */
   rejectProfileChange(requestId: string): Promise<Result<true>>
+  // =========================================================================
+  // SUPPLIER & PURCHASE ORDER MANAGEMENT (manager-only)
+  // =========================================================================
+  /** Manager-only. All suppliers for this account. */
+  listSuppliers(): Promise<Supplier[]>
+  /** Manager-only. Creates a new supplier. */
+  createSupplier(draft: SupplierDraft): Promise<Result<Supplier>>
+  /** Manager-only. Updates supplier details. */
+  updateSupplier(id: string, draft: SupplierDraft): Promise<Result<Supplier>>
+  /** Manager-only. Deletes a supplier (supplier product links are removed). */
+  deleteSupplier(id: string): Promise<Result<true>>
+  /** Manager-only. Links a product to a supplier with pricing. */
+  linkSupplierProduct(draft: SupplierProductDraft): Promise<Result<SupplierProduct>>
+  /** Manager-only. Updates the pricing/minimum order for a supplier-product link. */
+  updateSupplierProduct(id: string, draft: SupplierProductDraft): Promise<Result<SupplierProduct>>
+  /** Manager-only. Removes the link between a supplier and product. */
+  unlinkSupplierProduct(id: string): Promise<Result<true>>
+  /** Manager-only. All supplier-product links, for finding cheapest suppliers. */
+  listSupplierProducts(): Promise<SupplierProduct[]>
+  /** Manager-only. All purchase orders (across all statuses). */
+  listPurchaseOrders(): Promise<PurchaseOrder[]>
+  /** Manager-only. Creates a new PO in draft status. */
+  createPurchaseOrder(input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
+  /** Manager-only. Sends a draft PO to the supplier (changes status to 'sent'). */
+  sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
+  /** Manager-only. Marks a sent PO as confirmed by the supplier. */
+  confirmPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
+  /** Manager-only. Receives a PO and adds stock. */
+  receivePurchaseOrder(id: string, lineQuantities: Map<string, number>): Promise<Result<PurchaseOrder>>
+  /** Manager-only. Cancels a PO. */
+  cancelPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   /**
    * The account's synced label logo/template/sale channels, if anyone on
    * this account has ever saved any — `null` in local mode (there's no
@@ -128,6 +172,34 @@ export interface InventoryRepository {
   getAccountSettings(): Promise<AccountSettingsSync | null>
   /** Saves (patches) the account's synced settings — see `AccountSettingsSync`. */
   setAccountSettings(patch: AccountSettingsSync): Promise<Result<true>>
+  // =========================================================================
+  // SHARED ACTIVITY LOG
+  // =========================================================================
+  /** Every logged change, newest first — product add/edit/delete, sale/return
+   * edits, and team/membership changes. Manager-only: gated in the UI (the
+   * Activity tab in HistoryScreen doesn't render for an employee) and, for
+   * the Supabase backend, in RLS too (`activity_log_select_own` also checks
+   * `current_role() = 'manager'` — see `activity_log_migration.sql`), so a
+   * non-manager can't read it even by calling the API directly. See
+   * `ActivityLogEntry`. */
+  listActivity(): Promise<ActivityLogEntry[]>
+  /**
+   * Records one activity-log entry. In practice this is called internally by
+   * `createProduct`/`updateProduct`/`deleteProduct`, `updateSale`,
+   * `updateReturn`, `inviteEmployee` and `removeTeamMember` right after their
+   * write succeeds — it is on the interface (rather than a private
+   * implementation detail) so both backends share one entry point for it.
+   * Deliberately best-effort and fire-and-forget from the caller's point of
+   * view: a failure to log here must never block or roll back the write that
+   * already succeeded, the same reasoning the invite-email send follows.
+   */
+  logActivity(
+    entityType: ActivityEntityType,
+    action: ActivityAction,
+    entityId: string | null,
+    entityLabel: string,
+    detail: string,
+  ): Promise<void>
 }
 
 export const NOT_FOUND = 'Product not found.'

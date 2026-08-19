@@ -1679,15 +1679,24 @@ create table if not exists public.account_settings (
   -- Saved reference codes (printer maintenance commands, Wi-Fi joins,
   -- supplier links, etc.) shown on screen for scanning — see QuickCode.
   quick_codes jsonb not null default '[]'::jsonb,
+  -- Manager-curated list of product categories, offered as a dropdown on
+  -- the product form instead of free text (see ProductFormDialog.tsx). No
+  -- manager/employee split needed at the row level here either — the
+  -- manager-only restriction is enforced client-side (the "Product
+  -- categories" panel in SettingsScreen.tsx only renders for a manager) and
+  -- everyone on the account can still read this table via the same
+  -- account-scoped policies below, same as sale_channels.
+  product_categories jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
 -- `create table if not exists` above only helps on a brand new install —
--- on an account_settings table that already existed before label presets
--- or quick codes were added, this is what actually adds the column,
--- safely, every re-run.
+-- on an account_settings table that already existed before label presets,
+-- quick codes, or product categories were added, this is what actually adds
+-- the column, safely, every re-run.
 alter table public.account_settings add column if not exists label_presets jsonb not null default '[]'::jsonb;
 alter table public.account_settings add column if not exists quick_codes jsonb not null default '[]'::jsonb;
+alter table public.account_settings add column if not exists product_categories jsonb not null default '[]'::jsonb;
 
 alter table public.account_settings enable row level security;
 
@@ -1709,3 +1718,106 @@ create policy "account_settings_update_own_account" on public.account_settings
 
 revoke delete on public.account_settings from authenticated;
 grant select, insert, update on public.account_settings to authenticated;
+
+-- Shared activity log ---------------------------------------------------
+--
+-- Every change worth attributing to who did it and when — product
+-- add/edit/delete, sale/return edits, and team/membership changes (invite,
+-- remove) — see src/domain/activity.ts and src/ui/screens/HistoryScreen.tsx's
+-- "Activity" tab. Deliberately a separate table from stock_movements: that
+-- one only ever tracks *quantity* changes (in/out/adjust); this one covers
+-- the higher-level records themselves (a product renamed, a past sale
+-- edited, a team member invited, …), which is why Option B (a dedicated
+-- table) was chosen over just adding a "who" column to stock_movements.
+--
+-- Manager-only, per the spec: gated in the UI (the Activity tab doesn't
+-- render for an employee — see HistoryScreen.tsx) and enforced again here
+-- via RLS, so a non-manager can't read it even by calling the API directly.
+-- An employee can still *trigger* a loggable action (e.g. adding a product),
+-- so the insert policy stays open to any team member; it's only reading the
+-- log back that's restricted — see activity_log_select_own below.
+--
+-- Uses the newer `account_id` naming (not `user_id`, which the older
+-- products/stock_movements/sales tables use for the same concept) to match
+-- memberships/profiles/profile_change_requests/account_settings above —
+-- the corrected convention from the round-2 advisor-fixes pass. Scoped with
+-- an `_own`-only policy keyed to current_account_id(), same as every other
+-- table added since that pass. `actor_name` and `entity_label` are
+-- snapshotted at insert time (like sale_items/return_lines already
+-- snapshot sku/name) so a past entry still reads correctly once a team
+-- member is removed or the product/sale/return/member it refers to no
+-- longer exists.
+create table if not exists public.activity_log (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references auth.users(id) on delete cascade,
+  -- Who actually did it — separate from account_id once more than one
+  -- person can act on an account. Null rather than cascaded on delete: the
+  -- log entry should outlive the person who made it, the same reasoning
+  -- stock_movements.created_by and profile_change_requests.resolved_by use.
+  actor_id uuid references auth.users(id) on delete set null,
+  actor_name text not null default '',
+  entity_type text not null default 'product'
+    check (entity_type in ('product', 'sale', 'return', 'member')),
+  action text not null default 'edited'
+    check (action in ('added', 'edited', 'removed', 'invited', 'role_changed')),
+  -- No hard foreign key: entity_id can point at a product, sale, return or
+  -- membership row depending on entity_type, so a single FK doesn't fit.
+  -- History reads by entity_label (below) regardless of whether the
+  -- referenced row still exists — mirrors sale_items/return_lines snapshotting
+  -- sku/name rather than relying solely on a (possibly since-deleted) FK.
+  entity_id uuid,
+  entity_label text not null default '',
+  detail text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists activity_log_account_created_idx on public.activity_log (account_id, created_at desc);
+create index if not exists activity_log_entity_idx on public.activity_log (entity_type, entity_id);
+
+-- Stamps account_id/actor_id server-side on every insert, the same pattern
+-- stamp_account_and_actor() already uses for stock_movements — the client
+-- only ever sends actor_name/entity_type/action/entity_id/entity_label/
+-- detail; it cannot claim to be logging on behalf of a different account or
+-- person.
+create or replace function public.stamp_activity_log()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.account_id := public.current_account_id();
+  if new.account_id is null then
+    raise exception 'You are not part of a StockFlow account.';
+  end if;
+  new.actor_id := auth.uid();
+  return new;
+end;
+$$;
+
+drop trigger if exists activity_log_stamp on public.activity_log;
+create trigger activity_log_stamp
+  before insert on public.activity_log
+  for each row execute function public.stamp_activity_log();
+
+alter table public.activity_log enable row level security;
+
+-- `_own` only — never `_shared`/`USING (true)`. See the round-1/round-2
+-- notes elsewhere in this project: a `_shared` policy on any table here has
+-- twice re-appeared by accident and opened every account's data to every
+-- other signed-in user. Verify with a live `pg_policies` query after
+-- running this, not just a "Success" toast.
+drop policy if exists "activity_log_select_own" on public.activity_log;
+create policy "activity_log_select_own" on public.activity_log
+  for select to authenticated
+  using (account_id = public.current_account_id() and public.current_role() = 'manager');
+
+drop policy if exists "activity_log_insert_own" on public.activity_log;
+create policy "activity_log_insert_own" on public.activity_log
+  for insert to authenticated
+  with check (account_id = public.current_account_id());
+
+-- Audit trail is intentionally immutable from the browser, same as
+-- stock_movements/sales/sale_items above.
+revoke update, delete on public.activity_log from authenticated;
+grant select, insert on public.activity_log to authenticated;

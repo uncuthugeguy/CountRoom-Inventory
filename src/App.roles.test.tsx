@@ -36,6 +36,7 @@ async function renderAs(role: 'manager' | 'employee') {
       openRepository={async () => repository}
       settingsStorage={memoryStorage()}
       productDraftStorage={memoryStorage()}
+      saleEditDraftStorage={memoryStorage()}
     />,
   )
   await screen.findByTestId('stat-products')
@@ -104,6 +105,37 @@ describe('employee role', () => {
     expect(screen.getByText(/^you\b/i)).toBeInTheDocument()
   })
 
+  it('does not show a Product categories panel in settings', async () => {
+    const { user } = await renderAs('employee')
+    await go(user, /settings/i)
+
+    expect(screen.queryByRole('heading', { name: /product categories/i })).not.toBeInTheDocument()
+  })
+
+  it('shows a Product categories panel in settings for a manager', async () => {
+    const { user } = await renderAs('manager')
+    await go(user, /settings/i)
+
+    expect(await screen.findByRole('heading', { name: /product categories/i })).toBeInTheDocument()
+  })
+
+  it('offers only the manager-curated category list in the product form, not free text', async () => {
+    const { user } = await renderAs('manager')
+    await go(user, /settings/i)
+
+    const categoriesPanel = screen.getByRole('heading', { name: /product categories/i }).closest('section')!
+    await user.type(within(categoriesPanel).getByLabelText(/add a category/i), 'Hand Tools')
+    await user.click(within(categoriesPanel).getByRole('button', { name: /^add$/i }))
+
+    await go(user, /products/i)
+    await user.click(screen.getAllByRole('button', { name: /^edit /i })[0])
+
+    const dialog = screen.getByRole('dialog')
+    const categoryField = within(dialog).getByLabelText(/^category$/i)
+    expect(categoryField.tagName).toBe('SELECT')
+    expect(within(categoryField).getByRole('option', { name: 'Hand Tools' })).toBeInTheDocument()
+  })
+
   it('disables the stocktake approve button', async () => {
     const { user } = await renderAs('employee')
     await go(user, /stocktake/i)
@@ -128,6 +160,22 @@ describe('employee role', () => {
     expect(within(screen.getByRole('navigation')).getByRole('button', { name: /quick codes/i })).toBeInTheDocument()
     await go(user, /quick codes/i)
     expect(await screen.findByText(/no codes saved yet/i)).toBeInTheDocument()
+  })
+
+  it('hides the Activity tab in History from an employee', async () => {
+    const { user } = await renderAs('employee')
+    await go(user, /history/i)
+
+    expect(screen.queryByRole('button', { name: /^activity$/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the Activity tab in History for a manager', async () => {
+    const { user } = await renderAs('manager')
+    await go(user, /history/i)
+
+    expect(screen.getByRole('button', { name: /^activity$/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^activity$/i }))
+    expect(await screen.findByText(/no activity yet/i)).toBeInTheDocument()
   })
 
   it('hides marketplace fees (and the profit they feed into) from an employee at checkout', async () => {

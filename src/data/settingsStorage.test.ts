@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createSettingsStore, DEFAULT_SALE_CHANNELS, SETTINGS_STORAGE_KEY } from './settingsStorage'
-import { DEFAULT_LABEL_TEMPLATE } from '../printing/labelTemplate'
+import { DEFAULT_LABEL_TEMPLATE, DEFAULT_POLONO_LABEL_TEMPLATE } from '../printing/labelTemplate'
 import { memoryStorage } from '../test/memoryStorage'
 
 let storage: Storage
@@ -10,11 +10,13 @@ beforeEach(() => {
 })
 
 describe('createSettingsStore', () => {
-  it('starts with no logo and the default sale channels', () => {
+  it('starts with no logo, the default sale channels, and the Zebra as the selected printer', () => {
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
+      printerKind: 'zebra',
       labelPresets: [],
       quickCodes: [],
+      productCategories: [],
     })
   })
 
@@ -38,7 +40,13 @@ describe('createSettingsStore', () => {
 
   it('recovers from corrupt storage instead of throwing', () => {
     storage.setItem(SETTINGS_STORAGE_KEY, 'not json{{')
-    expect(createSettingsStore(storage).get()).toEqual({ saleChannels: DEFAULT_SALE_CHANNELS, labelPresets: [], quickCodes: [] })
+    expect(createSettingsStore(storage).get()).toEqual({
+      saleChannels: DEFAULT_SALE_CHANNELS,
+      printerKind: 'zebra',
+      labelPresets: [],
+      quickCodes: [],
+      productCategories: [],
+    })
   })
 })
 
@@ -78,6 +86,123 @@ describe('sale channels', () => {
     const store = createSettingsStore(storage)
     store.removeChannel('Depop')
     expect(store.get().saleChannels).not.toContain('Depop')
+  })
+})
+
+describe('product categories', () => {
+  it('starts empty', () => {
+    const store = createSettingsStore(storage)
+    expect(store.get().productCategories).toEqual([])
+  })
+
+  it('adds a new category and persists it', () => {
+    const store = createSettingsStore(storage)
+    store.addProductCategory('Hand Tools')
+    expect(store.get().productCategories).toContain('Hand Tools')
+
+    const reopened = createSettingsStore(storage)
+    expect(reopened.get().productCategories).toContain('Hand Tools')
+  })
+
+  it('trims whitespace and ignores a blank name', () => {
+    const store = createSettingsStore(storage)
+    store.addProductCategory('   ')
+    expect(store.get().productCategories).toEqual([])
+
+    store.addProductCategory('  Hand Tools  ')
+    expect(store.get().productCategories).toContain('Hand Tools')
+  })
+
+  it('does not add a duplicate category, case-insensitively', () => {
+    const store = createSettingsStore(storage)
+    store.addProductCategory('Fasteners')
+    store.addProductCategory('fasteners')
+    expect(store.get().productCategories.filter((c) => c.toLowerCase() === 'fasteners')).toHaveLength(1)
+  })
+
+  it('renames a category', () => {
+    const store = createSettingsStore(storage)
+    store.addProductCategory('Power Tools')
+    store.renameProductCategory('Power Tools', 'Power Tools & Batteries')
+    expect(store.get().productCategories).toContain('Power Tools & Batteries')
+    expect(store.get().productCategories).not.toContain('Power Tools')
+  })
+
+  it('removes a category', () => {
+    const store = createSettingsStore(storage)
+    store.addProductCategory('Consumables')
+    store.removeProductCategory('Consumables')
+    expect(store.get().productCategories).not.toContain('Consumables')
+  })
+})
+
+describe('printer selection', () => {
+  it('defaults to the Zebra', () => {
+    const store = createSettingsStore(storage)
+    expect(store.get().printerKind).toBe('zebra')
+  })
+
+  it('switches to the Polono and persists the choice across a reload', () => {
+    const store = createSettingsStore(storage)
+    store.setPrinterKind('polono')
+    expect(store.get().printerKind).toBe('polono')
+
+    const reopened = createSettingsStore(storage)
+    expect(reopened.get().printerKind).toBe('polono')
+  })
+
+  it('ignores an invalid stored value and falls back to the Zebra rather than crashing', () => {
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, printerKind: 'inkjet', labelPresets: [], quickCodes: [] }),
+    )
+    expect(createSettingsStore(storage).get().printerKind).toBe('zebra')
+  })
+})
+
+describe('Polono label template', () => {
+  it('has no override until one is set, so callers fall back to DEFAULT_POLONO_LABEL_TEMPLATE', () => {
+    const store = createSettingsStore(storage)
+    expect(store.get().polonoLabelTemplate).toBeUndefined()
+  })
+
+  it('is stored separately from the Zebra template — setting one leaves the other untouched', () => {
+    const store = createSettingsStore(storage)
+    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 500 })
+    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
+
+    expect(store.get().labelTemplate?.widthDots).toBe(500)
+    expect(store.get().polonoLabelTemplate?.widthDots).toBe(350)
+  })
+
+  it('clamps an out-of-range Polono template using the Polono defaults, not the Zebra ones', () => {
+    const store = createSettingsStore(storage)
+    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, dpi: 99999, nameFont: -5 })
+
+    const saved = store.get().polonoLabelTemplate
+    expect(saved?.dpi).toBeLessThanOrEqual(600)
+    expect(saved?.nameFont).toBeGreaterThanOrEqual(0)
+    // Untouched fields keep the Polono default's own values, not the Zebra's.
+    expect(saved?.widthDots).toBe(DEFAULT_POLONO_LABEL_TEMPLATE.widthDots)
+  })
+
+  it('resets the Polono override without touching the Zebra template', () => {
+    const store = createSettingsStore(storage)
+    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 500 })
+    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
+
+    store.resetPolonoLabelTemplate()
+
+    expect(store.get().polonoLabelTemplate).toBeUndefined()
+    expect(store.get().labelTemplate?.widthDots).toBe(500)
+  })
+
+  it('persists across a reload', () => {
+    const store = createSettingsStore(storage)
+    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
+
+    const reopened = createSettingsStore(storage)
+    expect(reopened.get().polonoLabelTemplate?.widthDots).toBe(350)
   })
 })
 

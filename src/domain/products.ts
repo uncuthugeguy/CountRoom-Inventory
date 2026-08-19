@@ -81,3 +81,17 @@ export function knownVariations(products: Product[]): string[] {
   }
   return [...seen].sort((a, b) => a.localeCompare(b))
 }
+
+/** Distinct category values already in use across the catalogue — used by
+ * `ProductFormDialog` as a fallback set of dropdown options before a manager
+ * has curated a real list (`settings.productCategories`), so an existing
+ * catalogue's categories don't just disappear the moment this becomes a
+ * dropdown instead of free text. Same shape as `knownVariations` above. */
+export function knownCategories(products: Product[]): string[] {
+  const seen = new Set<string>()
+  for (const product of products) {
+    const value = product.category.trim()
+    if (value) seen.add(value)
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b))
+}

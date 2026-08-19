@@ -6,6 +6,7 @@ export const TABS = [
   'returns',
   'stocktake',
   'history',
+  'reports',
   'codes',
   'settings',
 ] as const
@@ -20,6 +21,7 @@ const LABELS: Record<Tab, string> = {
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
+  reports: 'Reports',
   codes: 'Quick codes',
   settings: 'Settings',
 }
@@ -32,6 +34,7 @@ const ICONS: Record<Tab, string> = {
   returns: '↩',
   stocktake: '☑',
   history: '↻',
+  reports: '📊',
   codes: '⊞',
   settings: '⚙',
 }

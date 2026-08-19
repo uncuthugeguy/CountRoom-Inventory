@@ -1,9 +1,21 @@
+import {
+  describeProductCreated,
+  describeProductRemoved,
+  describeProductEdit,
+  describeReturnEdit,
+  describeSaleEdit,
+  returnEntityLabel,
+  saleEntityLabel,
+} from '../domain/activity'
 import { applyMovement } from '../domain/movements'
 import { validateDraft } from '../domain/products'
 import { validateReturnCaseInput } from '../domain/returns'
 import { saleFeeTotal } from '../domain/sales'
 import type { AppliedMovement } from '../domain/movements'
 import type {
+  ActivityAction,
+  ActivityEntityType,
+  ActivityLogEntry,
   MovementInput,
   Product,
   ProductDraft,
@@ -22,6 +34,16 @@ import type {
   StockMovement,
 } from '../domain/types'
 import { EMPTY_PROFILE_DRAFT } from '../domain/types'
+import {
+  type Supplier,
+  type SupplierDraft,
+  type SupplierProduct,
+  type SupplierProductDraft,
+  type PurchaseOrder,
+  type PurchaseOrderInput,
+  type PurchaseOrderLine,
+  calculatePOSubtotal,
+} from '../domain/suppliers'
 import { DEMO_PRODUCTS } from './demoSeed'
 import {
   DUPLICATE_BARCODE,
@@ -43,6 +65,10 @@ interface Snapshot {
   sales: Sale[]
   returns: ReturnCase[]
   profile: Profile
+  suppliers: Supplier[]
+  supplierProducts: SupplierProduct[]
+  purchaseOrders: PurchaseOrder[]
+  activity: ActivityLogEntry[]
 }
 
 export interface LocalRepositoryOptions {
@@ -53,7 +79,37 @@ export interface LocalRepositoryOptions {
 
 const emptyProfile = (): Profile => ({ ...EMPTY_PROFILE_DRAFT, updatedAt: new Date().toISOString() })
 
-const empty = (): Snapshot => ({ products: [], movements: [], sales: [], returns: [], profile: emptyProfile() })
+const empty = (): Snapshot => ({
+  products: [],
+  movements: [],
+  sales: [],
+  returns: [],
+  profile: emptyProfile(),
+  suppliers: [],
+  supplierProducts: [],
+  purchaseOrders: [],
+  activity: [],
+})
+
+/** Older snapshots predate the entityType/entityId/entityLabel shape below
+ * (the log used to only ever cover products, so entries had `productId`/
+ * `productName` instead) — migrate those in place on read rather than
+ * discarding a user's local history. */
+function migrateActivityEntry(raw: unknown): ActivityLogEntry | null {
+  if (!raw || typeof raw !== 'object') return null
+  const entry = raw as Record<string, unknown>
+  if (typeof entry.entityType === 'string') return entry as unknown as ActivityLogEntry
+  return {
+    id: String(entry.id ?? ''),
+    actorName: String(entry.actorName ?? ''),
+    entityType: 'product',
+    action: (entry.action as ActivityAction) ?? 'edited',
+    entityId: (entry.productId as string | null) ?? null,
+    entityLabel: String(entry.productName ?? ''),
+    detail: String(entry.detail ?? ''),
+    createdAt: String(entry.createdAt ?? ''),
+  }
+}
 
 function read(storage: Storage): Snapshot | null {
   const raw = storage.getItem(STORAGE_KEY)
@@ -61,11 +117,17 @@ function read(storage: Storage): Snapshot | null {
   try {
     const parsed = JSON.parse(raw) as Partial<Snapshot>
     if (!Array.isArray(parsed.products) || !Array.isArray(parsed.movements)) return empty()
-    // Older snapshots predate sales, returns and profile tracking entirely.
+    // Older snapshots predate sales, returns, profile, supplier, and activity-log tracking.
     const sales = Array.isArray(parsed.sales) ? parsed.sales : []
     const returns = Array.isArray(parsed.returns) ? parsed.returns : []
     const profile = parsed.profile && typeof parsed.profile === 'object' ? { ...emptyProfile(), ...parsed.profile } : emptyProfile()
-    return { products: parsed.products, movements: parsed.movements, sales, returns, profile }
+    const suppliers = Array.isArray(parsed.suppliers) ? parsed.suppliers : []
+    const supplierProducts = Array.isArray(parsed.supplierProducts) ? parsed.supplierProducts : []
+    const purchaseOrders = Array.isArray(parsed.purchaseOrders) ? parsed.purchaseOrders : []
+    const activity = Array.isArray(parsed.activity)
+      ? parsed.activity.map(migrateActivityEntry).filter((a): a is ActivityLogEntry => a !== null)
+      : []
+    return { products: parsed.products, movements: parsed.movements, sales, returns, profile, suppliers, supplierProducts, purchaseOrders, activity }
   } catch {
     // Corrupt or hand-edited storage: start clean rather than crash on boot.
     return empty()
@@ -89,7 +151,19 @@ export function createLocalRepository(
 
   let state =
     read(storage) ??
-    (seed ? { products: [...DEMO_PRODUCTS], movements: [], sales: [], returns: [], profile: emptyProfile() } : empty())
+    (seed
+      ? {
+          products: [...DEMO_PRODUCTS],
+          movements: [],
+          sales: [],
+          returns: [],
+          profile: emptyProfile(),
+          suppliers: [],
+          supplierProducts: [],
+          purchaseOrders: [],
+          activity: [],
+        }
+      : empty())
 
   const persist = () => storage.setItem(STORAGE_KEY, JSON.stringify(state))
   if (!storage.getItem(STORAGE_KEY)) persist()
@@ -102,6 +176,33 @@ export function createLocalRepository(
   // so a duplicate SKU is rejected the same way on both backends.
   const skuTaken = (sku: string, exceptId?: string) =>
     state.products.some((p) => p.sku === sku && p.id !== exceptId)
+
+  // No second real login exists in offline demo mode (see Role's doc comment
+  // in repository.ts), so every activity-log entry here is attributed to
+  // this one solo user.
+  const LOCAL_ACTOR_NAME = 'You'
+
+  const pushActivity = (
+    entityType: ActivityEntityType,
+    action: ActivityAction,
+    entityId: string | null,
+    entityLabel: string,
+    detail: string,
+  ): ActivityLogEntry => {
+    const entry: ActivityLogEntry = {
+      id: newId(),
+      actorName: LOCAL_ACTOR_NAME,
+      entityType,
+      action,
+      entityId,
+      entityLabel,
+      detail,
+      createdAt: new Date().toISOString(),
+    }
+    // Newest first, matching how movements/sales/returns are already ordered.
+    state = { ...state, activity: [entry, ...state.activity] }
+    return entry
+  }
 
   return {
     kind: 'local',
@@ -130,6 +231,7 @@ export function createLocalRepository(
       const at = new Date().toISOString()
       const product: Product = { ...validated.value, id: newId(), createdAt: at, updatedAt: at }
       state = { ...state, products: [...state.products, product] }
+      pushActivity('product', 'added', product.id, product.name, describeProductCreated(product))
       persist()
       return { ok: true, value: { ...product } }
     },
@@ -156,13 +258,20 @@ export function createLocalRepository(
         ...state,
         products: state.products.map((p) => (p.id === id ? updated : p)),
       }
+      // Skip logging a save that changed nothing tracked (e.g. reopening the
+      // dialog and hitting Save without editing anything) — see
+      // describeProductEdit's own doc comment.
+      const detail = describeProductEdit(existing, updated)
+      if (detail) pushActivity('product', 'edited', updated.id, updated.name, detail)
       persist()
       return { ok: true, value: { ...updated } }
     },
 
     async deleteProduct(id: string): Promise<Result<true>> {
       // Movements are kept: the audit trail outlives the catalogue entry.
+      const existing = state.products.find((p) => p.id === id)
       state = { ...state, products: state.products.filter((p) => p.id !== id) }
+      if (existing) pushActivity('product', 'removed', existing.id, existing.name, describeProductRemoved(existing))
       persist()
       return { ok: true, value: true }
     },
@@ -386,6 +495,10 @@ export function createLocalRepository(
         movements: [...newMovements, ...state.movements],
         sales: state.sales.map((s) => (s.id === id ? updated : s)),
       }
+      // Skip logging an edit that changed nothing tracked, same reasoning as
+      // updateProduct above.
+      const saleDetail = describeSaleEdit(existing, updated)
+      if (saleDetail) pushActivity('sale', 'edited', updated.id, saleEntityLabel(updated), saleDetail)
       persist()
       return { ok: true, value: updated }
     },
@@ -627,6 +740,10 @@ export function createLocalRepository(
         movements: [...newMovements, ...state.movements],
         returns: state.returns.map((r) => (r.id === id ? updated : r)),
       }
+      // Skip logging an edit that changed nothing tracked, same reasoning as
+      // updateProduct/updateSale above.
+      const returnDetail = describeReturnEdit(existing, updated)
+      if (returnDetail) pushActivity('return', 'edited', updated.id, returnEntityLabel(updated), returnDetail)
       persist()
       return { ok: true, value: updated }
     },
@@ -670,6 +787,225 @@ export function createLocalRepository(
       return { ok: false, error: TEAM_NOT_SUPPORTED }
     },
 
+    async listSuppliers(): Promise<Supplier[]> {
+      return state.suppliers
+    },
+
+    async createSupplier(draft: SupplierDraft): Promise<Result<Supplier>> {
+      const supplier: Supplier = {
+        id: newId(),
+        ...draft,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      state.suppliers.push(supplier)
+      persist()
+      return { ok: true, value: supplier }
+    },
+
+    async updateSupplier(id: string, draft: SupplierDraft): Promise<Result<Supplier>> {
+      const idx = state.suppliers.findIndex((s) => s.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const updated: Supplier = {
+        ...state.suppliers[idx],
+        ...draft,
+        updatedAt: new Date().toISOString(),
+      }
+      state.suppliers[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async deleteSupplier(id: string): Promise<Result<true>> {
+      const idx = state.suppliers.findIndex((s) => s.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      state.suppliers.splice(idx, 1)
+      // Remove all supplier-product links for this supplier
+      state.supplierProducts = state.supplierProducts.filter((sp) => sp.supplierId !== id)
+      // Remove all POs from this supplier
+      state.purchaseOrders = state.purchaseOrders.filter((po) => po.supplierId !== id)
+      persist()
+      return { ok: true, value: true }
+    },
+
+    async linkSupplierProduct(draft: SupplierProductDraft): Promise<Result<SupplierProduct>> {
+      const sp: SupplierProduct = {
+        id: newId(),
+        ...draft,
+        updatedAt: new Date().toISOString(),
+      }
+      state.supplierProducts.push(sp)
+      persist()
+      return { ok: true, value: sp }
+    },
+
+    async updateSupplierProduct(id: string, draft: SupplierProductDraft): Promise<Result<SupplierProduct>> {
+      const idx = state.supplierProducts.findIndex((sp) => sp.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const updated: SupplierProduct = {
+        ...state.supplierProducts[idx],
+        ...draft,
+        updatedAt: new Date().toISOString(),
+      }
+      state.supplierProducts[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async unlinkSupplierProduct(id: string): Promise<Result<true>> {
+      const idx = state.supplierProducts.findIndex((sp) => sp.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      state.supplierProducts.splice(idx, 1)
+      persist()
+      return { ok: true, value: true }
+    },
+
+    async listSupplierProducts(): Promise<SupplierProduct[]> {
+      return state.supplierProducts
+    },
+
+    async listPurchaseOrders(): Promise<PurchaseOrder[]> {
+      return state.purchaseOrders
+    },
+
+    async createPurchaseOrder(input: PurchaseOrderInput): Promise<Result<PurchaseOrder>> {
+      const supplier = state.suppliers.find((s) => s.id === input.supplierId)
+      if (!supplier) return { ok: false, error: NOT_FOUND }
+
+      const poId = newId()
+      const lines: PurchaseOrderLine[] = []
+      for (const line of input.lines) {
+        const product = state.products.find((p) => p.id === line.productId)
+        if (!product) return { ok: false, error: NOT_FOUND }
+        lines.push({
+          id: newId(),
+          poId,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unitCost: line.unitCost,
+          lineTotal: line.quantity * line.unitCost,
+        })
+      }
+
+      const po: PurchaseOrder = {
+        id: poId,
+        supplierId: input.supplierId,
+        supplierName: supplier.name,
+        status: 'draft',
+        expectedDeliveryDate: input.expectedDeliveryDate,
+        notes: input.notes,
+        lines,
+        subtotal: calculatePOSubtotal(lines),
+        createdAt: new Date().toISOString(),
+      }
+      state.purchaseOrders.push(po)
+      persist()
+      return { ok: true, value: po }
+    },
+
+    async sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>> {
+      const idx = state.purchaseOrders.findIndex((po) => po.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[idx]
+      if (po.status !== 'draft') {
+        return { ok: false, error: 'Only draft POs can be sent.' }
+      }
+      const updated: PurchaseOrder = {
+        ...po,
+        status: 'sent',
+        updatedAt: new Date().toISOString(),
+      }
+      state.purchaseOrders[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async confirmPurchaseOrder(id: string): Promise<Result<PurchaseOrder>> {
+      const idx = state.purchaseOrders.findIndex((po) => po.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[idx]
+      if (po.status !== 'sent') {
+        return { ok: false, error: 'Only sent POs can be confirmed.' }
+      }
+      const updated: PurchaseOrder = {
+        ...po,
+        status: 'confirmed',
+        updatedAt: new Date().toISOString(),
+      }
+      state.purchaseOrders[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async receivePurchaseOrder(
+      id: string,
+      lineQuantities: Map<string, number>,
+    ): Promise<Result<PurchaseOrder>> {
+      const poIdx = state.purchaseOrders.findIndex((po) => po.id === id)
+      if (poIdx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[poIdx]
+      if (po.status !== 'confirmed' && po.status !== 'sent') {
+        return { ok: false, error: 'Only sent or confirmed POs can be received.' }
+      }
+
+      // Add stock for each line
+      const movements: StockMovement[] = []
+      for (const line of po.lines) {
+        const qty = lineQuantities.get(line.id) ?? line.quantity
+        if (qty === 0) continue
+
+        const productIdx = state.products.findIndex((p) => p.id === line.productId)
+        if (productIdx === -1) continue
+
+        const applied = applyMovement(
+          state.products[productIdx],
+          { type: 'in', quantity: qty, reason: `PO received from ${po.supplierName}` },
+          { id: newId(), at: new Date().toISOString() },
+        )
+        if (applied.ok) {
+          state.products[productIdx] = applied.value.product
+          movements.push(applied.value.movement)
+        }
+      }
+
+      state.movements.push(...movements)
+
+      const updatedLines = po.lines.map((line) => ({
+        ...line,
+        quantityReceived: lineQuantities.get(line.id) ?? line.quantity,
+      }))
+
+      const updated: PurchaseOrder = {
+        ...po,
+        status: 'received',
+        receivedDate: new Date().toISOString(),
+        lines: updatedLines,
+        updatedAt: new Date().toISOString(),
+      }
+      state.purchaseOrders[poIdx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async cancelPurchaseOrder(id: string): Promise<Result<PurchaseOrder>> {
+      const idx = state.purchaseOrders.findIndex((po) => po.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[idx]
+      if (po.status === 'received' || po.status === 'cancelled') {
+        return { ok: false, error: 'Cannot cancel a received or already-cancelled PO.' }
+      }
+      const updated: PurchaseOrder = {
+        ...po,
+        status: 'cancelled',
+        updatedAt: new Date().toISOString(),
+      }
+      state.purchaseOrders[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
     async getAccountSettings() {
       // No account to sync to in offline demo mode — settings already live
       // in this browser's own storage, which is the whole of the model here.
@@ -678,6 +1014,21 @@ export function createLocalRepository(
 
     async setAccountSettings(): Promise<Result<true>> {
       return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async listActivity(): Promise<ActivityLogEntry[]> {
+      return state.activity.map((a) => ({ ...a }))
+    },
+
+    async logActivity(
+      entityType: ActivityEntityType,
+      action: ActivityAction,
+      entityId: string | null,
+      entityLabel: string,
+      detail: string,
+    ): Promise<void> {
+      pushActivity(entityType, action, entityId, entityLabel, detail)
+      persist()
     },
   }
 }

@@ -25,10 +25,14 @@ import {
   type SaleFeesDraft,
 } from '../../domain/sales'
 import {
+  ACTIVITY_ACTION_LABELS,
+  ACTIVITY_ENTITY_LABELS,
   PAID_BY_LABELS,
   MOVEMENT_LABELS,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
+  type ActivityEntityType,
+  type ActivityLogEntry,
   type PaymentMethod,
   type Product,
   type Result,
@@ -39,7 +43,13 @@ import {
 import { Dialog } from '../components/Dialog'
 import { SaleFeesFields } from '../components/SaleFeesFields'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
-import { formatDateTime, formatDelta, formatNumber } from '../format'
+import { formatDateTime, formatDelta, formatNumber, formatRelativeTime } from '../format'
+import {
+  clearSaleEditDraft,
+  hydrateSaleEditCart,
+  loadSaleEditDraftFor,
+  saveSaleEditDraft,
+} from '../../data/saleEditDraftStorage'
 
 /** The full itemised receipt for one past sale, opened from a row in the
  * sales list below — the same line-by-line breakdown Checkout shows right
@@ -108,14 +118,22 @@ function ReceiptDialog({
 
 /** Full edit of a past sale — items, quantities, prices, channel and payment
  * method all reopen for change. Styled after Checkout's cart, but scoped to
- * a dialog and seeded from the sale being edited. */
-function SaleEditDialog({
+ * a dialog and seeded from the sale being edited.
+ *
+ * Rendered at the top level of the app (see App.tsx), not nested inside
+ * History's Sales view — so switching to another StockFlow tab while
+ * editing no longer tears this dialog down (the same reason
+ * ProductFormDialog lives at that level). Autosaves to localStorage on top
+ * of that, same pattern as productDraftStorage.ts, so an in-progress edit
+ * also survives an actual browser-tab/app switch or reload. */
+export function SaleEditDialog({
   sale,
   products,
   channels,
   role,
   onClose,
   onSave,
+  draftStorage,
 }: {
   sale: Sale
   products: Product[]
@@ -123,19 +141,47 @@ function SaleEditDialog({
   role: Role
   onClose: () => void
   onSave: (id: string, input: SaleInput) => Promise<Result<Sale>>
+  /** Overridden in tests so the suite never touches the host's real localStorage. */
+  draftStorage?: Storage
 }) {
   const searchId = useId()
 
   const initialCart = useMemo(() => buildEditCart(sale, products), [sale, products])
   const droppedCount = sale.lines.length - initialCart.length
 
-  const [cart, setCart] = useState<Cart>(initialCart)
-  const [channel, setChannel] = useState(sale.channel)
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(sale.paymentMethod)
-  const [fees, setFees] = useState<SaleFeesDraft>(() => saleFeesDraftFromSale(sale))
+  const restoredDraft = loadSaleEditDraftFor(sale.id, draftStorage)
+
+  const [cart, setCart] = useState<Cart>(() =>
+    restoredDraft ? hydrateSaleEditCart(restoredDraft.cart, products) : initialCart,
+  )
+  const [channel, setChannel] = useState(restoredDraft?.channel ?? sale.channel)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    restoredDraft?.paymentMethod ?? sale.paymentMethod,
+  )
+  const [fees, setFees] = useState<SaleFeesDraft>(() => restoredDraft?.fees ?? saleFeesDraftFromSale(sale))
+  // Whether this dialog opened with unsaved work already sitting in the
+  // autosave — shown as a note with the option to start over instead.
+  const [restored, setRestored] = useState(restoredDraft !== null)
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // Autosaves on every change so an in-progress edit survives switching
+  // tabs, the phone backgrounding the PWA, or an accidental close — cleared
+  // only by a successful save (below) or by signing out (see App.tsx).
+  useEffect(() => {
+    saveSaleEditDraft(sale.id, cart, channel, paymentMethod, fees, draftStorage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, channel, paymentMethod, fees, draftStorage, sale.id])
+
+  const discardDraft = () => {
+    clearSaleEditDraft(draftStorage)
+    setCart(initialCart)
+    setChannel(sale.channel)
+    setPaymentMethod(sale.paymentMethod)
+    setFees(saleFeesDraftFromSale(sale))
+    setRestored(false)
+  }
 
   // Keep the sale's original channel selectable even if it's since been
   // removed from Settings' managed list — otherwise reopening an old sale
@@ -175,11 +221,21 @@ function SaleEditDialog({
       setError(result.error)
       return
     }
+    clearSaleEditDraft(draftStorage)
     onClose()
   }
 
   return (
     <Dialog title="Edit sale" onClose={onClose}>
+      {restored && (
+        // Text only, deliberately not a focusable control — Dialog focuses
+        // the first input/button on mount so a keystroke lands in the
+        // search field right away; an interactive element here would steal
+        // that focus. The "Discard draft" button lives in the actions row.
+        <p className="hint" role="status">
+          Picked up where you left off — this wasn't saved yet.
+        </p>
+      )}
       <p className="muted">{formatDateTime(sale.createdAt)}</p>
       {droppedCount > 0 && (
         <p className="hint">
@@ -258,16 +314,20 @@ function SaleEditDialog({
                     />
                   </label>
                   <label className="cart-field">
-                    <span>Price</span>
+                    <span>Item price</span>
                     <input
                       type="number"
                       min={0}
                       step={0.01}
                       inputMode="decimal"
                       value={line.unitPrice}
-                      aria-label={`Price for ${line.product.name}`}
+                      aria-label={`Item price for ${line.product.name}`}
                       disabled={role !== 'manager'}
-                      title={role !== 'manager' ? 'Only a manager can change the sale price' : undefined}
+                      title={
+                        role !== 'manager'
+                          ? 'Only a manager can change the sale price'
+                          : "What you got for this item alone — not a marketplace order total. Any buyer protection fee, delivery, VAT etc. go in Marketplace fees below, not in here."
+                      }
                       onChange={(e) =>
                         setCart((current) => setCartPrice(current, line.product.id, Number(e.target.value) || 0))
                       }
@@ -341,7 +401,7 @@ function SaleEditDialog({
             : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
                 orderTotalCheck.difference > 0
                   ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
-                  : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than you've itemised.`
+                  : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
               }`}
         </p>
       )}
@@ -353,6 +413,11 @@ function SaleEditDialog({
       )}
 
       <div className="dialog-actions">
+        {restored && (
+          <button type="button" className="button button-ghost" onClick={discardDraft} disabled={saving}>
+            Discard draft
+          </button>
+        )}
         <button type="button" className="button button-ghost" onClick={onClose} disabled={saving}>
           Cancel
         </button>
@@ -406,10 +471,13 @@ export interface HistoryScreenProps {
   movements: StockMovement[]
   products: Product[]
   sales: Sale[]
+  /** Every add/edit/delete on a product, newest first — see the "Activity"
+   * tab below. Visible to the whole team, same as stock movements. */
+  activity: ActivityLogEntry[]
   role: Role
-  /** User-managed list of sale channels — see Settings. */
-  channels: string[]
-  onUpdateSale: (id: string, input: SaleInput) => Promise<Result<Sale>>
+  /** Opens the sale in the top-level Edit sale dialog (see App.tsx and
+   *  SaleEditDialog's own doc comment for why it lives up there). */
+  onEditSale: (sale: Sale) => void
   /** A sale looked up from a scanned receipt code (see App.tsx's
    * handleScan) — pops its receipt straight open, regardless of the
    * current date-range filter, the moment it arrives. `onRecalledSaleHandled`
@@ -419,7 +487,7 @@ export interface HistoryScreenProps {
   onRecalledSaleHandled?: () => void
 }
 
-type Mode = 'movements' | 'sales'
+type Mode = 'movements' | 'sales' | 'activity'
 type Range = 'today' | '7d' | '30d' | 'all'
 
 const RANGE_LABELS: Record<Range, string> = {
@@ -543,26 +611,116 @@ function MovementsView({ movements, products }: { movements: StockMovement[]; pr
   )
 }
 
+type EntityFilter = 'all' | ActivityEntityType
+
+const ENTITY_FILTER_LABELS: Record<EntityFilter, string> = {
+  all: 'All',
+  ...ACTIVITY_ENTITY_LABELS,
+}
+
+/** Every product/sale/return/team change, attributable to who did it and
+ * when — manager-only (see HistoryScreen's own gating below and the
+ * `activity_log_select_own` RLS policy in activity_log_migration.sql, which
+ * enforces the same restriction server-side). Read-only: there's nothing
+ * here to open or reverse, just a record. */
+function ActivityView({ activity }: { activity: ActivityLogEntry[] }) {
+  const searchId = useId()
+  const [query, setQuery] = useState('')
+  const [entityFilter, setEntityFilter] = useState<EntityFilter>('all')
+
+  const visible = useMemo(() => {
+    const byType = entityFilter === 'all' ? activity : activity.filter((entry) => entry.entityType === entityFilter)
+    const needle = query.trim().toLowerCase()
+    if (!needle) return byType
+    return byType.filter((entry) =>
+      [entry.actorName, entry.entityLabel, entry.detail, ACTIVITY_ACTION_LABELS[entry.action], entry.entityType]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    )
+  }, [activity, entityFilter, query])
+
+  return (
+    <>
+      <div className="toolbar">
+        <div className="field field-grow">
+          <label htmlFor={searchId}>Search activity</label>
+          <input
+            id={searchId}
+            type="search"
+            value={query}
+            autoComplete="off"
+            placeholder="Person, product or change"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="channel-picker" role="group" aria-label="Filter by type">
+        {(Object.keys(ENTITY_FILTER_LABELS) as EntityFilter[]).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`button chip-button ${entityFilter === value ? 'chip-button-active' : ''}`}
+            aria-pressed={entityFilter === value}
+            onClick={() => setEntityFilter(value)}
+          >
+            {ENTITY_FILTER_LABELS[value]}
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
+        <p className="empty">
+          {activity.length === 0
+            ? 'No activity yet. Every product, sale, return or team change lands here.'
+            : 'No activity matches that search.'}
+        </p>
+      ) : (
+        <ul className="plain-list history-list">
+          {visible.map((entry) => (
+            <li key={entry.id} className="history-row" data-testid="activity-row">
+              <div className="history-main">
+                <span className="history-product">
+                  {entry.actorName} {ACTIVITY_ACTION_LABELS[entry.action]}{' '}
+                  {entry.entityLabel || `a deleted ${entry.entityType}`}
+                </span>
+                <span className={`badge badge-activity-${entry.action}`}>
+                  {ACTIVITY_ACTION_LABELS[entry.action]}
+                </span>
+              </div>
+              <div className="history-meta">
+                <span className="muted" title={formatDateTime(entry.createdAt)}>
+                  {formatRelativeTime(entry.createdAt)}
+                </span>
+                {entry.detail && <span className="reason">— {entry.detail}</span>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )
+}
+
 function SalesView({
   sales,
-  products,
   role,
-  channels,
-  onUpdateSale,
+  onEditSale,
   recalledSale,
   onRecalledSaleHandled,
 }: {
   sales: Sale[]
-  products: Product[]
   role: Role
-  channels: string[]
-  onUpdateSale: (id: string, input: SaleInput) => Promise<Result<Sale>>
+  /** Opens the sale in the top-level Edit sale dialog (see App.tsx) — lifted
+   *  out of this view entirely so switching StockFlow tabs mid-edit doesn't
+   *  tear the edit down; see SaleEditDialog's own doc comment. */
+  onEditSale: (sale: Sale) => void
   recalledSale?: Sale | null
   onRecalledSaleHandled?: () => void
 }) {
   const [range, setRange] = useState<Range>('7d')
   const [viewingSale, setViewingSale] = useState<Sale | null>(null)
-  const [editingSale, setEditingSale] = useState<Sale | null>(null)
   const isManager = role === 'manager'
 
   // Opens straight to the scanned sale's receipt, bypassing the date-range
@@ -720,20 +878,9 @@ function SalesView({
           isManager={isManager}
           onClose={() => setViewingSale(null)}
           onEdit={() => {
-            setEditingSale(viewingSale)
+            onEditSale(viewingSale)
             setViewingSale(null)
           }}
-        />
-      )}
-
-      {editingSale && (
-        <SaleEditDialog
-          sale={editingSale}
-          products={products}
-          channels={channels}
-          role={role}
-          onClose={() => setEditingSale(null)}
-          onSave={onUpdateSale}
         />
       )}
     </>
@@ -744,20 +891,28 @@ export function HistoryScreen({
   movements,
   products,
   sales,
+  activity,
   role,
-  channels,
-  onUpdateSale,
+  onEditSale,
   recalledSale,
   onRecalledSaleHandled,
 }: HistoryScreenProps) {
   const [mode, setMode] = useState<Mode>('movements')
+  const isManager = role === 'manager'
 
   // A scanned receipt code can arrive while this screen is showing stock
-  // movements, not sales — switch over so SalesView is actually mounted to
-  // receive `recalledSale` below.
+  // movements or activity, not sales — switch over so SalesView is actually
+  // mounted to receive `recalledSale` below.
   useEffect(() => {
     if (recalledSale) setMode('sales')
   }, [recalledSale])
+
+  // The Activity tab is manager-only (see ActivityView's own doc comment) —
+  // never leave a non-manager sitting on it, e.g. if their role changes
+  // after this screen already mounted.
+  useEffect(() => {
+    if (!isManager && mode === 'activity') setMode('movements')
+  }, [isManager, mode])
 
   return (
     <div className="screen">
@@ -778,21 +933,29 @@ export function HistoryScreen({
         >
           Sales
         </button>
+        {isManager && (
+          <button
+            type="button"
+            className={`button chip-button ${mode === 'activity' ? 'chip-button-active' : ''}`}
+            aria-pressed={mode === 'activity'}
+            onClick={() => setMode('activity')}
+          >
+            Activity
+          </button>
+        )}
       </div>
 
-      {mode === 'movements' ? (
-        <MovementsView movements={movements} products={products} />
-      ) : (
+      {mode === 'movements' && <MovementsView movements={movements} products={products} />}
+      {mode === 'sales' && (
         <SalesView
           sales={sales}
-          products={products}
           role={role}
-          channels={channels}
-          onUpdateSale={onUpdateSale}
+          onEditSale={onEditSale}
           recalledSale={recalledSale}
           onRecalledSaleHandled={onRecalledSaleHandled}
         />
       )}
+      {isManager && mode === 'activity' && <ActivityView activity={activity} />}
     </div>
   )
 }

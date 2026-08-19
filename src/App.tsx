@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { createRepository, resolveBackend, type Backend } from './data/createRepository'
 import { clearProductDraft } from './data/productDraftStorage'
+import { clearSaleEditDraft } from './data/saleEditDraftStorage'
 import { getSupabaseClient } from './data/supabaseClient'
 import { DUPLICATE_SKU, type InventoryRepository, type Role } from './data/repository'
 import { findByScan } from './domain/inventory'
@@ -37,9 +38,10 @@ import { ProductFormDialog } from './ui/components/ProductFormDialog'
 import { printProductLabel } from './printing/printLabel'
 import { CheckoutScreen } from './ui/screens/CheckoutScreen'
 import { DashboardScreen } from './ui/screens/DashboardScreen'
-import { HistoryScreen } from './ui/screens/HistoryScreen'
+import { HistoryScreen, SaleEditDialog } from './ui/screens/HistoryScreen'
 import { ProductsScreen } from './ui/screens/ProductsScreen'
 import { QuickCodesScreen } from './ui/screens/QuickCodesScreen'
+import { ReportsScreen } from './ui/screens/ReportsScreen'
 import { ReturnsScreen } from './ui/screens/ReturnsScreen'
 import { ScanScreen } from './ui/screens/ScanScreen'
 import { SettingsScreen } from './ui/screens/SettingsScreen'
@@ -56,6 +58,8 @@ export interface AppProps {
   settingsStorage?: Storage
   /** Overridden in tests; backs the product-form autosave (see productDraftStorage.ts). */
   productDraftStorage?: Storage
+  /** Overridden in tests; backs the Edit-sale dialog's autosave (see saleEditDraftStorage.ts). */
+  saleEditDraftStorage?: Storage
   /** Overridden in tests; backs the sign-in screen's remembered-email suggestions (see recentEmailsStorage.ts). */
   emailStorage?: Storage
 }
@@ -64,6 +68,7 @@ type DialogState =
   | { kind: 'product'; product?: Product; barcode?: string }
   | { kind: 'movement'; product: Product; type: MovementType }
   | { kind: 'delete'; product: Product }
+  | { kind: 'saleEdit'; sale: Sale }
   | null
 
 const TITLES: Record<Tab, string> = {
@@ -74,6 +79,7 @@ const TITLES: Record<Tab, string> = {
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
+  reports: 'Reports',
   codes: 'Quick codes',
   settings: 'Settings',
 }
@@ -218,10 +224,11 @@ function SupabaseGate({
     <AuthenticatedApp
       {...props}
       onSignOut={() => {
-        // A product draft is an in-progress edit tied to whoever is signed
-        // in — it must not resurface for the next person to sign in on this
-        // device (see productDraftStorage.ts).
+        // Both drafts are in-progress edits tied to whoever is signed in —
+        // neither should resurface for the next person to sign in on this
+        // device (see productDraftStorage.ts / saleEditDraftStorage.ts).
         clearProductDraft(props.productDraftStorage)
+        clearSaleEditDraft(props.saleEditDraftStorage)
         client.auth.signOut()
       }}
       userEmail={session.user.email ?? undefined}
@@ -239,6 +246,7 @@ function AuthenticatedApp({
   startCamera,
   settingsStorage,
   productDraftStorage,
+  saleEditDraftStorage,
   onSignOut,
   userEmail,
 }: AuthenticatedAppProps) {
@@ -549,11 +557,19 @@ function AuthenticatedApp({
             movements={inventory.movements}
             products={inventory.products}
             sales={inventory.sales}
+            activity={inventory.activity}
             role={role}
-            channels={settings.saleChannels}
-            onUpdateSale={updateSale}
+            onEditSale={(sale) => setDialog({ kind: 'saleEdit', sale })}
             recalledSale={recalledSale}
             onRecalledSaleHandled={() => setRecalledSale(null)}
+          />
+        )}
+
+        {tab === 'reports' && role === 'manager' && (
+          <ReportsScreen
+            products={inventory.products}
+            sales={inventory.sales}
+            movements={inventory.movements}
           />
         )}
 
@@ -562,7 +578,7 @@ function AuthenticatedApp({
         {tab === 'settings' && <SettingsScreen settings={settings} inventory={inventory} />}
       </main>
 
-      <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['codes']} />
+      <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['reports', 'codes']} />
 
       {toast && (
         <p className="toast" role="status">
@@ -575,6 +591,7 @@ function AuthenticatedApp({
           product={dialog.product}
           barcode={dialog.barcode}
           products={inventory.products}
+          categories={settings.productCategories}
           role={role}
           onClose={closeDialog}
           onSubmit={saveProduct}
@@ -598,6 +615,18 @@ function AuthenticatedApp({
           confirmLabel="Delete"
           onCancel={closeDialog}
           onConfirm={confirmDelete}
+        />
+      )}
+
+      {dialog?.kind === 'saleEdit' && (
+        <SaleEditDialog
+          sale={dialog.sale}
+          products={inventory.products}
+          channels={settings.saleChannels}
+          role={role}
+          onClose={closeDialog}
+          onSave={updateSale}
+          draftStorage={saleEditDraftStorage}
         />
       )}
     </div>

@@ -237,6 +237,135 @@ describe('deleteProduct', () => {
   })
 })
 
+describe('activity log', () => {
+  it('logs a create with the right shape, newest first', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const created = await repo.createProduct(draft())
+    if (!created.ok) throw new Error(created.error)
+
+    const activity = await repo.listActivity()
+    expect(activity).toHaveLength(1)
+    expect(activity[0]).toMatchObject({
+      actorName: 'You',
+      entityType: 'product',
+      action: 'added',
+      entityId: created.value.id,
+      entityLabel: 'Widget',
+    })
+    expect(activity[0].detail).toMatch(/qty 10/)
+    expect(activity[0].id).toBeTruthy()
+    expect(activity[0].createdAt).toBeTruthy()
+  })
+
+  it('logs an edit with a diff of what changed', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const created = await repo.createProduct(draft())
+    if (!created.ok) throw new Error(created.error)
+
+    await repo.updateProduct(created.value.id, draft({ quantity: 8 }))
+
+    const activity = await repo.listActivity()
+    expect(activity).toHaveLength(2) // added + edited
+    expect(activity[0]).toMatchObject({ entityType: 'product', action: 'edited', entityLabel: 'Widget' })
+    expect(activity[0].detail).toBe('qty 10 → 8')
+  })
+
+  it('does not log a save that changed nothing tracked', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const created = await repo.createProduct(draft())
+    if (!created.ok) throw new Error(created.error)
+
+    await repo.updateProduct(created.value.id, draft())
+
+    const activity = await repo.listActivity()
+    expect(activity).toHaveLength(1) // just the create
+  })
+
+  it('logs a delete, keeping the product name and last known quantity', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const created = await repo.createProduct(draft({ quantity: 5 }))
+    if (!created.ok) throw new Error(created.error)
+
+    await repo.deleteProduct(created.value.id)
+
+    const activity = await repo.listActivity()
+    expect(activity[0]).toMatchObject({ entityType: 'product', action: 'removed', entityLabel: 'Widget' })
+    expect(activity[0].detail).toBe('had qty 5')
+  })
+
+  it('logs a sale edit with a diff of what changed', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 5 }],
+    })
+    if (!sale.ok) throw new Error('setup failed')
+
+    await repo.updateSale(sale.value.id, {
+      channel: 'Vinted',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 5 }],
+    })
+
+    const activity = await repo.listActivity()
+    expect(activity[0]).toMatchObject({ entityType: 'sale', action: 'edited', entityId: sale.value.id })
+    expect(activity[0].entityLabel).toMatch(/^Sale/)
+    expect(activity[0].detail).toBe('channel eBay → Vinted')
+  })
+
+  it('does not log a sale save that changed nothing tracked', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const sale = await repo.recordSale({
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 5 }],
+    })
+    if (!sale.ok) throw new Error('setup failed')
+
+    await repo.updateSale(sale.value.id, {
+      channel: 'eBay',
+      paymentMethod: 'card',
+      lines: [{ productId: bolt.value.id, quantity: 2, unitPrice: 5 }],
+    })
+
+    const activity = await repo.listActivity()
+    expect(activity.filter((a) => a.entityType === 'sale')).toHaveLength(0)
+  })
+
+  it('logs a return edit with a diff of what changed', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const bolt = await repo.createProduct(draft({ barcode: '', sku: 'BLT', quantity: 10 }))
+    if (!bolt.ok) throw new Error('setup failed')
+
+    const original = await repo.recordReturn({
+      channel: 'eBay',
+      actions: ['refund'],
+      refundAmount: 5,
+      returnLines: [{ productId: bolt.value.id, quantity: 1, disposition: 'restock' }],
+    })
+    if (!original.ok) throw new Error('setup failed')
+
+    await repo.updateReturn(original.value.id, {
+      channel: 'eBay',
+      actions: ['refund'],
+      refundAmount: 8,
+      returnLines: [{ productId: bolt.value.id, quantity: 1, disposition: 'restock' }],
+    })
+
+    const activity = await repo.listActivity()
+    expect(activity[0]).toMatchObject({ entityType: 'return', action: 'edited', entityId: original.value.id })
+    expect(activity[0].entityLabel).toMatch(/^Return case/)
+    expect(activity[0].detail).toBe('refund 5.00 → 8.00')
+  })
+})
+
 describe('recordSale', () => {
   it('decrements stock for every line, writes movements and returns totals', async () => {
     const repo = createLocalRepository({ storage, seed: false })

@@ -136,6 +136,22 @@ describe('useInventory', () => {
       rejectProfileChange: vi.fn(),
       getAccountSettings: async () => null,
       setAccountSettings: vi.fn(),
+      listSuppliers: async () => [],
+      createSupplier: vi.fn(),
+      updateSupplier: vi.fn(),
+      deleteSupplier: vi.fn(),
+      linkSupplierProduct: vi.fn(),
+      updateSupplierProduct: vi.fn(),
+      unlinkSupplierProduct: vi.fn(),
+      listSupplierProducts: async () => [],
+      listPurchaseOrders: async () => [],
+      createPurchaseOrder: vi.fn(),
+      sendPurchaseOrder: vi.fn(),
+      confirmPurchaseOrder: vi.fn(),
+      receivePurchaseOrder: vi.fn(),
+      cancelPurchaseOrder: vi.fn(),
+      listActivity: async () => [],
+      logActivity: vi.fn(),
     }
     const { result } = renderHook(() => useInventory(async () => repo))
     await waitFor(() => expect(result.current.status).toBe('ready'))

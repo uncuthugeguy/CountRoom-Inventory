@@ -1,5 +1,6 @@
-import { useEffect, useId, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { TeamMember } from '../../data/repository'
+import { knownCategories } from '../../domain/products'
 import type { ProfileChangeRequest, ProfileDraft } from '../../domain/types'
 import type { Inventory } from '../useInventory'
 import type { SettingsApi } from '../useSettings'
@@ -82,6 +83,104 @@ function SaleChannelsPanel({ settings }: { settings: SettingsApi }) {
             autoComplete="off"
             placeholder="Where else do you sell?"
             onChange={(event) => setNewChannel(event.target.value)}
+          />
+        </div>
+        <div className="toolbar-actions">
+          <button type="submit" className="button button-primary">
+            Add
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+/** Manager-only (gated by the caller) — the product form's category field
+ * (`ProductFormDialog`) is a dropdown restricted to whatever's saved here,
+ * rather than free text, so this is the only place the list can change. */
+function CategoriesPanel({ settings, products }: { settings: SettingsApi; products: Inventory['products'] }) {
+  const newCategoryId = useId()
+  const [newCategory, setNewCategory] = useState('')
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const name = newCategory.trim()
+    if (!name) return
+    settings.addProductCategory(name)
+    setNewCategory('')
+  }
+
+  // Categories already sitting on products but not yet in the managed list
+  // — e.g. free text typed before this feature existed. Offered as a
+  // one-click way to bring the existing catalogue's categories in, rather
+  // than making Mason retype everything by hand.
+  const suggestions = useMemo(() => {
+    const existing = new Set(settings.productCategories.map((c) => c.toLowerCase()))
+    return knownCategories(products).filter((c) => !existing.has(c.toLowerCase()))
+  }, [settings.productCategories, products])
+
+  return (
+    <section className="panel">
+      <h2>Product categories</h2>
+      <p className="muted">
+        Offered as a dropdown on the product form — everyone picks from this list instead of
+        typing their own, so categories stay consistent. Only a manager can add, rename or
+        remove one here.
+      </p>
+
+      {settings.productCategories.length === 0 ? (
+        <p className="empty">No categories yet — add one below.</p>
+      ) : (
+        <ul className="plain-list channel-list">
+          {settings.productCategories.map((name) => (
+            <li key={name} className="channel-row">
+              <input
+                className="channel-rename-input"
+                defaultValue={name}
+                autoComplete="off"
+                aria-label={`Rename ${name}`}
+                onKeyDown={commitOnEnter}
+                onBlur={(event) => {
+                  const next = event.target.value.trim()
+                  if (next && next !== name) settings.renameProductCategory(name, next)
+                  else event.target.value = name
+                }}
+              />
+              <button
+                type="button"
+                className="button button-ghost"
+                aria-label={`Remove ${name}`}
+                onClick={() => settings.removeProductCategory(name)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {suggestions.length > 0 && (
+        <p className="hint">
+          Already on products but not in this list yet: {suggestions.join(', ')}.{' '}
+          <button
+            type="button"
+            className="button button-ghost"
+            onClick={() => suggestions.forEach((name) => settings.addProductCategory(name))}
+          >
+            Add all
+          </button>
+        </p>
+      )}
+
+      <form className="toolbar" onSubmit={submit}>
+        <div className="field field-grow">
+          <label htmlFor={newCategoryId}>Add a category</label>
+          <input
+            id={newCategoryId}
+            value={newCategory}
+            autoComplete="off"
+            placeholder="e.g. Hand Tools"
+            onChange={(event) => setNewCategory(event.target.value)}
           />
         </div>
         <div className="toolbar-actions">
@@ -492,6 +591,8 @@ export function SettingsScreen({ settings, inventory }: SettingsScreenProps) {
       </section>
 
       <LabelTemplateEditor settings={settings} />
+
+      {inventory.role === 'manager' && <CategoriesPanel settings={settings} products={inventory.products} />}
 
       <SaleChannelsPanel settings={settings} />
     </div>

@@ -256,16 +256,20 @@ export function CheckoutScreen({
                       />
                     </label>
                     <label className="cart-field">
-                      <span>Price</span>
+                      <span>Item price</span>
                       <input
                         type="number"
                         min={0}
                         step={0.01}
                         inputMode="decimal"
                         value={line.unitPrice}
-                        aria-label={`Price for ${line.product.name}`}
+                        aria-label={`Item price for ${line.product.name}`}
                         disabled={role !== 'manager'}
-                        title={role !== 'manager' ? 'Only a manager can change the sale price' : undefined}
+                        title={
+                          role !== 'manager'
+                            ? 'Only a manager can change the sale price'
+                            : "What you got for this item alone — not a marketplace order total. Any buyer protection fee, delivery, VAT etc. go in Marketplace fees below, not in here."
+                        }
                         onChange={(e) => onSetPrice(line.product.id, Number(e.target.value) || 0)}
                       />
                     </label>
@@ -341,7 +345,7 @@ export function CheckoutScreen({
                 : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
                     orderTotalCheck.difference > 0
                       ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
-                      : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than you've itemised.`
+                      : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
                   }`}
             </p>
           )}

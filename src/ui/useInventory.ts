@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppliedMovement } from '../domain/movements'
 import type {
+  ActivityLogEntry,
   MovementInput,
   Product,
   ProductDraft,
@@ -30,6 +31,8 @@ export interface Inventory {
   movements: StockMovement[]
   sales: Sale[]
   returns: ReturnCase[]
+  /** Every add/edit/delete on a product, newest first — see `ActivityLogEntry`. */
+  activity: ActivityLogEntry[]
   /** Only set when the backend could not be opened at all. */
   error: string | null
   createProduct(draft: ProductDraft): Promise<Result<Product>>
@@ -79,19 +82,22 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
   const [movements, setMovements] = useState<StockMovement[]>([])
   const [sales, setSales] = useState<Sale[]>([])
   const [returns, setReturns] = useState<ReturnCase[]>([])
+  const [activity, setActivity] = useState<ActivityLogEntry[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async (repo: InventoryRepository): Promise<Product[]> => {
-    const [nextProducts, nextMovements, nextSales, nextReturns] = await Promise.all([
+    const [nextProducts, nextMovements, nextSales, nextReturns, nextActivity] = await Promise.all([
       repo.listProducts(),
       repo.listMovements(),
       repo.listSales(),
       repo.listReturns(),
+      repo.listActivity(),
     ])
     setProducts(nextProducts)
     setMovements(nextMovements)
     setSales(nextSales)
     setReturns(nextReturns)
+    setActivity(nextActivity)
     return nextProducts
   }, [])
 
@@ -180,32 +186,56 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
   }, [refresh, products])
 
   // Team membership doesn't affect products/movements/sales/returns, so
-  // these skip `run`'s full-catalogue refresh rather than needing it.
+  // these skip `run`'s full-catalogue refresh rather than needing it — but
+  // inviting/removing someone does log a new activity-log entry, so that one
+  // list still needs a targeted refresh after a successful call, or a
+  // manager sitting on the Activity tab wouldn't see it show up.
   const listTeam = useCallback(async () => {
     const repo = repoRef.current
     if (!repo) return []
     return repo.listTeam()
   }, [])
 
-  const inviteEmployee = useCallback(async (email: string) => {
+  const refreshActivity = useCallback(async () => {
     const repo = repoRef.current
-    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    if (!repo) return
     try {
-      return await repo.inviteEmployee(email)
-    } catch (cause) {
-      return { ok: false as const, error: message(cause) }
+      setActivity(await repo.listActivity())
+    } catch {
+      // Best-effort — leave whatever was already loaded in place rather than
+      // blocking on a list that isn't the thing the caller actually asked for.
     }
   }, [])
 
-  const removeTeamMember = useCallback(async (membershipId: string) => {
-    const repo = repoRef.current
-    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
-    try {
-      return await repo.removeTeamMember(membershipId)
-    } catch (cause) {
-      return { ok: false as const, error: message(cause) }
-    }
-  }, [])
+  const inviteEmployee = useCallback(
+    async (email: string) => {
+      const repo = repoRef.current
+      if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+      try {
+        const result = await repo.inviteEmployee(email)
+        if (result.ok) await refreshActivity()
+        return result
+      } catch (cause) {
+        return { ok: false as const, error: message(cause) }
+      }
+    },
+    [refreshActivity],
+  )
+
+  const removeTeamMember = useCallback(
+    async (membershipId: string) => {
+      const repo = repoRef.current
+      if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+      try {
+        const result = await repo.removeTeamMember(membershipId)
+        if (result.ok) await refreshActivity()
+        return result
+      } catch (cause) {
+        return { ok: false as const, error: message(cause) }
+      }
+    },
+    [refreshActivity],
+  )
 
   // Profile/account settings, same shape as team membership above — none of
   // it affects the product catalogue, so these also skip `run`'s refresh.
@@ -283,6 +313,7 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     movements,
     sales,
     returns,
+    activity,
     error,
     createProduct,
     updateProduct,
