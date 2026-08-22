@@ -42,6 +42,7 @@ import { HistoryScreen, SaleEditDialog } from './ui/screens/HistoryScreen'
 import { ProductsScreen } from './ui/screens/ProductsScreen'
 import { QuickCodesScreen } from './ui/screens/QuickCodesScreen'
 import { ReportsScreen } from './ui/screens/ReportsScreen'
+import { SuppliersScreen } from './ui/screens/SuppliersScreen'
 import { ReturnsScreen } from './ui/screens/ReturnsScreen'
 import { ScanScreen } from './ui/screens/ScanScreen'
 import { SettingsScreen } from './ui/screens/SettingsScreen'
@@ -80,6 +81,7 @@ const TITLES: Record<Tab, string> = {
   stocktake: 'Stocktake',
   history: 'History',
   reports: 'Reports',
+  suppliers: 'Suppliers',
   codes: 'Quick codes',
   settings: 'Settings',
 }
@@ -573,12 +575,16 @@ function AuthenticatedApp({
           />
         )}
 
+        {tab === 'suppliers' && role === 'manager' && (
+          <SuppliersScreen inventory={inventory} products={inventory.products} />
+        )}
+
         {tab === 'codes' && role === 'manager' && <QuickCodesScreen settings={settings} />}
 
         {tab === 'settings' && <SettingsScreen settings={settings} inventory={inventory} />}
       </main>
 
-      <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['reports', 'codes']} />
+      <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['reports', 'suppliers', 'codes']} />
 
       {toast && (
         <p className="toast" role="status">

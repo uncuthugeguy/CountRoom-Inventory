@@ -40,40 +40,36 @@ export function ReportsScreen({ products, sales, movements }: ReportsScreenProps
   )
 
   const movementReport = useMemo(
-    () => generateMovementReport(movements, { dateRange }),
-    [movements, dateRange],
+    () => generateMovementReport(movements, { dateRange }, products),
+    [movements, dateRange, products],
   )
 
   return (
     <div className="screen">
-      <div className="mb-6">
-        <h1 className="screen-title">Reports</h1>
-        <div className="flex flex-wrap gap-2">
-          {[
-            { type: 'sales' as const, label: 'Sales' },
-            { type: 'inventory' as const, label: 'Inventory' },
-            { type: 'movements' as const, label: 'Movements' },
-          ].map(({ type, label }) => (
-            <button
-              key={type}
-              onClick={() => setReportType(type)}
-              className={`px-4 py-2 rounded font-medium transition-colors ${
-                reportType === type
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <h1 className="screen-title">Reports</h1>
+
+      <div className="channel-picker report-tabs">
+        {[
+          { type: 'sales' as const, label: 'Sales' },
+          { type: 'inventory' as const, label: 'Inventory' },
+          { type: 'movements' as const, label: 'Movements' },
+        ].map(({ type, label }) => (
+          <button
+            key={type}
+            type="button"
+            onClick={() => setReportType(type)}
+            className={`button chip-button ${reportType === type ? 'chip-button-active' : ''}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {reportType !== 'inventory' && (
         <DateRangeSelector value={dateRange} onChange={setDateRange} />
       )}
 
-      <div className="bg-white rounded-lg p-6 border border-gray-200">
+      <div className="panel">
         {reportType === 'sales' && <SalesReportView report={salesReport} />}
         {reportType === 'inventory' && <InventoryReportView report={inventoryReport} />}
         {reportType === 'movements' && <MovementReportView report={movementReport} />}

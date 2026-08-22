@@ -1,6 +1,12 @@
 import type { Result } from '../domain/types'
 import { encodeCode128 } from './code128Render'
-import { textHeightDots, truncateToFitDots, type LabelTemplate } from './labelTemplate'
+import {
+  textFamilyFor,
+  textSizeDotsFor,
+  truncateToFitDots,
+  type LabelTemplate,
+  type PolonoPrintRotation,
+} from './labelTemplate'
 
 /** Minimal shape this module needs from a product — kept narrow so the
  * "print test label" sample product in the label editor doesn't need to be
@@ -39,18 +45,18 @@ function barcodeSvg(value: string, x: number, y: number, heightDots: number, mod
 }
 
 /**
- * Builds the label as a standalone SVG string, sized to the template's real
- * physical dimensions (`widthDots/dpi` inches square, so it prints at true
- * size regardless of screen DPI) and using the exact same coordinate
- * convention — position is the element's top-left corner, in dots — as the
- * Settings > Label template live preview (`LabelTemplateEditor`'s
- * `LabelCanvas`), so a layout edited there prints exactly where it was
- * placed. No monochrome/bitmap conversion is needed for the logo the way
- * the Zebra's CPCL path needs (`bitmap.ts`/`logoRaster.ts`) — the browser's
- * own print pipeline and the Polono's driver handle color-to-thermal
- * conversion.
+ * Builds the actual drawable content (background rect, logo, text, barcode)
+ * as a bare string of SVG elements — not wrapped in its own `<svg>` tag,
+ * since that wrapping differs between the normal (unrotated) output
+ * (`buildLabelSvg`) and the pre-rotated one (`buildRotatedLabelSvg`) used
+ * when `PolonoPrintRotation` is turned on, but the content itself is
+ * identical either way. Font size and family for the name/variation/SKU
+ * text go through `textSizeDotsFor`/`textFamilyFor` with `polono: true` —
+ * the Polono's own continuous size/family, not the Zebra's stepped
+ * CPCL-font-index approximation (see those functions' doc comments in
+ * `labelTemplate.ts`).
  */
-export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, logoDataUrl: string | undefined): string {
+function buildLabelParts(product: PrintableLabel, template: LabelTemplate, logoDataUrl: string | undefined): string {
   const t = template
   const parts: string[] = []
 
@@ -65,18 +71,20 @@ export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, 
   // doc comment for why this is safe for these three but never for the
   // barcode's own encoded value.
   if (t.include.name && product.name) {
-    const nameSize = textHeightDots(t.nameFont)
+    const nameSize = textSizeDotsFor(t, 'name', true)
+    const nameFamily = textFamilyFor(t, 'name', true)
     const fitted = truncateToFitDots(product.name, t.widthDots - t.name.x, nameSize)
     parts.push(
-      `<text x="${t.name.x}" y="${t.name.y + nameSize}" font-size="${nameSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
+      `<text x="${t.name.x}" y="${t.name.y + nameSize}" font-size="${nameSize}" font-family="${escapeXml(nameFamily)}" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 
   if (t.include.variation && product.variation) {
-    const variationSize = textHeightDots(t.variationFont)
+    const variationSize = textSizeDotsFor(t, 'variation', true)
+    const variationFamily = textFamilyFor(t, 'variation', true)
     const fitted = truncateToFitDots(`Variation: ${product.variation}`, t.widthDots - t.variation.x, variationSize)
     parts.push(
-      `<text x="${t.variation.x}" y="${t.variation.y + variationSize}" font-size="${variationSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
+      `<text x="${t.variation.x}" y="${t.variation.y + variationSize}" font-size="${variationSize}" font-family="${escapeXml(variationFamily)}" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 
@@ -85,21 +93,94 @@ export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, 
   }
 
   if (t.include.sku && product.sku) {
-    const skuSize = textHeightDots(t.skuFont)
+    const skuSize = textSizeDotsFor(t, 'sku', true)
+    const skuFamily = textFamilyFor(t, 'sku', true)
     const fitted = truncateToFitDots(product.sku, t.widthDots - t.sku.x, skuSize)
     parts.push(
-      `<text x="${t.sku.x}" y="${t.sku.y + skuSize}" font-size="${skuSize}" font-family="ui-monospace, monospace" fill="#000">${escapeXml(fitted)}</text>`,
+      `<text x="${t.sku.x}" y="${t.sku.y + skuSize}" font-size="${skuSize}" font-family="${escapeXml(skuFamily)}" fill="#000">${escapeXml(fitted)}</text>`,
     )
   }
 
+  return parts.join('')
+}
+
+/**
+ * Builds the label as a standalone SVG string, sized to the template's real
+ * physical dimensions (`widthDots/dpi` inches square, so it prints at true
+ * size regardless of screen DPI) and using the exact same coordinate
+ * convention — position is the element's top-left corner, in dots — as the
+ * Settings > Label template live preview (`LabelTemplateEditor`'s
+ * `LabelCanvas`), so a layout edited there prints exactly where it was
+ * placed. No monochrome/bitmap conversion is needed for the logo the way
+ * the Zebra's CPCL path needs (`bitmap.ts`/`logoRaster.ts`) — the browser's
+ * own print pipeline and the Polono's driver handle color-to-thermal
+ * conversion.
+ *
+ * This is the label in its natural, unrotated orientation — always what the
+ * editor's own preview shows, and what actually prints when
+ * `PolonoPrintRotation` is `'off'`. See `buildRotatedLabelSvg` for the
+ * pre-rotated variant used by the other two rotation settings.
+ */
+export function buildLabelSvg(product: PrintableLabel, template: LabelTemplate, logoDataUrl: string | undefined): string {
+  const t = template
   const widthIn = t.widthDots / t.dpi
   const heightIn = t.heightDots / t.dpi
-
+  const inner = buildLabelParts(product, template, logoDataUrl)
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${widthIn}in" height="${heightIn}in" ` +
     `viewBox="0 0 ${t.widthDots} ${t.heightDots}">` +
     `<rect x="0" y="0" width="${t.widthDots}" height="${t.heightDots}" fill="#fff"/>` +
-    `${parts.join('')}</svg>`
+    `${inner}</svg>`
+  )
+}
+
+/**
+ * The same label content as `buildLabelSvg`, but pre-rotated 90° and
+ * wrapped in a physically portrait-shaped page (dimensions swapped) — the
+ * fix for Chrome's own print dialog defaulting to Portrait for this label's
+ * landscape (wider-than-tall) size and not self-correcting (confirmed
+ * directly: switching Layout to Landscape by hand in the OS's own print
+ * dialog prints correctly; leaving the browser dialog on its default
+ * Portrait choice instead shrinks the whole label down to fit a taller,
+ * narrower page). Declaring the page already-portrait to match that default
+ * and rotating the artwork to compensate means the default choice comes out
+ * right without a manual step.
+ *
+ * Uses the SVG element's own native `transform` attribute with explicit dot
+ * values (`translate(...) rotate(...)`) rather than a CSS `transform` with
+ * percentage values on the `<svg>` element — a first attempt at this exact
+ * fix used the CSS/percentage approach and it silently rotated the wrong
+ * way (confirmed against a real physical print, not just the preview),
+ * most likely because CSS percentage translations don't reliably resolve
+ * against an `<svg>` element's own height the way they would on a plain
+ * HTML block. SVG's own `transform` attribute has no such ambiguity — the
+ * two possible directions (`'cw'`/`'ccw'`) were verified with a small
+ * coordinate-transform simulation before being wired up here, confirming
+ * both fill the swapped page exactly and read in opposite directions, but
+ * only a real test print (via the Settings › Label template Orientation
+ * panel, previewed before ever being trusted) can confirm which direction
+ * is actually right-side-up on this printer.
+ */
+export function buildRotatedLabelSvg(
+  product: PrintableLabel,
+  template: LabelTemplate,
+  logoDataUrl: string | undefined,
+  direction: 'cw' | 'ccw',
+): string {
+  const t = template
+  const W = t.widthDots
+  const H = t.heightDots
+  const widthIn = W / t.dpi
+  const heightIn = H / t.dpi
+  const inner = buildLabelParts(product, template, logoDataUrl)
+  // Both land the WxH content exactly onto the swapped HxW page, just
+  // rotated opposite directions — see this function's doc comment above.
+  const groupTransform = direction === 'cw' ? `translate(${H},0) rotate(90)` : `translate(0,${W}) rotate(-90)`
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${heightIn}in" height="${widthIn}in" ` +
+    `viewBox="0 0 ${H} ${W}">` +
+    `<rect x="0" y="0" width="${H}" height="${W}" fill="#fff"/>` +
+    `<g transform="${groupTransform}">${inner}</g></svg>`
   )
 }
 
@@ -122,11 +203,19 @@ const PRINT_STYLE_ID = 'stockflow-print-label-style'
  * whole. The container is removed again once printing finishes (or is
  * cancelled) via the `afterprint` event, with a timeout backstop in case
  * that event doesn't fire.
+ *
+ * `rotation` (default `'off'`) selects between the normal, unrotated SVG
+ * (`buildLabelSvg`, `@page` declared in the label's own landscape
+ * dimensions — today's default behaviour, unchanged) and the pre-rotated
+ * one (`buildRotatedLabelSvg`, `@page` declared portrait to match) — see
+ * `PolonoPrintRotation` in `labelTemplate.ts` for the full reasoning and
+ * why this defaults to off rather than guessing a direction.
  */
 export function printLabelViaBrowser(
   product: PrintableLabel,
   template: LabelTemplate,
   logoDataUrl: string | undefined,
+  rotation: PolonoPrintRotation = 'off',
 ): Result<true> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return { ok: false, error: 'Printing needs a browser window.' }
@@ -141,16 +230,24 @@ export function printLabelViaBrowser(
   document.querySelectorAll(`#${PRINT_CONTAINER_ID}`).forEach((el) => el.remove())
   document.querySelectorAll(`#${PRINT_STYLE_ID}`).forEach((el) => el.remove())
 
-  const widthIn = template.widthDots / template.dpi
-  const heightIn = template.heightDots / template.dpi
-  const svg = buildLabelSvg(product, template, logoDataUrl)
+  const labelWidthIn = template.widthDots / template.dpi
+  const labelHeightIn = template.heightDots / template.dpi
+  // The physical page declared to the print dialog: the label's own
+  // dimensions when not rotating, or swapped (portrait) to match the
+  // pre-rotated artwork otherwise.
+  const pageWidthIn = rotation === 'off' ? labelWidthIn : labelHeightIn
+  const pageHeightIn = rotation === 'off' ? labelHeightIn : labelWidthIn
+  const svg =
+    rotation === 'off'
+      ? buildLabelSvg(product, template, logoDataUrl)
+      : buildRotatedLabelSvg(product, template, logoDataUrl, rotation)
 
   const style = document.createElement('style')
   style.id = PRINT_STYLE_ID
   style.textContent = `
     #${PRINT_CONTAINER_ID} { position: fixed; left: -10000px; top: 0; }
     @media print {
-      @page { size: ${widthIn}in ${heightIn}in; margin: 0; }
+      @page { size: ${pageWidthIn}in ${pageHeightIn}in; margin: 0; }
       /* styles.css sets body { min-height: 100vh } unconditionally (not
          scoped to screen media) so the app fills the viewport on load. That
          rule is still in effect here even though .app itself is hidden

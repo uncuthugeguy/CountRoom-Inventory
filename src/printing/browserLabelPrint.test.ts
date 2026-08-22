@@ -132,6 +132,61 @@ describe('printLabelViaBrowser', () => {
     expect(containers[0].innerHTML).toContain('SKU-002')
   })
 
+  it('defaults to no rotation: @page keeps the label\'s own width x height, unswapped', () => {
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+
+    printLabelViaBrowser(PRODUCT, DEFAULT_POLONO_LABEL_TEMPLATE, undefined)
+
+    // The Chrome-portrait-default issue is real, but a guessed rotation
+    // direction previously caused a physical print to come out wrong across
+    // multiple labels. Default behaviour must stay exactly as it always
+    // was — unrotated — so a user who never touches the new Orientation
+    // setting sees no change at all. Rotation is opt-in per printLabel.ts's
+    // 4th `rotation` parameter (see the 'cw'/'ccw' tests below).
+    const style = document.getElementById('stockflow-print-label-style')
+    const widthIn = DEFAULT_POLONO_LABEL_TEMPLATE.widthDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    const heightIn = DEFAULT_POLONO_LABEL_TEMPLATE.heightDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    expect(style?.textContent).toContain(`@page { size: ${widthIn}in ${heightIn}in`)
+    expect(style?.textContent).not.toMatch(/transform/)
+  })
+
+  it('rotates cw: swaps the @page dimensions and wraps the artwork in an SVG-native transform, not a CSS one', () => {
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+
+    printLabelViaBrowser(PRODUCT, DEFAULT_POLONO_LABEL_TEMPLATE, undefined, 'cw')
+
+    // Fix for the Chrome-defaults-to-portrait issue: swap the declared
+    // @page size to match what the dialog will default to, and rotate the
+    // artwork itself so it still fills the page. This uses the SVG
+    // element's own `transform` attribute with explicit dot values rather
+    // than a CSS transform — a CSS `translateY(-100%)` on an SVG element
+    // does not reliably resolve against the element's own height the way
+    // it does on an HTML block, which is what caused the earlier failed
+    // attempt (rotated the right amount, wrong direction, and in one
+    // real-world test printed across multiple physical labels instead of
+    // filling one). Default stays 'off' — this is opt-in and user-tested.
+    const style = document.getElementById('stockflow-print-label-style')
+    const widthIn = DEFAULT_POLONO_LABEL_TEMPLATE.widthDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    const heightIn = DEFAULT_POLONO_LABEL_TEMPLATE.heightDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    expect(style?.textContent).toContain(`@page { size: ${heightIn}in ${widthIn}in`)
+    expect(style?.textContent).not.toMatch(/transform:\s*rotate/)
+    const container = document.getElementById('stockflow-print-label')
+    expect(container?.innerHTML).toMatch(/transform="translate\([\d.]+,0\) rotate\(90\)"/)
+  })
+
+  it('rotates ccw: swaps the @page dimensions the same way but rotates the artwork the other direction', () => {
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+
+    printLabelViaBrowser(PRODUCT, DEFAULT_POLONO_LABEL_TEMPLATE, undefined, 'ccw')
+
+    const style = document.getElementById('stockflow-print-label-style')
+    const widthIn = DEFAULT_POLONO_LABEL_TEMPLATE.widthDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    const heightIn = DEFAULT_POLONO_LABEL_TEMPLATE.heightDots / DEFAULT_POLONO_LABEL_TEMPLATE.dpi
+    expect(style?.textContent).toContain(`@page { size: ${heightIn}in ${widthIn}in`)
+    const container = document.getElementById('stockflow-print-label')
+    expect(container?.innerHTML).toMatch(/transform="translate\(0,[\d.]+\) rotate\(-90\)"/)
+  })
+
   it('returns a failed result instead of throwing if window.print() itself throws', () => {
     vi.spyOn(window, 'print').mockImplementation(() => {
       throw new Error('print blocked by the OS')

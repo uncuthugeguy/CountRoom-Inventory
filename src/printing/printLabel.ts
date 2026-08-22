@@ -32,6 +32,7 @@ export async function printProductLabel(
       { name: product.name, sku: product.sku, variation: product.variation || undefined },
       template,
       settings.logoDataUrl,
+      settings.polonoPrintRotation,
     )
   }
 

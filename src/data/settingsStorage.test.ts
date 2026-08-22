@@ -14,6 +14,7 @@ describe('createSettingsStore', () => {
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
       printerKind: 'zebra',
+      polonoPrintRotation: 'off',
       labelPresets: [],
       quickCodes: [],
       productCategories: [],
@@ -43,6 +44,7 @@ describe('createSettingsStore', () => {
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
       printerKind: 'zebra',
+      polonoPrintRotation: 'off',
       labelPresets: [],
       quickCodes: [],
       productCategories: [],
@@ -157,6 +159,30 @@ describe('printer selection', () => {
       JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, printerKind: 'inkjet', labelPresets: [], quickCodes: [] }),
     )
     expect(createSettingsStore(storage).get().printerKind).toBe('zebra')
+  })
+})
+
+describe('Polono print rotation', () => {
+  it('defaults to off', () => {
+    const store = createSettingsStore(storage)
+    expect(store.get().polonoPrintRotation).toBe('off')
+  })
+
+  it('sets and persists a rotation direction across a reload', () => {
+    const store = createSettingsStore(storage)
+    store.setPolonoPrintRotation('cw')
+    expect(store.get().polonoPrintRotation).toBe('cw')
+
+    const reopened = createSettingsStore(storage)
+    expect(reopened.get().polonoPrintRotation).toBe('cw')
+  })
+
+  it('ignores an invalid stored value and falls back to off rather than crashing', () => {
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, polonoPrintRotation: 'sideways', labelPresets: [], quickCodes: [] }),
+    )
+    expect(createSettingsStore(storage).get().polonoPrintRotation).toBe('off')
   })
 })
 

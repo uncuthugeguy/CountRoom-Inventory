@@ -1,4 +1,3 @@
-import { Fragment } from 'react'
 import type { SalesReport, ChannelMetrics, SalesMetrics } from '../../domain/reports'
 import { formatCurrency, formatPercent } from '../format'
 
@@ -9,12 +8,14 @@ interface MetricsCardProps {
   highlight?: boolean
 }
 
+/** A single number tile — reuses the app's existing .stat styling (the same
+ * one Dashboard's summary row uses) rather than one-off report-only CSS. */
 export function MetricsCard({ label, value, subtext, highlight }: MetricsCardProps) {
   return (
-    <div className={`p-3 rounded border ${highlight ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-      <div className="text-xs text-gray-500 font-medium mb-1">{label}</div>
-      <div className={`text-lg font-bold ${highlight ? 'text-blue-700' : 'text-gray-900'}`}>{value}</div>
-      {subtext && <div className="text-xs text-gray-600 mt-1">{subtext}</div>}
+    <div className={`stat ${highlight ? 'stat-warning' : ''}`}>
+      <span className="stat-value">{value}</span>
+      <span className="stat-label">{label}</span>
+      {subtext && <span className="stat-subtext">{subtext}</span>}
     </div>
   )
 }
@@ -24,7 +25,7 @@ interface MetricsGridProps {
 }
 
 export function MetricsGrid({ children }: MetricsGridProps) {
-  return <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">{children}</div>
+  return <div className="stats">{children}</div>
 }
 
 interface SalesMetricsDisplayProps {
@@ -34,12 +35,8 @@ interface SalesMetricsDisplayProps {
 
 export function SalesMetricsDisplay({ metrics, highlight }: SalesMetricsDisplayProps) {
   return (
-    <Fragment>
-      <MetricsCard
-        label="Total Sales"
-        value={metrics.totalSales}
-        highlight={highlight}
-      />
+    <>
+      <MetricsCard label="Total Sales" value={metrics.totalSales} highlight={highlight} />
       <MetricsCard label="Revenue" value={formatCurrency(metrics.totalRevenue)} />
       <MetricsCard
         label="Profit"
@@ -53,7 +50,7 @@ export function SalesMetricsDisplay({ metrics, highlight }: SalesMetricsDisplayP
       {metrics.feesDeducted > 0 && (
         <MetricsCard label="Fees" value={formatCurrency(metrics.feesDeducted)} />
       )}
-    </Fragment>
+    </>
   )
 }
 
@@ -63,46 +60,40 @@ interface ChannelBreakdownProps {
 
 export function ChannelBreakdown({ channels }: ChannelBreakdownProps) {
   if (channels.length === 0) {
-    return (
-      <div className="text-center py-6 text-gray-500">
-        No sales by channel to display
-      </div>
-    )
+    return <p className="empty">No sales by channel to display.</p>
   }
 
   return (
-    <div className="space-y-3">
+    <ul className="plain-list">
       {channels.map((channel) => (
-        <div key={channel.channel} className="p-4 border rounded bg-white">
-          <div className="flex justify-between items-start mb-2">
-            <h4 className="font-semibold text-gray-900">{channel.channel}</h4>
-            <span className="text-sm font-bold text-green-700">
-              {formatCurrency(channel.totalProfit)}
-            </span>
+        <li key={channel.channel} className="report-row">
+          <div className="report-row-header">
+            <span className="report-row-title">{channel.channel}</span>
+            <span className="report-row-value">{formatCurrency(channel.totalProfit)}</span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          <div className="report-row-metrics">
             <div>
-              <div className="text-gray-500 text-xs">Sales</div>
-              <div className="font-semibold text-gray-900">{channel.totalSales}</div>
+              <span className="report-metric-label">Sales</span>
+              <span className="report-metric-value">{channel.totalSales}</span>
             </div>
             <div>
-              <div className="text-gray-500 text-xs">Revenue</div>
-              <div className="font-semibold text-gray-900">{formatCurrency(channel.totalRevenue)}</div>
+              <span className="report-metric-label">Revenue</span>
+              <span className="report-metric-value">{formatCurrency(channel.totalRevenue)}</span>
             </div>
             <div>
-              <div className="text-gray-500 text-xs">Cost</div>
-              <div className="font-semibold text-gray-900">{formatCurrency(channel.totalCost)}</div>
+              <span className="report-metric-label">Cost</span>
+              <span className="report-metric-value">{formatCurrency(channel.totalCost)}</span>
             </div>
             <div>
-              <div className="text-gray-500 text-xs">Margin</div>
-              <div className={`font-semibold ${channel.profitMargin >= 20 ? 'text-green-700' : 'text-yellow-700'}`}>
+              <span className="report-metric-label">Margin</span>
+              <span className={`report-metric-value ${channel.profitMargin >= 20 ? '' : 'quantity-low'}`}>
                 {formatPercent(channel.profitMargin)}%
-              </div>
+              </span>
             </div>
           </div>
-        </div>
+        </li>
       ))}
-    </div>
+    </ul>
   )
 }
 
@@ -118,43 +109,35 @@ interface ProductTableProps {
 }
 
 export function ProductTable({ title, products }: ProductTableProps) {
-  if (products.length === 0) {
-    return null
-  }
+  if (products.length === 0) return null
 
   return (
-    <div className="mb-6">
-      <h3 className="font-semibold text-gray-900 mb-3">{title}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="bg-gray-100 border-b">
-              <th className="text-left py-2 px-3 text-gray-700">Product</th>
-              <th className="text-left py-2 px-3 text-gray-700">SKU</th>
-              <th className="text-right py-2 px-3 text-gray-700">Units</th>
-              <th className="text-right py-2 px-3 text-gray-700">Revenue</th>
-              <th className="text-right py-2 px-3 text-gray-700">Profit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.map((product, i) => (
-              <tr key={i} className="border-b hover:bg-gray-50">
-                <td className="py-2 px-3 text-gray-900 font-medium">{product.name}</td>
-                <td className="py-2 px-3 text-gray-600">{product.sku}</td>
-                <td className="py-2 px-3 text-right font-semibold text-gray-900">
-                  {product.unitsSold}
-                </td>
-                <td className="py-2 px-3 text-right text-gray-900">
-                  {formatCurrency(product.revenue)}
-                </td>
-                <td className="py-2 px-3 text-right font-semibold text-green-700">
-                  {formatCurrency(product.profit)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="report-section">
+      <h3>{title}</h3>
+      <ul className="plain-list">
+        {products.map((product, i) => (
+          <li key={i} className="report-row">
+            <div className="report-row-header">
+              <span className="report-row-title">
+                {product.name} <span className="mono muted">{product.sku}</span>
+              </span>
+              <span className={`report-row-value ${product.profit >= 0 ? '' : 'quantity-low'}`}>
+                {formatCurrency(product.profit)}
+              </span>
+            </div>
+            <div className="report-row-metrics">
+              <div>
+                <span className="report-metric-label">Units sold</span>
+                <span className="report-metric-value">{product.unitsSold}</span>
+              </div>
+              <div>
+                <span className="report-metric-label">Revenue</span>
+                <span className="report-metric-value">{formatCurrency(product.revenue)}</span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -165,28 +148,27 @@ interface SalesReportViewProps {
 
 export function SalesReportView({ report }: SalesReportViewProps) {
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Sales Report</h2>
-        <p className="text-sm text-gray-600 mb-4">
-          {report.period.start} to {report.period.end}
-        </p>
+    <div className="screen">
+      <p className="muted">
+        {report.period.start} to {report.period.end}
+      </p>
 
-        <h3 className="font-semibold text-gray-900 mb-3">Overall Performance</h3>
+      <div className="report-section">
+        <h3>Overall performance</h3>
         <MetricsGrid>
           <SalesMetricsDisplay metrics={report.overall} highlight />
         </MetricsGrid>
       </div>
 
       {report.byChannel.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-semibold text-gray-900 mb-3">By Channel</h3>
+        <div className="report-section">
+          <h3>By channel</h3>
           <ChannelBreakdown channels={report.byChannel} />
         </div>
       )}
 
-      <ProductTable title="Top 5 Products by Profit" products={report.topProducts} />
-      <ProductTable title="Bottom 5 Products by Profit" products={report.bottomProducts} />
+      <ProductTable title="Top 5 products by profit" products={report.topProducts} />
+      <ProductTable title="Bottom 5 products by profit" products={report.bottomProducts} />
     </div>
   )
 }

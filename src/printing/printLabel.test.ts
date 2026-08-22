@@ -32,6 +32,7 @@ const PRODUCT: Product = {
 const baseSettings = (): Settings => ({
   saleChannels: [],
   printerKind: 'zebra',
+  polonoPrintRotation: 'off',
   labelPresets: [],
   quickCodes: [],
   productCategories: [],
@@ -70,6 +71,13 @@ describe('printProductLabel', () => {
 
     const [, template] = printLabelViaBrowserMock.mock.calls[0]
     expect(template).toEqual(polonoLabelTemplate)
+  })
+
+  it('passes the saved Polono print rotation through to the browser print path', async () => {
+    await printProductLabel(PRODUCT, { ...baseSettings(), printerKind: 'polono', polonoPrintRotation: 'cw' })
+
+    const [, , , rotation] = printLabelViaBrowserMock.mock.calls[0]
+    expect(rotation).toBe('cw')
   })
 
   it('uses the saved Zebra template override instead of the default when one exists', async () => {

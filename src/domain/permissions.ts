@@ -61,4 +61,5 @@ export const MANAGER_ONLY = {
   inviteTeam: 'Only a manager can invite team members.',
   editSale: 'Only a manager can edit a sale.',
   editReturn: 'Only a manager can edit a return.',
+  manageSuppliers: 'Only a manager can manage suppliers and purchase orders.',
 } as const

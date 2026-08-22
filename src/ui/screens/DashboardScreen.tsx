@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { Role } from '../../data/repository'
 import { lowStockProducts, summarise } from '../../domain/inventory'
+import { findDeadStock, rollingDateRange } from '../../domain/profitability'
+import { generateSalesReport } from '../../domain/reports'
 import { salesSince, summariseSales } from '../../domain/sales'
 import {
   MOVEMENT_LABELS,
@@ -9,8 +11,23 @@ import {
   type Sale,
   type StockMovement,
 } from '../../domain/types'
-import { formatDateTime, formatDelta, formatNumber } from '../format'
+import { formatCurrency, formatDateTime, formatDelta, formatNumber } from '../format'
 import type { Tab } from '../components/Nav'
+
+/** How far back the "Top profit makers" / "Not moving" panels look — a
+ * rolling window (recomputed every render off the real clock) rather than a
+ * fixed period, so the Dashboard always answers "lately," not some
+ * calendar-month a manager has to remember to reset. 30 days is long enough
+ * to smooth out a quiet week, short enough that the ranking still reflects
+ * what's actually selling right now rather than the whole shop history. */
+const PERFORMANCE_WINDOW_DAYS = 30
+
+/** How long a line can sit with no sale before it's flagged as dead stock —
+ * see `findDeadStock`'s own doc comment in `domain/profitability.ts` for the
+ * full reasoning (mirrors, and is deliberately longer than, the 30-day
+ * performance window above so a line isn't flagged the moment it drops out
+ * of the "lately" ranking). */
+const DEAD_STOCK_THRESHOLD_DAYS = 60
 
 export interface DashboardScreenProps {
   products: Product[]
@@ -79,6 +96,15 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
   const names = Object.fromEntries(products.map((p) => [p.id, p.name]))
   const todaysSales = salesSince(sales, startOfToday())
   const today = summariseSales(todaysSales)
+
+  // Manager-only, same as the profit stats above — these two panels are
+  // both fundamentally "how is this product doing for me" data.
+  const now = new Date()
+  const recentPerformance =
+    role === 'manager'
+      ? generateSalesReport(sales, { dateRange: rollingDateRange(PERFORMANCE_WINDOW_DAYS, now) })
+      : null
+  const deadStock = role === 'manager' ? findDeadStock(products, sales, now, DEAD_STOCK_THRESHOLD_DAYS) : []
 
   const [detail, setDetail] = useState<DetailKey | null>(null)
   const toggle = (key: DetailKey) => setDetail((current) => (current === key ? null : key))
@@ -259,6 +285,64 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
           </ul>
         )}
       </section>
+
+      {role === 'manager' && recentPerformance && (
+        <section className="panel" aria-label="Top profit makers">
+          <header className="panel-header">
+            <h2>Buy more of this</h2>
+            <button type="button" className="button button-ghost" onClick={() => onNavigate('history')}>
+              Full history
+            </button>
+          </header>
+
+          <p className="muted" style={{ marginTop: 0 }}>
+            Most profit earned in the last {PERFORMANCE_WINDOW_DAYS} days.
+          </p>
+
+          {recentPerformance.topProducts.length === 0 ? (
+            <p className="empty">No sales in the last {PERFORMANCE_WINDOW_DAYS} days yet.</p>
+          ) : (
+            <ul className="plain-list" data-testid="top-performers-list">
+              {recentPerformance.topProducts.map((product) => (
+                <li key={product.sku} className="low-stock-item">
+                  <span className="low-stock-name">{product.name}</span>
+                  <span className="mono">{product.sku}</span>
+                  <span className="delta delta-up">{formatCurrency(product.profit)} profit</span>
+                  <span className="muted">{formatNumber(product.unitsSold)} sold</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {role === 'manager' && deadStock.length > 0 && (
+        <section className="panel" aria-label="Dead stock">
+          <header className="panel-header">
+            <h2>Not moving</h2>
+            <button type="button" className="button button-ghost" onClick={() => onNavigate('products')}>
+              All products
+            </button>
+          </header>
+
+          <p className="muted" style={{ marginTop: 0 }}>
+            No sale in {DEAD_STOCK_THRESHOLD_DAYS}+ days — consider a discount instead of reordering.
+          </p>
+
+          <ul className="plain-list" data-testid="dead-stock-list">
+            {deadStock.map((entry) => (
+              <li key={entry.productId} className="low-stock-item">
+                <span className="low-stock-name">{entry.name}</span>
+                <span className="mono">{entry.sku}</span>
+                <span className="delta delta-down">{formatCurrency(entry.costBasis)} tied up</span>
+                <span className="muted">
+                  {entry.daysSinceLastSale === null ? 'Never sold' : `${entry.daysSinceLastSale}d since last sale`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="panel">
         <header className="panel-header">

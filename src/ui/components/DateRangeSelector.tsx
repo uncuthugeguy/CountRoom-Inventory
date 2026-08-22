@@ -83,12 +83,10 @@ export function DateRangeSelector({ value, onChange }: DateRangeSelectorProps) {
   }
 
   return (
-    <div className="mb-6 p-4 rounded border border-gray-200 bg-gray-50">
-      <div className="mb-3">
-        <label className="block text-sm font-semibold text-gray-900 mb-2">
-          Report Period
-        </label>
-        <div className="flex flex-wrap gap-2">
+    <div className="panel">
+      <div className="field">
+        <span className="label-like">Report period</span>
+        <div className="channel-picker">
           {[
             { type: 'today' as const, label: 'Today' },
             { type: 'week' as const, label: 'Last 7 days' },
@@ -96,17 +94,12 @@ export function DateRangeSelector({ value, onChange }: DateRangeSelectorProps) {
             { type: '3months' as const, label: 'Last 3 months' },
             { type: 'year' as const, label: 'Last year' },
             { type: 'all' as const, label: 'All time' },
-            { type: 'custom' as const, label: 'Custom' },
           ].map(({ type, label }) => (
             <button
               key={type}
-              onClick={() => (type === 'custom' ? null : handlePredefined(type))}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                currentType === type
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
-              disabled={type === 'custom'}
+              type="button"
+              onClick={() => handlePredefined(type)}
+              className={`button chip-button ${currentType === type ? 'chip-button-active' : ''}`}
             >
               {label}
             </button>
@@ -114,24 +107,14 @@ export function DateRangeSelector({ value, onChange }: DateRangeSelectorProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-          <input
-            type="date"
-            value={value.start}
-            onChange={handleStartDateChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-          />
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="report-range-start">Start date</label>
+          <input id="report-range-start" type="date" value={value.start} onChange={handleStartDateChange} />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-          <input
-            type="date"
-            value={value.end}
-            onChange={handleEndDateChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-          />
+        <div className="field">
+          <label htmlFor="report-range-end">End date</label>
+          <input id="report-range-end" type="date" value={value.end} onChange={handleEndDateChange} />
         </div>
       </div>
     </div>

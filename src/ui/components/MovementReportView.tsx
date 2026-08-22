@@ -5,16 +5,21 @@ interface MovementReportViewProps {
   report: MovementReport
 }
 
+const TYPE_LABELS: Record<'in' | 'out' | 'adjust', string> = {
+  in: 'Stock In',
+  out: 'Stock Out',
+  adjust: 'Adjustments',
+}
+
 export function MovementReportView({ report }: MovementReportViewProps) {
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Stock Movement Report</h2>
-        <p className="text-sm text-gray-600 mb-4">
-          {report.period.start} to {report.period.end}
-        </p>
+    <div className="screen">
+      <p className="muted">
+        {report.period.start} to {report.period.end}
+      </p>
 
-        <h3 className="font-semibold text-gray-900 mb-3">Summary</h3>
+      <div className="report-section">
+        <h3>Summary</h3>
         <MetricsGrid>
           <MetricsCard label="Stock In" value={report.metrics.totalStockIn} />
           <MetricsCard label="Stock Out" value={report.metrics.totalStockOut} />
@@ -28,18 +33,16 @@ export function MovementReportView({ report }: MovementReportViewProps) {
       </div>
 
       {report.byType.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-semibold text-gray-900 mb-3">By Movement Type</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="report-section">
+          <h3>By movement type</h3>
+          <div className="stats">
             {report.byType.map((mt) => (
-              <div key={mt.type} className="p-4 rounded border bg-white">
-                <div className="text-xs text-gray-500 font-medium mb-2 capitalize">
-                  {mt.type === 'in' ? 'Stock In' : mt.type === 'out' ? 'Stock Out' : 'Adjustments'}
-                </div>
-                <div className="font-bold text-2xl text-gray-900 mb-1">{mt.count}</div>
-                <div className="text-sm text-gray-600">
+              <div key={mt.type} className="stat">
+                <span className="stat-value">{mt.count}</span>
+                <span className="stat-label">{TYPE_LABELS[mt.type]}</span>
+                <span className="stat-subtext">
                   {mt.totalQuantity} units {mt.type === 'out' ? 'removed' : 'moved'}
-                </div>
+                </span>
               </div>
             ))}
           </div>
@@ -47,38 +50,33 @@ export function MovementReportView({ report }: MovementReportViewProps) {
       )}
 
       {report.topProducts.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-semibold text-gray-900 mb-3">Most Active Products</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-gray-100 border-b">
-                  <th className="text-left py-2 px-3 text-gray-700">Product</th>
-                  <th className="text-left py-2 px-3 text-gray-700">SKU</th>
-                  <th className="text-right py-2 px-3 text-gray-700">In</th>
-                  <th className="text-right py-2 px-3 text-gray-700">Out</th>
-                  <th className="text-right py-2 px-3 text-gray-700">Net</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.topProducts.map((product, i) => (
-                  <tr key={i} className="border-b hover:bg-gray-50">
-                    <td className="py-2 px-3 text-gray-900 font-medium">{product.name}</td>
-                    <td className="py-2 px-3 text-gray-600">{product.sku}</td>
-                    <td className="py-2 px-3 text-right text-green-700 font-semibold">
-                      +{product.inCount}
-                    </td>
-                    <td className="py-2 px-3 text-right text-red-700 font-semibold">
-                      -{product.outCount}
-                    </td>
-                    <td className="py-2 px-3 text-right font-semibold text-gray-900">
-                      {product.netMovement > 0 ? '+' : ''}{product.netMovement}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="report-section">
+          <h3>Most active products</h3>
+          <ul className="plain-list">
+            {report.topProducts.map((product) => (
+              <li key={product.productId} className="report-row">
+                <div className="report-row-header">
+                  <span className="report-row-title">
+                    {product.name} <span className="mono muted">{product.sku}</span>
+                  </span>
+                  <span className={`report-row-value ${product.netMovement < 0 ? 'quantity-low' : ''}`}>
+                    {product.netMovement > 0 ? '+' : ''}
+                    {product.netMovement}
+                  </span>
+                </div>
+                <div className="report-row-metrics">
+                  <div>
+                    <span className="report-metric-label">In</span>
+                    <span className="report-metric-value">+{product.inCount}</span>
+                  </div>
+                  <div>
+                    <span className="report-metric-label">Out</span>
+                    <span className="report-metric-value">-{product.outCount}</span>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

@@ -569,7 +569,7 @@ describe('Reporting', () => {
         },
       ]
 
-      const report = generateMovementReport(movements, { dateRange: range })
+      const report = generateMovementReport(movements, { dateRange: range }, [])
 
       expect(report.metrics.totalStockIn).toBe(10)
       expect(report.metrics.totalStockOut).toBe(3)
@@ -620,11 +620,66 @@ describe('Reporting', () => {
         },
       ]
 
-      const report = generateMovementReport(movements, { dateRange: range })
+      const report = generateMovementReport(movements, { dateRange: range }, [])
 
       expect(report.metrics.totalStockIn).toBe(5)
       expect(report.metrics.totalStockOut).toBe(0)
       expect(report.metrics.netMovement).toBe(5)
+    })
+
+    it('looks up each top product\'s real name/sku rather than showing a raw id', () => {
+      const range = { start: '2026-01-15', end: '2026-01-20' }
+      const movements: StockMovement[] = [
+        {
+          id: '1',
+          productId: 'p1',
+          type: 'in',
+          quantity: 10,
+          delta: 10,
+          previousQuantity: 0,
+          newQuantity: 10,
+          createdAt: '2026-01-17T10:00:00Z',
+        },
+        {
+          id: '2',
+          // No matching product below — simulates a since-deleted product,
+          // which should still show up in the report rather than vanish.
+          productId: 'deleted-product',
+          type: 'out',
+          quantity: 2,
+          delta: -2,
+          previousQuantity: 5,
+          newQuantity: 3,
+          createdAt: '2026-01-18T10:00:00Z',
+        },
+      ]
+      const products: Product[] = [
+        {
+          id: 'p1',
+          barcode: '',
+          sku: 'WSH-M6',
+          name: 'M6 Flat Washer',
+          category: '',
+          location: '',
+          variation: '',
+          quantity: 10,
+          reorderLevel: 0,
+          cost: 0.01,
+          price: 0.05,
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]
+
+      const report = generateMovementReport(movements, { dateRange: range }, products)
+
+      const p1 = report.topProducts.find((tp) => tp.productId === 'p1')
+      expect(p1?.name).toBe('M6 Flat Washer')
+      expect(p1?.sku).toBe('WSH-M6')
+
+      const deleted = report.topProducts.find((tp) => tp.productId === 'deleted-product')
+      expect(deleted?.name).toBe('Deleted product')
+      expect(deleted?.sku).toBe('—')
     })
   })
 })

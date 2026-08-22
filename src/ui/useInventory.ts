@@ -17,6 +17,7 @@ import type {
   StockMovement,
 } from '../domain/types'
 import type { AccountSettingsSync, InventoryRepository, Role, TeamMember } from '../data/repository'
+import type { PurchaseOrder, PurchaseOrderInput, Supplier, SupplierDraft } from '../domain/suppliers'
 
 export type InventoryStatus = 'loading' | 'ready' | 'error'
 
@@ -58,6 +59,23 @@ export interface Inventory {
   rejectProfileChange(requestId: string): Promise<Result<true>>
   getAccountSettings(): Promise<AccountSettingsSync | null>
   setAccountSettings(patch: AccountSettingsSync): Promise<Result<true>>
+  // Manager-only — see repository.ts's own doc comment on this section.
+  // None of these affect products/movements/sales/returns/activity except
+  // receivePurchaseOrder (it adds stock), so only that one goes through
+  // `run`'s full-catalogue refresh; the rest are on-demand fetches, the
+  // same pattern listTeam/getProfile already use below.
+  listSuppliers(): Promise<Supplier[]>
+  createSupplier(draft: SupplierDraft): Promise<Result<Supplier>>
+  updateSupplier(id: string, draft: SupplierDraft): Promise<Result<Supplier>>
+  deleteSupplier(id: string): Promise<Result<true>>
+  listPurchaseOrders(): Promise<PurchaseOrder[]>
+  createPurchaseOrder(input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
+  sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
+  confirmPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
+  /** Adds stock for every line and marks the PO received — refreshes the
+   *  product catalogue on success, unlike the other supplier/PO methods. */
+  receivePurchaseOrder(id: string, lineQuantities: Map<string, number>): Promise<Result<PurchaseOrder>>
+  cancelPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
 }
 
 const message = (cause: unknown): string =>
@@ -305,6 +323,105 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     }
   }, [])
 
+  const listSuppliers = useCallback(async () => {
+    const repo = repoRef.current
+    if (!repo) return []
+    try {
+      return await repo.listSuppliers()
+    } catch {
+      return []
+    }
+  }, [])
+
+  const createSupplier = useCallback(async (draft: SupplierDraft) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.createSupplier(draft)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  const updateSupplier = useCallback(async (id: string, draft: SupplierDraft) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.updateSupplier(id, draft)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  const deleteSupplier = useCallback(async (id: string) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.deleteSupplier(id)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  const listPurchaseOrders = useCallback(async () => {
+    const repo = repoRef.current
+    if (!repo) return []
+    try {
+      return await repo.listPurchaseOrders()
+    } catch {
+      return []
+    }
+  }, [])
+
+  const createPurchaseOrder = useCallback(async (input: PurchaseOrderInput) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.createPurchaseOrder(input)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  const sendPurchaseOrder = useCallback(async (id: string) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.sendPurchaseOrder(id)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  const confirmPurchaseOrder = useCallback(async (id: string) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.confirmPurchaseOrder(id)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
+  // Unlike the supplier/PO methods above, receiving a PO adds real stock —
+  // goes through `run` so products/movements refresh the same way any other
+  // stock-affecting write does.
+  const receivePurchaseOrder = useCallback(
+    (id: string, lineQuantities: Map<string, number>) =>
+      run((repo) => repo.receivePurchaseOrder(id, lineQuantities)),
+    [run],
+  )
+
+  const cancelPurchaseOrder = useCallback(async (id: string) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.cancelPurchaseOrder(id)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
   return {
     status,
     backend,
@@ -334,5 +451,15 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     rejectProfileChange,
     getAccountSettings,
     setAccountSettings,
+    listSuppliers,
+    createSupplier,
+    updateSupplier,
+    deleteSupplier,
+    listPurchaseOrders,
+    createPurchaseOrder,
+    sendPurchaseOrder,
+    confirmPurchaseOrder,
+    receivePurchaseOrder,
+    cancelPurchaseOrder,
   }
 }

@@ -117,6 +117,7 @@ export interface MovementReport {
   metrics: MovementMetrics
   byType: MovementType[]
   topProducts: {
+    productId: string
     name: string
     sku: string
     inCount: number
@@ -352,12 +353,19 @@ export function generateInventoryReport(
   }
 }
 
-/** Generate a movement report for the given date range. */
+/** Generate a movement report for the given date range. `products` is used
+ * to look up each line's real name/sku — a movement only ever stores a bare
+ * `productId`, the same reasoning `generateInventoryReport`'s last-movement
+ * lookup needs both movements and products passed in together. A product
+ * that's since been deleted still shows up (its movement history shouldn't
+ * vanish), labelled the same way History's own list already does. */
 export function generateMovementReport(
   movements: StockMovement[],
   filters: ReportFilters,
+  products: Product[],
 ): MovementReport {
   const filtered = movements.filter((m) => movementInDateRange(m, filters.dateRange))
+  const productById = new Map(products.map((p) => [p.id, p]))
 
   const byType = [
     {
@@ -387,9 +395,11 @@ export function generateMovementReport(
     }, new Map<string, { inCount: number; outCount: number; netMovement: number }>()),
   )
     .map(([productId, stats]) => {
-      // We need product info but don't have it here; will need to enrich in caller
+      const product = productById.get(productId)
       return {
         productId,
+        name: product?.name ?? 'Deleted product',
+        sku: product?.sku ?? '—',
         ...stats,
       }
     })
@@ -409,13 +419,6 @@ export function generateMovementReport(
       count: t.movements.length,
       totalQuantity: t.movements.reduce((sum, m) => sum + Math.abs(m.delta), 0),
     })),
-    topProducts: topProducts.map((tp) => {
-      // Caller will replace this stub
-      return {
-        name: `Product ${tp.productId}`,
-        sku: 'SKU-???',
-        ...tp,
-      }
-    }),
+    topProducts,
   }
 }

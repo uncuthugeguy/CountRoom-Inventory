@@ -61,6 +61,21 @@ describe('employee role', () => {
     expect(screen.getByTestId('stat-profit-today')).toBeInTheDocument()
   })
 
+  it('hides the profit-maker and dead-stock panels from an employee — same profit-sensitivity as the stat tile', async () => {
+    await renderAs('employee')
+
+    expect(screen.queryByRole('heading', { name: 'Buy more of this' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Not moving' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('dead-stock-list')).not.toBeInTheDocument()
+  })
+
+  it('shows the profit-maker and dead-stock panels for a manager', async () => {
+    await renderAs('manager')
+
+    expect(screen.getByRole('heading', { name: 'Buy more of this' })).toBeInTheDocument()
+    expect(screen.getByTestId('dead-stock-list')).toBeInTheDocument()
+  })
+
   it('hides the delete button and CSV export on the products screen', async () => {
     const { user } = await renderAs('employee')
     await go(user, /products/i)

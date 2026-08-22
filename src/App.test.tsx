@@ -178,6 +178,40 @@ describe('dashboard', () => {
     )
     expect(await screen.findByRole('alert')).toHaveTextContent('Supabase unreachable')
   })
+
+  it('flags the untouched demo catalogue as not moving, since none of it has ever sold', async () => {
+    await renderApp()
+
+    const notMoving = screen.getByTestId('dead-stock-list')
+    // Every seeded product predates the 60-day dead-stock threshold and none
+    // of them has a recorded sale, so the whole (in-stock) catalogue shows up.
+    expect(within(notMoving).getAllByRole('listitem').length).toBeGreaterThan(0)
+    expect(notMoving).toHaveTextContent('Never sold')
+  })
+
+  it('surfaces a product that just sold as a top profit maker, not as dead stock', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: cost 0.01, price 0.05 → 0.04 profit.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+    await user.click(screen.getByRole('button', { name: 'eBay' }))
+    await user.type(screen.getByLabelText(/cash received/i), '1')
+    await user.click(screen.getByRole('button', { name: /complete sale/i }))
+    await waitFor(() => expect(screen.queryByTestId('cart-row')).toBeNull())
+
+    await go(user, /dashboard/i)
+
+    const topPerformers = screen.getByTestId('top-performers-list')
+    expect(topPerformers).toHaveTextContent('M6 Flat Washer')
+    expect(topPerformers).toHaveTextContent('0.04 profit')
+    expect(topPerformers).toHaveTextContent('1 sold')
+
+    const notMoving = screen.getByTestId('dead-stock-list')
+    expect(within(notMoving).queryByText('M6 Flat Washer')).not.toBeInTheDocument()
+  })
 })
 
 describe('products', () => {
@@ -1500,5 +1534,91 @@ describe('returns', () => {
     await waitFor(() => expect(screen.queryByTestId('return-edit-banner')).toBeNull())
     expect(screen.getByTestId('returns-refund-total')).toHaveTextContent('5.00')
     expect(screen.getByTestId('return-case-row')).toHaveTextContent('Edited')
+  })
+})
+
+describe('suppliers and purchase orders', () => {
+  it('adds a supplier, drafts a PO, walks it through to received, and adds the ordered stock', async () => {
+    const { user } = await renderApp()
+    await go(user, /suppliers/i)
+
+    // Add a supplier.
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    await user.type(screen.getByLabelText(/supplier name/i), 'Acme Fasteners Ltd')
+    await user.type(screen.getByLabelText(/usual lead time/i), '5')
+    await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
+
+    const supplierList = await screen.findByTestId('supplier-list')
+    expect(supplierList).toHaveTextContent('Acme Fasteners Ltd')
+
+    // Create a draft PO ordering 20 more M6 Flat Washers (currently 64 in stock).
+    await user.click(screen.getByRole('button', { name: /new purchase order/i }))
+    await user.selectOptions(screen.getByLabelText(/^supplier$/i), 'Acme Fasteners Ltd')
+    await user.selectOptions(screen.getByLabelText('Product'), 'M6 Flat Washer (WSH-M6)')
+    await user.clear(screen.getByLabelText('Quantity'))
+    await user.type(screen.getByLabelText('Quantity'), '20')
+    await user.clear(screen.getByLabelText('Unit cost'))
+    await user.type(screen.getByLabelText('Unit cost'), '0.01')
+    await user.click(screen.getByRole('button', { name: /create draft po/i }))
+
+    const poList = await screen.findByTestId('purchase-order-list')
+    expect(poList).toHaveTextContent('Acme Fasteners Ltd')
+    expect(poList).toHaveTextContent('Draft')
+    expect(poList).toHaveTextContent('0.20') // 20 * 0.01
+
+    // Walk it through the status flow.
+    await user.click(within(poList).getByRole('button', { name: /^send$/i }))
+    await waitFor(() => expect(within(screen.getByTestId('purchase-order-list')).getByText('Sent')).toBeInTheDocument())
+
+    await user.click(within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /^confirm$/i }))
+    await waitFor(() =>
+      expect(within(screen.getByTestId('purchase-order-list')).getByText('Confirmed')).toBeInTheDocument(),
+    )
+
+    await user.click(
+      within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /mark received/i }),
+    )
+    await waitFor(() =>
+      expect(within(screen.getByTestId('purchase-order-list')).getByText('Received')).toBeInTheDocument(),
+    )
+
+    // Stock actually went up by the ordered quantity: 64 + 20 = 84.
+    await go(user, /products/i)
+    const productRow = screen.getAllByTestId('product-row').find((r) => r.textContent?.includes('M6 Flat Washer'))
+    expect(productRow).toHaveTextContent('84')
+
+    // And it shows up as an ordinary stock-in movement in History.
+    await go(user, /history/i)
+    expect(screen.getByText(/PO received from Acme Fasteners Ltd/i)).toBeInTheDocument()
+  })
+
+  it('deleting a supplier removes it from the list', async () => {
+    const { user } = await renderApp()
+    await go(user, /suppliers/i)
+
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    await user.type(screen.getByLabelText(/supplier name/i), 'Temp Supplier')
+    await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
+    await screen.findByText('Temp Supplier')
+
+    await user.click(screen.getByRole('button', { name: /delete temp supplier/i }))
+    await waitFor(() => expect(screen.queryByText('Temp Supplier')).not.toBeInTheDocument())
+    expect(screen.getByText(/no suppliers yet/i)).toBeInTheDocument()
+  })
+
+  it('hides the Suppliers tab from an employee', async () => {
+    const base = createLocalRepository({ storage: memoryStorage(), seed: true })
+    const repository = { ...base, role: 'employee' as const }
+    render(
+      <App
+        openRepository={async () => repository}
+        settingsStorage={memoryStorage()}
+        productDraftStorage={memoryStorage()}
+        saleEditDraftStorage={memoryStorage()}
+      />,
+    )
+    await screen.findByTestId('stat-products')
+
+    expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /suppliers/i })).not.toBeInTheDocument()
   })
 })

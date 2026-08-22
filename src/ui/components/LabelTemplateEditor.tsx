@@ -3,19 +3,28 @@ import type { Product } from '../../domain/types'
 import {
   DEFAULT_LABEL_TEMPLATE,
   DEFAULT_POLONO_LABEL_TEMPLATE,
+  FONT_FAMILY_FIELD,
+  FONT_SIZE_FIELD,
+  MAX_CUSTOM_FONT_DOTS,
   MAX_FONT,
   MAX_LOGO_DOTS,
+  MIN_CUSTOM_FONT_DOTS,
   MIN_FONT,
   MIN_LOGO_DOTS,
+  POLONO_FONT_CHOICES,
   PRINTER_LABELS,
   approxTextWidthDots,
   estimateBarcodeWidthDots,
   sanitiseLabelTemplate,
+  textFamilyFor,
   textHeightDots,
+  textSizeDotsFor,
   truncateToFitDots,
   type ElementPosition,
   type LabelTemplate,
+  type PolonoPrintRotation,
   type PrinterKind,
+  type TextElementKey,
 } from '../../printing/labelTemplate'
 import { printProductLabel } from '../../printing/printLabel'
 import type { SettingsApi } from '../useSettings'
@@ -53,7 +62,14 @@ const FIELD_LIMITS = {
   printSpeedIps: { min: 2, max: 12 },
 } as const
 
-const PREVIEW_MAX_WIDTH = 420
+// Was 420 — too small on a real screen to drag/position things precisely,
+// especially the Polono's short 406x203-dot label, which rendered under
+// 4in wide on most monitors. Bumped to 760 so the editor box itself is
+// roughly twice the size to work in. This only changes how big the editing
+// canvas renders on screen (`scale` below) — it has no effect on the
+// physical label size or what gets sent to the printer, which stay exactly
+// what `widthDots`/`heightDots` say regardless of this constant.
+const PREVIEW_MAX_WIDTH = 760
 
 /** Every physical field is stored in dots (what CPCL speaks) but can be
  * viewed and edited in inches or millimetres — converted using the
@@ -219,15 +235,16 @@ const ELEMENT_LABEL: Record<ElementKey, string> = {
   sku: 'SKU text',
 }
 
-/** The three text elements resize by changing their CPCL font index — the
- * printer's built-in bitmap fonts only come in 8 fixed sizes (0–7), so
- * dragging a resize handle steps through those 8 sizes rather than resizing
- * continuously. The barcode and logo are the two elements with independent,
- * freely variable dimensions: the barcode's bar height and — via CPCL's
- * module-width parameter — its overall printed width; the logo's box width
- * and height, scaled to fit within (see `rasterizeLogo`). */
-type TextElementKey = 'name' | 'variation' | 'sku'
-
+/** The three text elements resize by changing their CPCL font index on the
+ * Zebra — the printer's built-in bitmap fonts only come in 8 fixed sizes
+ * (0–7), so dragging a resize handle steps through those 8 sizes rather
+ * than resizing continuously. The Polono instead resizes these three
+ * continuously, in real dots, via `nameFontSizeDots` etc. — see
+ * `textSizeDotsFor` in `labelTemplate.ts`. The barcode and logo are the two
+ * elements with independent, freely variable dimensions on both printers:
+ * the barcode's bar height and — via CPCL's module-width parameter — its
+ * overall printed width; the logo's box width and height, scaled to fit
+ * within (see `rasterizeLogo`). */
 const FONT_FIELD: Record<TextElementKey, 'nameFont' | 'variationFont' | 'skuFont'> = {
   name: 'nameFont',
   variation: 'variationFont',
@@ -293,15 +310,24 @@ interface Footprint {
 function LabelCanvas({
   template,
   logoDataUrl,
+  isPolono,
   onMove,
   onFontResize,
+  onFontSizeResize,
   onBarcodeResize,
   onLogoResize,
 }: {
   template: LabelTemplate
   logoDataUrl?: string
+  /** Whether the name/variation/SKU text resize continuously in real dots
+   * (Polono) or step through the Zebra's 8 fixed CPCL font sizes — see
+   * `textSizeDotsFor` in `labelTemplate.ts`. */
+  isPolono: boolean
   onMove: (key: ElementKey, position: ElementPosition) => void
+  /** Zebra only — steps through the CPCL font index (0–7). */
   onFontResize: (key: TextElementKey, font: number) => void
+  /** Polono only — sets the real, continuous size in dots. */
+  onFontSizeResize: (key: TextElementKey, sizeDots: number) => void
   onBarcodeResize: (next: { heightDots: number; moduleWidth: number }) => void
   onLogoResize: (next: { widthDots: number; heightDots: number }) => void
 }) {
@@ -324,7 +350,22 @@ function LabelCanvas({
     livePosition && livePosition.key === key ? livePosition.position : t[key]
 
   const fontOf = (key: TextElementKey): number =>
-    liveResizeValue && liveResizeValue.key === key ? liveResizeValue.font : t[FONT_FIELD[key]]
+    liveResizeValue && liveResizeValue.key === key && !isPolono ? liveResizeValue.font : t[FONT_FIELD[key]]
+
+  // The real, rendered text height in dots — the Zebra's stepped
+  // `textHeightDots(fontIndex)` or the Polono's continuous override, plus
+  // whatever's live mid-resize. `liveResizeValue.font` holds a font *index*
+  // while dragging a Zebra resize handle, or a size *in dots* directly while
+  // dragging a Polono one — `sizeOf` is the one place that distinction is
+  // resolved, so nothing else needs to know which mode produced it.
+  const sizeOf = (key: TextElementKey): number => {
+    if (liveResizeValue && liveResizeValue.key === key) {
+      return isPolono ? liveResizeValue.font : textHeightDots(liveResizeValue.font)
+    }
+    return textSizeDotsFor(t, key, isPolono)
+  }
+
+  const familyOf = (key: TextElementKey): string => textFamilyFor(t, key, isPolono)
 
   const barcodeHeightOf = (): number =>
     liveResizeValue && liveResizeValue.key === 'barcode' ? liveResizeValue.barcodeHeight : t.barcodeHeight
@@ -342,9 +383,12 @@ function LabelCanvas({
   // values) — the single source of truth for both what's drawn and how far
   // a drag or nudge is allowed to go, so an element can never be pushed
   // somewhere its own bulk would hang off the label.
-  const nameSize = textHeightDots(fontOf('name'))
-  const variationSize = textHeightDots(fontOf('variation'))
-  const skuSize = textHeightDots(fontOf('sku'))
+  const nameSize = sizeOf('name')
+  const variationSize = sizeOf('variation')
+  const skuSize = sizeOf('sku')
+  const nameFamily = familyOf('name')
+  const variationFamily = familyOf('variation')
+  const skuFamily = familyOf('sku')
   const barcodeHeight = barcodeHeightOf()
   const barcodeModuleWidth = barcodeModuleWidthOf()
   const logoWidth = logoWidthOf()
@@ -416,7 +460,10 @@ function LabelCanvas({
     event.stopPropagation() // don't also start a move-drag on the parent box
     event.currentTarget.setPointerCapture(event.pointerId)
     const pointerDots = clientToDots(event.clientX, event.clientY)
-    const startFont = key === 'barcode' || key === 'logo' ? 0 : t[FONT_FIELD[key]]
+    // Always captured as a dot height for a text element (via `sizeOf`,
+    // which already resolves the Zebra-index-vs-Polono-continuous split) —
+    // see the matching branch in `onPointerMove` below.
+    const startFont = key === 'barcode' || key === 'logo' ? 0 : sizeOf(key as TextElementKey)
     setResize({
       key,
       corner,
@@ -481,9 +528,16 @@ function LabelCanvas({
           logoWidth: nextWidth,
           logoHeight: nextHeight,
         })
+      } else if (isPolono) {
+        // `resize.startFont` already holds the starting size in dots (see
+        // `startResize` above) — continuous, no 6-dot-per-step rounding.
+        const nextSize = Math.round(clampNum(resize.startFont + deltaY, MIN_CUSTOM_FONT_DOTS, MAX_CUSTOM_FONT_DOTS))
+        setLiveResizeValue({ key: resize.key, font: nextSize, barcodeHeight: 0, barcodeModuleWidth: 0, logoWidth: 0, logoHeight: 0 })
       } else {
-        const startTextHeight = textHeightDots(resize.startFont)
-        const nextFont = Math.round(clampNum((startTextHeight + deltaY - 14) / 6, MIN_FONT, MAX_FONT))
+        // `resize.startFont` is a dot height here too (from `sizeOf`) —
+        // convert the drag delta the same way the old index-stepped logic
+        // did, just without re-deriving the starting height from an index.
+        const nextFont = Math.round(clampNum((resize.startFont + deltaY - 14) / 6, MIN_FONT, MAX_FONT))
         setLiveResizeValue({ key: resize.key, font: nextFont, barcodeHeight: 0, barcodeModuleWidth: 0, logoWidth: 0, logoHeight: 0 })
       }
     }
@@ -496,6 +550,8 @@ function LabelCanvas({
         onBarcodeResize({ heightDots: liveResizeValue.barcodeHeight, moduleWidth: liveResizeValue.barcodeModuleWidth })
       } else if (resize.key === 'logo') {
         onLogoResize({ widthDots: liveResizeValue.logoWidth, heightDots: liveResizeValue.logoHeight })
+      } else if (isPolono) {
+        onFontSizeResize(resize.key, liveResizeValue.font)
       } else {
         onFontResize(resize.key, liveResizeValue.font)
       }
@@ -565,8 +621,14 @@ function LabelCanvas({
     event.preventDefault()
     event.stopPropagation()
     const grow = event.key === 'ArrowUp'
-    const current = fontOf(key)
-    onFontResize(key, clampNum(current + (grow ? 1 : -1), MIN_FONT, MAX_FONT))
+    const textKey = key as TextElementKey
+    if (isPolono) {
+      const current = sizeOf(textKey)
+      onFontSizeResize(textKey, Math.round(clampNum(current + (grow ? step : -step), MIN_CUSTOM_FONT_DOTS, MAX_CUSTOM_FONT_DOTS)))
+    } else {
+      const current = fontOf(textKey)
+      onFontResize(textKey, clampNum(current + (grow ? 1 : -1), MIN_FONT, MAX_FONT))
+    }
   }
 
   const logoPos = positionOf('logo')
@@ -664,7 +726,9 @@ function LabelCanvas({
               ? `height ${barcodeHeight} dots, width ${barcodeModuleWidth} dots per bar`
               : resizeKey === 'logo'
                 ? `width ${logoWidth} dots, height ${logoHeight} dots`
-                : `font ${fontOf(resizeKey)}`
+                : isPolono
+                  ? `size ${sizeOf(resizeKey as TextElementKey)} dots`
+                  : `font ${fontOf(resizeKey as TextElementKey)}`
           const twoAxis = resizeKey === 'barcode' || resizeKey === 'logo'
           return (
             <circle
@@ -735,7 +799,7 @@ function LabelCanvas({
             namePos.y,
             nameWidth,
             nameSize,
-            <text x={0} y={nameSize} fontSize={nameSize} fontFamily="ui-monospace, monospace" fill="#0a0a0a" style={{ pointerEvents: 'none' }}>
+            <text x={0} y={nameSize} fontSize={nameSize} fontFamily={nameFamily} fill="#0a0a0a" style={{ pointerEvents: 'none' }}>
               {nameDisplay}
             </text>,
             'name',
@@ -748,7 +812,7 @@ function LabelCanvas({
             variationPos.y,
             variationWidth,
             variationSize,
-            <text x={0} y={variationSize} fontSize={variationSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
+            <text x={0} y={variationSize} fontSize={variationSize} fontFamily={variationFamily} fill="#333" style={{ pointerEvents: 'none' }}>
               {variationDisplay}
             </text>,
             'variation',
@@ -780,7 +844,7 @@ function LabelCanvas({
             skuPos.y,
             skuWidth,
             skuSize,
-            <text x={0} y={skuSize} fontSize={skuSize} fontFamily="ui-monospace, monospace" fill="#333" style={{ pointerEvents: 'none' }}>
+            <text x={0} y={skuSize} fontSize={skuSize} fontFamily={skuFamily} fill="#333" style={{ pointerEvents: 'none' }}>
               {skuDisplay}
             </text>,
             'sku',
@@ -879,6 +943,68 @@ function LabelPresetsPanel({ settings, template }: { settings: SettingsApi; temp
   )
 }
 
+/**
+ * A collapsed-by-default disclosure panel for one group of settings — the
+ * screen used to show every field at once (positions, sizes, fonts,
+ * darkness/speed, orientation, all flat on the page simultaneously), which
+ * read as "too many options" even to set up once, let alone come back to
+ * for a single tweak. Collapsing everything except the printer choice, the
+ * "what's on this label" toggles and the drag-to-position preview itself
+ * means the screen opens simple, and a section only gets as complicated as
+ * the thing you actually came here to change.
+ */
+function Section({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const bodyId = useId()
+  return (
+    <div className="field" style={{ borderTop: '1px solid rgba(148,163,184,0.18)', paddingTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          background: 'none',
+          border: 'none',
+          padding: '4px 0',
+          margin: 0,
+          cursor: 'pointer',
+          font: 'inherit',
+          color: 'inherit',
+          textAlign: 'left',
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s', fontSize: 12 }}
+        >
+          ▶
+        </span>
+        <span className="label-like" style={{ margin: 0 }}>
+          {title}
+        </span>
+      </button>
+      {open && (
+        <div id={bodyId} style={{ paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
   const idPrefix = useId()
   const printerKind = settings.printerKind
@@ -888,7 +1014,10 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
     : settings.labelTemplate ?? DEFAULT_LABEL_TEMPLATE
   const [printStatus, setPrintStatus] = useState<string | null>(null)
   const [printing, setPrinting] = useState(false)
-  const [unit, setUnit] = useState<Unit>('dots')
+  // Real-world units by default — dots is still available in the picker for
+  // anyone who wants pixel-exact control, but millimetres/inches is what
+  // reads as an actual physical size without doing DPI math in your head.
+  const [unit, setUnit] = useState<Unit>('mm')
 
   const update = (patch: Partial<LabelTemplate>) => {
     const merged = { ...template, ...patch }
@@ -931,15 +1060,181 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
     )
   }
 
-  const fontField = (key: 'nameFont' | 'variationFont' | 'skuFont', label: string) => {
-    const fieldId = `${idPrefix}-${key}`
+  /** X or Y position of one of the five elements, as a real dimension field
+   * (mm/in/dots, same as every other size on this screen) — lets a position
+   * be typed precisely instead of only ever set by eye while dragging on
+   * the small canvas above. The canvas and these fields both write to (and
+   * read from) the same `template[key]`, so a drag updates the field and
+   * typing a value moves the element on the canvas. */
+  const positionField = (key: ElementKey, axis: 'x' | 'y', label: string) => {
+    const fieldId = `${idPrefix}-${key}-${axis}`
+    const rawDots = template[key][axis]
     return (
-      <div className="field" key={key}>
-        <label htmlFor={fieldId}>{label}</label>
+      <DimensionField
+        key={fieldId}
+        id={fieldId}
+        label={label}
+        dotsValue={rawDots}
+        dpi={template.dpi}
+        unit={unit}
+        min={0}
+        max={axis === 'x' ? template.widthDots : template.heightDots}
+        isDimension
+        hint={unit !== 'dots' ? `${Math.round(rawDots)} dots` : undefined}
+        onCommit={(dots) => update({ [key]: { ...template[key], [axis]: dots } } as Partial<LabelTemplate>)}
+      />
+    )
+  }
+
+  /**
+   * Which text element the "Text style" controls below currently edit —
+   * `'all'` (the default) keeps name/variation/SKU matching, the way a word
+   * processor's font/size boxes apply to the whole document until you
+   * select something specific. Picking one element here is the equivalent
+   * of that selection: the same Font/Size fields switch to showing (and
+   * only changing) that one element, leaving the other two exactly as they
+   * were. Resets to `'all'` on every fresh mount (e.g. navigating away and
+   * back) rather than being saved — it's a UI focus, not label data.
+   */
+  const [textTarget, setTextTarget] = useState<TextElementKey | 'all'>('all')
+  const textTargets: TextElementKey[] = textTarget === 'all' ? ['name', 'variation', 'sku'] : [textTarget]
+  // What the Font/Size fields actually display while "All text" is selected
+  // — there's no single value to show once the three can differ (e.g. after
+  // switching one of them individually), so the name's own value stands in
+  // as the representative. Changing the field re-syncs all three to
+  // whatever's typed, bringing them back in line.
+  const textRepresentative: TextElementKey = textTarget === 'all' ? 'name' : textTarget
+
+  const TEXT_TARGET_OPTIONS: { value: TextElementKey | 'all'; label: string }[] = [
+    { value: 'all', label: 'All text' },
+    { value: 'name', label: 'Name' },
+    { value: 'variation', label: 'Variation' },
+    { value: 'sku', label: 'SKU' },
+  ]
+
+  const textTargetTabs = (
+    <div className="field">
+      <span className="label-like">Editing</span>
+      <div className="checkbox-field-row" role="radiogroup" aria-label="Which text the font and size below change">
+        {TEXT_TARGET_OPTIONS.map(({ value, label }) => (
+          <label key={value} className="checkbox-field">
+            <input
+              type="radio"
+              name={`${idPrefix}-text-target`}
+              checked={textTarget === value}
+              onChange={() => setTextTarget(value)}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+      <span className="hint">
+        {textTarget === 'all'
+          ? "Font and size below apply to the name, variation and SKU text together, so they stay matching."
+          : `Font and size below apply only to the ${TEXT_TARGET_OPTIONS.find((o) => o.value === textTarget)?.label} text — the others are untouched.`}
+      </span>
+    </div>
+  )
+
+  /** Polono: one continuous size field that writes to every element
+   * `textTarget` currently covers — `'all'` writes the same size to
+   * name/variation/skuFontSizeDots at once. */
+  const unifiedFontSizeField = () => {
+    const fieldId = `${idPrefix}-text-size`
+    const rawDots = textSizeDotsFor(template, textRepresentative, true)
+    return (
+      <DimensionField
+        key={fieldId}
+        id={fieldId}
+        label="Size"
+        dotsValue={rawDots}
+        dpi={template.dpi}
+        unit={unit}
+        min={MIN_CUSTOM_FONT_DOTS}
+        max={MAX_CUSTOM_FONT_DOTS}
+        isDimension
+        hint={unit !== 'dots' ? `${Math.round(rawDots)} dots` : undefined}
+        onCommit={(dots) => {
+          const patch: Partial<LabelTemplate> = {}
+          for (const key of textTargets) patch[FONT_SIZE_FIELD[key]] = dots
+          update(patch)
+        }}
+      />
+    )
+  }
+
+  /** Polono: one font-family picker with a live preview, writing to every
+   * element `textTarget` currently covers — same "all unless selected"
+   * behaviour as the size field above. */
+  const unifiedFontFamilyField = () => {
+    const fieldId = `${idPrefix}-text-family`
+    const family = textFamilyFor(template, textRepresentative, true)
+    const sizeDots = textSizeDotsFor(template, textRepresentative, true)
+    const previewPx = Math.min(Math.max(sizeDots * 0.55, 12), 40)
+    const previewText =
+      textRepresentative === 'variation'
+        ? `Variation: ${SAMPLE_PRODUCT.variation}`
+        : textRepresentative === 'sku'
+          ? SAMPLE_PRODUCT.sku
+          : SAMPLE_PRODUCT.name
+    return (
+      <div className="field" key={fieldId}>
+        <label htmlFor={fieldId}>Font</label>
         <select
           id={fieldId}
-          value={template[key]}
-          onChange={(event) => update({ [key]: Number(event.target.value) } as Partial<LabelTemplate>)}
+          value={family}
+          onChange={(event) => {
+            const patch: Partial<LabelTemplate> = {}
+            for (const key of textTargets) patch[FONT_FAMILY_FIELD[key]] = event.target.value
+            update(patch)
+          }}
+        >
+          {POLONO_FONT_CHOICES.map((choice) => (
+            <option key={choice.family} value={choice.family}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+        <div
+          style={{
+            fontFamily: family,
+            fontSize: `${previewPx}px`,
+            padding: '6px 10px',
+            marginTop: 4,
+            border: '1px solid rgba(57,211,187,0.35)',
+            borderRadius: 6,
+            background: 'rgba(57,211,187,0.06)',
+            color: '#0a0a0a',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {previewText}
+        </div>
+      </div>
+    )
+  }
+
+  /** Zebra: one CPCL font-index picker (still just the printer's 8 fixed
+   * steps — see `fontField`'s doc comment on `LabelTemplate.nameFont` for
+   * why there's no continuous option here), writing to every element
+   * `textTarget` currently covers. */
+  const unifiedFontIndexField = () => {
+    const fieldId = `${idPrefix}-text-font`
+    const value = template[FONT_FIELD[textRepresentative]]
+    return (
+      <div className="field" key={fieldId}>
+        <label htmlFor={fieldId}>Size</label>
+        <select
+          id={fieldId}
+          value={value}
+          onChange={(event) => {
+            const font = Number(event.target.value)
+            const patch: Partial<LabelTemplate> = {}
+            for (const key of textTargets) patch[FONT_FIELD[key]] = font
+            update(patch)
+          }}
         >
           {Array.from({ length: MAX_FONT - MIN_FONT + 1 }, (_, i) => MIN_FONT + i).map((font) => (
             <option key={font} value={font}>
@@ -981,6 +1276,7 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       logoDataUrl: settings.logoDataUrl,
       saleChannels: settings.saleChannels,
       printerKind,
+      polonoPrintRotation: settings.polonoPrintRotation,
       labelPresets: settings.labelPresets,
       quickCodes: settings.quickCodes,
       productCategories: settings.productCategories,
@@ -1045,68 +1341,122 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
       <LabelCanvas
         template={template}
         logoDataUrl={settings.logoDataUrl}
+        isPolono={isPolono}
         onMove={(key, position) => update({ [key]: position } as Partial<LabelTemplate>)}
         onFontResize={(key, font) => update({ [FONT_FIELD[key]]: font } as Partial<LabelTemplate>)}
+        onFontSizeResize={(key, size) => update({ [FONT_SIZE_FIELD[key]]: size } as Partial<LabelTemplate>)}
         onBarcodeResize={({ heightDots, moduleWidth }) => update({ barcodeHeight: heightDots, barcodeModuleWidth: moduleWidth })}
         onLogoResize={({ widthDots, heightDots }) => update({ logoWidthDots: widthDots, logoHeightDots: heightDots })}
       />
 
-      <div className="field-row label-template-grid">
-        <div className="field">
-          <label htmlFor={`${idPrefix}-unit`}>Units</label>
-          <select
-            id={`${idPrefix}-unit`}
-            value={unit}
-            onChange={(event) => setUnit(event.target.value as Unit)}
-          >
-            {UNIT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <span className="hint">Sizes are still stored and sent to the printer in dots.</span>
+      <Section title="Text style (font &amp; size)">
+        {textTargetTabs}
+        <div className="field-row label-template-grid">
+          {isPolono ? unifiedFontSizeField() : unifiedFontIndexField()}
+          {isPolono && unifiedFontFamilyField()}
         </div>
-        {numberField('dpi', 'Printer DPI', {
-          dimension: false,
-          hint: "Must match your printer's real resolution (check its spec sheet or a printed config label) — if this is wrong, every inch/mm size below prints the wrong physical size no matter how you adjust it. Both the Zebra QLn220 and the Polono PL80E are 203 dpi.",
-        })}
-      </div>
+      </Section>
 
-      <div className="field-row label-template-grid">
-        {numberField('widthDots', 'Label width', {
-          hint: `${(template.widthDots / template.dpi).toFixed(2)} in at ${template.dpi} dpi`,
-        })}
-        {numberField('heightDots', 'Label length', {
-          hint: `${(template.heightDots / template.dpi).toFixed(2)} in at ${template.dpi} dpi`,
-        })}
-        {numberField('barcodeHeight', 'Barcode height')}
-        {numberField('barcodeModuleWidth', 'Barcode width (per bar)')}
-      </div>
+      <Section title="Exact positions">
+        <span className="hint">
+          Dragging on the preview above still works — these are for typing an exact position
+          instead. X is measured from the left edge, Y from the top.
+        </span>
+        {(['logo', 'name', 'variation', 'barcode', 'sku'] as ElementKey[]).map((key) => (
+          <div className="field-row label-template-grid" key={key}>
+            <span className="label-like" style={{ alignSelf: 'center', minWidth: 90 }}>
+              {ELEMENT_LABEL[key]}
+            </span>
+            {positionField(key, 'x', 'X')}
+            {positionField(key, 'y', 'Y')}
+          </div>
+        ))}
+      </Section>
 
-      <div className="field-row label-template-grid">
-        {numberField('logoWidthDots', 'Logo width')}
-        {numberField('logoHeightDots', 'Logo height')}
-      </div>
+      <Section title="Label size &amp; barcode">
+        <div className="field-row label-template-grid">
+          <div className="field">
+            <label htmlFor={`${idPrefix}-unit`}>Units</label>
+            <select id={`${idPrefix}-unit`} value={unit} onChange={(event) => setUnit(event.target.value as Unit)}>
+              {UNIT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="hint">Sizes are still stored and sent to the printer in dots.</span>
+          </div>
+          {numberField('dpi', 'Printer DPI', {
+            dimension: false,
+            hint: isPolono
+              ? "The Zebra's raw print commands need this to exactly match its real 203 dpi resolution. The Polono prints through the OS print dialog instead, where this value only sets the physical size sent to the dialog (widthDots ÷ dpi) — it's tuned here, not to the Polono's 203 dpi spec, to match what this printer/driver combination actually puts on the label edge-to-edge. If your printed labels stop short of the edge again, raising this makes everything print smaller/more conservative; lowering it makes everything print bigger — change it before touching individual positions or sizes."
+              : "Must match your printer's real resolution (check its spec sheet or a printed config label) — if this is wrong, every inch/mm size below prints the wrong physical size no matter how you adjust it. The Zebra QLn220 is 203 dpi.",
+          })}
+        </div>
+
+        <div className="field-row label-template-grid">
+          {numberField('widthDots', 'Label width', {
+            hint: `${(template.widthDots / template.dpi).toFixed(2)} in at ${template.dpi} dpi`,
+          })}
+          {numberField('heightDots', 'Label length', {
+            hint: `${(template.heightDots / template.dpi).toFixed(2)} in at ${template.dpi} dpi`,
+          })}
+          {numberField('barcodeHeight', 'Barcode height')}
+          {numberField('barcodeModuleWidth', 'Barcode width (per bar)')}
+        </div>
+
+        <div className="field-row label-template-grid">
+          {numberField('logoWidthDots', 'Logo width')}
+          {numberField('logoHeightDots', 'Logo height')}
+        </div>
+      </Section>
 
       {!isPolono && (
-        <div className="field-row label-template-grid">
-          {numberField('darkness', 'Print darkness', {
-            dimension: false,
-            hint: 'Higher = darker (0–30). If the name or other text prints lighter than the barcode, raise this.',
-          })}
-          {numberField('printSpeedIps', 'Print speed (in/sec)', {
-            dimension: false,
-            hint: 'Lower = slower, giving the print head more time per label (2–12). Slower usually prints darker and cleaner.',
-          })}
-        </div>
+        <Section title="Print quality">
+          <div className="field-row label-template-grid">
+            {numberField('darkness', 'Print darkness', {
+              dimension: false,
+              hint: 'Higher = darker (0–30). If the name or other text prints lighter than the barcode, raise this.',
+            })}
+            {numberField('printSpeedIps', 'Print speed (in/sec)', {
+              dimension: false,
+              hint: 'Lower = slower, giving the print head more time per label (2–12). Slower usually prints darker and cleaner.',
+            })}
+          </div>
+        </Section>
       )}
 
-      <div className="field-row label-template-grid">
-        {fontField('nameFont', 'Name font')}
-        {fontField('variationFont', 'Variation font')}
-        {fontField('skuFont', 'SKU text font')}
-      </div>
+      {isPolono && (
+        <Section title="Orientation">
+          <div className="checkbox-field-row" role="radiogroup" aria-label="Print orientation">
+            {(
+              [
+                { value: 'off', label: 'Unchanged (default)' },
+                { value: 'cw', label: 'Rotate 90° clockwise' },
+                { value: 'ccw', label: 'Rotate 90° counter-clockwise' },
+              ] as { value: PolonoPrintRotation; label: string }[]
+            ).map(({ value, label }) => (
+              <label key={value} className="checkbox-field">
+                <input
+                  type="radio"
+                  name={`${idPrefix}-print-rotation`}
+                  checked={settings.polonoPrintRotation === value}
+                  onChange={() => settings.setPolonoPrintRotation(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <span className="hint">
+            Only change this if Chrome's print dialog keeps defaulting to portrait for this
+            landscape label and won't stay in landscape. Test with <strong>print preview only</strong> after
+            switching — do not send a real print job — until the text in the preview reads
+            right-side-up and left-to-right. If neither rotation looks right in preview, leave this
+            on Unchanged and use the system print dialog's own orientation control instead, the way
+            you have been.
+          </span>
+        </Section>
+      )}
 
       <div className="dialog-actions">
         <button

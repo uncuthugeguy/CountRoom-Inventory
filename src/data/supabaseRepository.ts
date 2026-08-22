@@ -42,7 +42,15 @@ import type {
 import { EMPTY_PROFILE_DRAFT } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
 import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
-import type { Supplier, SupplierProduct, PurchaseOrder } from '../domain/suppliers'
+import type {
+  PurchaseOrder,
+  PurchaseOrderLine,
+  PurchaseOrderStatus,
+  Supplier,
+  SupplierDraft,
+  SupplierProduct,
+  SupplierProductDraft,
+} from '../domain/suppliers'
 import { getSupabaseClient } from './supabaseClient'
 import {
   DUPLICATE_BARCODE,
@@ -167,6 +175,54 @@ interface ActivityLogRow {
   created_at: string
 }
 
+interface SupplierRow {
+  id: string
+  name: string
+  email: string
+  phone: string
+  address: string
+  lead_time_days: number
+  contact_name: string
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
+interface SupplierProductRow {
+  id: string
+  supplier_id: string
+  product_id: string
+  unit_cost: number
+  minimum_order: number
+  notes: string
+  updated_at: string
+}
+
+interface PurchaseOrderLineRow {
+  id: string
+  purchase_order_id: string
+  product_id: string | null
+  sku: string
+  name: string
+  quantity: number
+  unit_cost: number
+  line_total: number
+  quantity_received: number | null
+}
+
+interface PurchaseOrderRow {
+  id: string
+  supplier_id: string
+  supplier_name: string
+  status: PurchaseOrderStatus
+  expected_delivery_date: string
+  received_date: string | null
+  notes: string
+  subtotal: number
+  created_at: string
+  updated_at: string | null
+}
+
 const toProduct = (row: ProductRow): Product => ({
   id: row.id,
   barcode: row.barcode ?? '',
@@ -281,6 +337,73 @@ const toReturnCase = (
   updatedAt: row.updated_at ?? undefined,
 })
 
+const toSupplier = (row: SupplierRow): Supplier => ({
+  id: row.id,
+  name: row.name,
+  email: row.email,
+  phone: row.phone,
+  address: row.address,
+  leadTimeDays: row.lead_time_days,
+  contactName: row.contact_name,
+  notes: row.notes,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+})
+
+const toSupplierRow = (draft: SupplierDraft) => ({
+  name: draft.name,
+  email: draft.email,
+  phone: draft.phone,
+  address: draft.address,
+  lead_time_days: draft.leadTimeDays,
+  contact_name: draft.contactName,
+  notes: draft.notes,
+})
+
+const toSupplierProduct = (row: SupplierProductRow): SupplierProduct => ({
+  id: row.id,
+  productId: row.product_id,
+  supplierId: row.supplier_id,
+  unitCost: row.unit_cost,
+  minimumOrder: row.minimum_order,
+  notes: row.notes,
+  updatedAt: row.updated_at,
+})
+
+const toSupplierProductRow = (draft: SupplierProductDraft) => ({
+  product_id: draft.productId,
+  supplier_id: draft.supplierId,
+  unit_cost: draft.unitCost,
+  minimum_order: draft.minimumOrder,
+  notes: draft.notes,
+})
+
+const toPurchaseOrderLine = (row: PurchaseOrderLineRow): PurchaseOrderLine => ({
+  id: row.id,
+  poId: row.purchase_order_id,
+  productId: row.product_id ?? '',
+  sku: row.sku,
+  name: row.name,
+  quantity: row.quantity,
+  unitCost: row.unit_cost,
+  lineTotal: row.line_total,
+  quantityReceived: row.quantity_received ?? undefined,
+})
+
+const toPurchaseOrder = (row: PurchaseOrderRow, lines: PurchaseOrderLine[]): PurchaseOrder => ({
+  id: row.id,
+  supplierId: row.supplier_id,
+  supplierName: row.supplier_name,
+  status: row.status,
+  expectedDeliveryDate: row.expected_delivery_date,
+  receivedDate: row.received_date ?? undefined,
+  notes: row.notes,
+  lines,
+  subtotal: row.subtotal,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at ?? undefined,
+})
+
 const toRow = (draft: ProductDraft) => ({
   // Stored as null rather than '' so the barcode uniqueness constraint
   // never treats two blank-barcode products as a clash (Postgres allows
@@ -387,6 +510,19 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     } catch (cause) {
       console.error('Failed to record activity log entry:', cause)
     }
+  }
+
+  const fetchPurchaseOrderLines = async (poId: string): Promise<PurchaseOrderLine[]> => {
+    const { data, error } = await db.from('purchase_order_lines').select('*').eq('purchase_order_id', poId)
+    if (error) throw new Error(error.message)
+    return (data as PurchaseOrderLineRow[]).map(toPurchaseOrderLine)
+  }
+
+  const fetchPurchaseOrder = async (id: string): Promise<PurchaseOrder | null> => {
+    const { data, error } = await db.from('purchase_orders').select('*').eq('id', id).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) return null
+    return toPurchaseOrder(data as PurchaseOrderRow, await fetchPurchaseOrderLines(id))
   }
 
   return {
@@ -1083,48 +1219,306 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       return { ok: true, value: true }
     },
 
-    // Supplier & PO methods (manager-only, requires schema extension for Supabase)
+    // Supplier & PO methods (manager-only end to end — enforced here for a
+    // clear inline error, and again by RLS at the database layer as the
+    // real backstop; see supplier_po_migration.sql / the block appended to
+    // schema.sql).
     async listSuppliers(): Promise<Supplier[]> {
-      return []
+      const { data, error } = await db.from('suppliers').select('*').order('name', { ascending: true })
+      if (error) throw new Error(error.message)
+      return (data as SupplierRow[]).map(toSupplier)
     },
-    async createSupplier(): Promise<Result<Supplier>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async createSupplier(draft): Promise<Result<Supplier>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      // suppliers.user_id has no server-side stamp trigger (unlike
+      // products/sales) — it must be set here. RLS still rejects any attempt
+      // to write a different account's id, so this can't be spoofed.
+      if (!accountId) return { ok: false, error: 'Sign in to add suppliers.' }
+      const { data, error } = await db
+        .from('suppliers')
+        .insert({ ...toSupplierRow(draft), user_id: accountId })
+        .select()
+        .single()
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: toSupplier(data as SupplierRow) }
     },
-    async updateSupplier(): Promise<Result<Supplier>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async updateSupplier(id, draft): Promise<Result<Supplier>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const { data, error } = await db
+        .from('suppliers')
+        .update(toSupplierRow(draft))
+        .eq('id', id)
+        .select()
+        .maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: toSupplier(data as SupplierRow) }
     },
-    async deleteSupplier(): Promise<Result<true>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async deleteSupplier(id): Promise<Result<true>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      // Supplier-product links and this supplier's purchase orders (and
+      // their lines) are removed automatically by the foreign keys' `on
+      // delete cascade` — matches localRepository's deleteSupplier exactly,
+      // which filters both arrays down rather than orphaning them.
+      const { error } = await db.from('suppliers').delete().eq('id', id)
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
     },
-    async linkSupplierProduct(): Promise<Result<SupplierProduct>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async linkSupplierProduct(draft): Promise<Result<SupplierProduct>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      if (!accountId) return { ok: false, error: 'Sign in to link a supplier product.' }
+      const { data, error } = await db
+        .from('supplier_products')
+        .insert({ ...toSupplierProductRow(draft), user_id: accountId })
+        .select()
+        .single()
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: toSupplierProduct(data as SupplierProductRow) }
     },
-    async updateSupplierProduct(): Promise<Result<SupplierProduct>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async updateSupplierProduct(id, draft): Promise<Result<SupplierProduct>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const { data, error } = await db
+        .from('supplier_products')
+        .update(toSupplierProductRow(draft))
+        .eq('id', id)
+        .select()
+        .maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: toSupplierProduct(data as SupplierProductRow) }
     },
-    async unlinkSupplierProduct(): Promise<Result<true>> {
-      return { ok: false, error: 'Supplier management requires Supabase schema extension.' }
+
+    async unlinkSupplierProduct(id): Promise<Result<true>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const { error } = await db.from('supplier_products').delete().eq('id', id)
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
     },
+
     async listSupplierProducts(): Promise<SupplierProduct[]> {
-      return []
+      const { data, error } = await db.from('supplier_products').select('*')
+      if (error) throw new Error(error.message)
+      return (data as SupplierProductRow[]).map(toSupplierProduct)
     },
+
     async listPurchaseOrders(): Promise<PurchaseOrder[]> {
-      return []
+      const { data: poRows, error } = await db
+        .from('purchase_orders')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) throw new Error(error.message)
+
+      const { data: lineRows, error: linesError } = await db.from('purchase_order_lines').select('*')
+      if (linesError) throw new Error(linesError.message)
+
+      const linesByPo = new Map<string, PurchaseOrderLine[]>()
+      for (const row of lineRows as PurchaseOrderLineRow[]) {
+        const line = toPurchaseOrderLine(row)
+        const existing = linesByPo.get(line.poId)
+        if (existing) existing.push(line)
+        else linesByPo.set(line.poId, [line])
+      }
+
+      return (poRows as PurchaseOrderRow[]).map((row) => toPurchaseOrder(row, linesByPo.get(row.id) ?? []))
     },
-    async createPurchaseOrder(): Promise<Result<PurchaseOrder>> {
-      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+
+    async createPurchaseOrder(input): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      if (!accountId) return { ok: false, error: 'Sign in to create a purchase order.' }
+
+      const { data: supplierRow, error: supplierError } = await db
+        .from('suppliers')
+        .select('*')
+        .eq('id', input.supplierId)
+        .maybeSingle()
+      if (supplierError) return { ok: false, error: supplierError.message }
+      if (!supplierRow) return { ok: false, error: NOT_FOUND }
+      const supplier = toSupplier(supplierRow as SupplierRow)
+
+      // Snapshot sku/name from the real product rows for every line — never
+      // trust the client's own idea of a product's current sku/name, the
+      // same reasoning recordSale builds sale_items from a fresh read.
+      const productIds = [...new Set(input.lines.map((line) => line.productId))]
+      const { data: productRows, error: productsError } = await db
+        .from('products')
+        .select('*')
+        .in('id', productIds)
+      if (productsError) return { ok: false, error: productsError.message }
+      const productById = new Map((productRows as ProductRow[]).map((row) => [row.id, toProduct(row)]))
+
+      const linesToInsert: Array<{
+        product_id: string
+        sku: string
+        name: string
+        quantity: number
+        unit_cost: number
+        line_total: number
+      }> = []
+      for (const line of input.lines) {
+        const product = productById.get(line.productId)
+        if (!product) return { ok: false, error: NOT_FOUND }
+        linesToInsert.push({
+          product_id: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unit_cost: line.unitCost,
+          line_total: line.quantity * line.unitCost,
+        })
+      }
+      const subtotal = linesToInsert.reduce((sum, line) => sum + line.line_total, 0)
+
+      const { data: poRow, error: poError } = await db
+        .from('purchase_orders')
+        .insert({
+          user_id: accountId,
+          supplier_id: input.supplierId,
+          supplier_name: supplier.name,
+          status: 'draft',
+          expected_delivery_date: input.expectedDeliveryDate,
+          notes: input.notes,
+          subtotal,
+        })
+        .select()
+        .single()
+      if (poError) return { ok: false, error: poError.message }
+      const po = poRow as PurchaseOrderRow
+
+      // No user_id/account_id column on purchase_order_lines — it's scoped
+      // by RLS through a join back to purchase_orders.user_id instead (see
+      // supabase/schema.sql), so nothing account-related is sent here.
+      const { data: lineRows, error: linesError } = await db
+        .from('purchase_order_lines')
+        .insert(linesToInsert.map((line) => ({ ...line, purchase_order_id: po.id })))
+        .select()
+      if (linesError) return { ok: false, error: linesError.message }
+
+      return { ok: true, value: toPurchaseOrder(po, (lineRows as PurchaseOrderLineRow[]).map(toPurchaseOrderLine)) }
     },
-    async sendPurchaseOrder(): Promise<Result<PurchaseOrder>> {
-      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+
+    async sendPurchaseOrder(id): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const existing = await fetchPurchaseOrder(id)
+      if (!existing) return { ok: false, error: NOT_FOUND }
+      if (existing.status !== 'draft') return { ok: false, error: 'Only draft POs can be sent.' }
+
+      const { data, error } = await db.from('purchase_orders').update({ status: 'sent' }).eq('id', id).select().maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: toPurchaseOrder(data as PurchaseOrderRow, existing.lines) }
     },
-    async confirmPurchaseOrder(): Promise<Result<PurchaseOrder>> {
-      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+
+    async confirmPurchaseOrder(id): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const existing = await fetchPurchaseOrder(id)
+      if (!existing) return { ok: false, error: NOT_FOUND }
+      if (existing.status !== 'sent') return { ok: false, error: 'Only sent POs can be confirmed.' }
+
+      const { data, error } = await db
+        .from('purchase_orders')
+        .update({ status: 'confirmed' })
+        .eq('id', id)
+        .select()
+        .maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: toPurchaseOrder(data as PurchaseOrderRow, existing.lines) }
     },
-    async receivePurchaseOrder(): Promise<Result<PurchaseOrder>> {
-      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+
+    async receivePurchaseOrder(id, lineQuantities): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const existing = await fetchPurchaseOrder(id)
+      if (!existing) return { ok: false, error: NOT_FOUND }
+      if (existing.status !== 'confirmed' && existing.status !== 'sent') {
+        return { ok: false, error: 'Only sent or confirmed POs can be received.' }
+      }
+
+      const userId = await currentUserId()
+      if (!userId) return { ok: false, error: 'Sign in to receive a purchase order.' }
+
+      // Add stock for each line — same optimistic-concurrency pattern as
+      // recordMovement above (read, apply, write back only if unchanged), so
+      // two people receiving stock at once can't step on each other's
+      // product row. A line whose product has since been deleted, that
+      // receives 0 units, or whose product changed under us mid-receive is
+      // skipped rather than failing the whole PO — matches
+      // localRepository's receivePurchaseOrder, which is also best-effort
+      // per line rather than all-or-nothing.
+      for (const line of existing.lines) {
+        const qty = lineQuantities.get(line.id) ?? line.quantity
+        await db.from('purchase_order_lines').update({ quantity_received: qty }).eq('id', line.id)
+        if (qty === 0 || !line.productId) continue
+
+        const { data: productRow } = await db.from('products').select('*').eq('id', line.productId).maybeSingle()
+        if (!productRow) continue
+        const product = toProduct(productRow as ProductRow)
+        const applied = applyMovement(product, {
+          type: 'in',
+          quantity: qty,
+          reason: `PO received from ${existing.supplierName}`,
+        })
+        if (!applied.ok) continue
+
+        const { data: updatedProduct } = await db
+          .from('products')
+          .update({ quantity: applied.value.product.quantity, updated_at: applied.value.product.updatedAt })
+          .eq('id', line.productId)
+          .eq('updated_at', product.updatedAt)
+          .select()
+          .maybeSingle()
+        if (!updatedProduct) continue
+
+        const movement = applied.value.movement
+        await db.from('stock_movements').insert({
+          product_id: movement.productId,
+          user_id: userId,
+          type: movement.type,
+          quantity: movement.quantity,
+          delta: movement.delta,
+          previous_quantity: movement.previousQuantity,
+          new_quantity: movement.newQuantity,
+          reason: movement.reason ?? null,
+          created_at: movement.createdAt,
+        })
+      }
+
+      const { data, error } = await db
+        .from('purchase_orders')
+        // received_date is a `date` column (see supabase/schema.sql), not
+        // timestamptz — send the date part only, same reasoning
+        // expected_delivery_date already uses a plain YYYY-MM-DD string.
+        .update({ status: 'received', received_date: new Date().toISOString().slice(0, 10) })
+        .eq('id', id)
+        .select()
+        .maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+
+      return { ok: true, value: toPurchaseOrder(data as PurchaseOrderRow, await fetchPurchaseOrderLines(id)) }
     },
-    async cancelPurchaseOrder(): Promise<Result<PurchaseOrder>> {
-      return { ok: false, error: 'Purchase order management requires Supabase schema extension.' }
+
+    async cancelPurchaseOrder(id): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const existing = await fetchPurchaseOrder(id)
+      if (!existing) return { ok: false, error: NOT_FOUND }
+      if (existing.status === 'received' || existing.status === 'cancelled') {
+        return { ok: false, error: 'Cannot cancel a received or already-cancelled PO.' }
+      }
+
+      const { data, error } = await db
+        .from('purchase_orders')
+        .update({ status: 'cancelled' })
+        .eq('id', id)
+        .select()
+        .maybeSingle()
+      if (error) return { ok: false, error: error.message }
+      if (!data) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: toPurchaseOrder(data as PurchaseOrderRow, existing.lines) }
     },
 
     async listActivity(): Promise<ActivityLogEntry[]> {

@@ -180,6 +180,21 @@ h1, h2, h3, p { margin-top: 0; }
 .scan-code-fallback { display: grid; place-content: center; gap: .5rem; padding: 1rem; border: 1px dashed var(--border); border-radius: .8rem; color: var(--muted); text-align: center; background: #fff; }
 .scan-code-fallback code { word-break: break-all; color: #0a0a0a; }
 .breakdown-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .5rem 0; border-bottom: 1px solid rgba(145,164,188,.15); }
+/* Reports — card rows rather than real <table> markup, matching
+   .product-row/.low-stock-item elsewhere: a multi-column table doesn't fit
+   a phone screen (this app is mainly used on iPhone — see the
+   .email-suggestions comment above), a stack of cards does. */
+.report-tabs { margin-bottom: 1rem; }
+.report-section { display: grid; gap: .7rem; margin-bottom: 1.4rem; }
+.report-section h3 { margin: 0; font-size: 1rem; }
+.report-row { display: grid; gap: .6rem; padding: .9rem; border: 1px solid var(--border); border-radius: .85rem; background: rgba(7,21,35,.65); }
+.report-row-header { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.report-row-title { font-weight: 800; }
+.report-row-value { font-weight: 800; font-size: 1.1rem; }
+.report-row-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+.report-metric-label { display: block; font-size: .75rem; color: var(--muted); }
+.report-metric-value { font-weight: 700; }
+.stat-subtext { display: block; margin-top: .2rem; font-size: .72rem; color: var(--muted); }
 .cash-row { margin-top: .8rem; }
 .change-due { margin: 0; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); font-size: 1.2rem; font-weight: 800; }
 .change-due-short { color: var(--danger); border-color: #9f2940; }
@@ -232,4 +247,5 @@ h1, h2, h3, p { margin-top: 0; }
   .history-row { grid-template-columns: minmax(0, 1fr) auto; }
   .history-meta { grid-column: 1 / -1; }
   .dialog-backdrop { place-items: center; }
+  .report-row-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

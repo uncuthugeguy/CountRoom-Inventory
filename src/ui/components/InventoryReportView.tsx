@@ -8,52 +8,44 @@ interface CategoryTableProps {
 
 function CategoryTable({ categories }: CategoryTableProps) {
   if (categories.length === 0) {
-    return (
-      <div className="text-center py-6 text-gray-500">
-        No categories to display
-      </div>
-    )
+    return <p className="empty">No categories to display.</p>
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr className="bg-gray-100 border-b">
-            <th className="text-left py-2 px-3 text-gray-700">Category</th>
-            <th className="text-right py-2 px-3 text-gray-700">Products</th>
-            <th className="text-right py-2 px-3 text-gray-700">Units</th>
-            <th className="text-right py-2 px-3 text-gray-700">Out of Stock</th>
-            <th className="text-right py-2 px-3 text-gray-700">Low Stock</th>
-            <th className="text-right py-2 px-3 text-gray-700">Cost Basis</th>
-          </tr>
-        </thead>
-        <tbody>
-          {categories.map((cat, i) => (
-            <tr key={i} className="border-b hover:bg-gray-50">
-              <td className="py-2 px-3 text-gray-900 font-medium">{cat.category}</td>
-              <td className="py-2 px-3 text-right text-gray-900">{cat.productCount}</td>
-              <td className="py-2 px-3 text-right font-semibold text-gray-900">
-                {cat.totalUnits}
-              </td>
-              <td className="py-2 px-3 text-right">
-                <span className={cat.outOfStock > 0 ? 'font-semibold text-red-700' : 'text-gray-900'}>
-                  {cat.outOfStock}
-                </span>
-              </td>
-              <td className="py-2 px-3 text-right">
-                <span className={cat.lowStock > 0 ? 'font-semibold text-yellow-700' : 'text-gray-900'}>
-                  {cat.lowStock}
-                </span>
-              </td>
-              <td className="py-2 px-3 text-right text-gray-900">
-                {formatCurrency(cat.totalCostBasis)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="plain-list">
+      {categories.map((cat, i) => (
+        <li key={i} className="report-row">
+          <div className="report-row-header">
+            {/* A product with no category set groups under '' — label it
+                rather than rendering a blank, unreadable row. */}
+            <span className="report-row-title">{cat.category || 'Uncategorised'}</span>
+            <span className="report-row-value">{formatCurrency(cat.totalCostBasis)}</span>
+          </div>
+          <div className="report-row-metrics">
+            <div>
+              <span className="report-metric-label">Products</span>
+              <span className="report-metric-value">{cat.productCount}</span>
+            </div>
+            <div>
+              <span className="report-metric-label">Units</span>
+              <span className="report-metric-value">{cat.totalUnits}</span>
+            </div>
+            <div>
+              <span className="report-metric-label">Out of stock</span>
+              <span className={`report-metric-value ${cat.outOfStock > 0 ? 'quantity-low' : ''}`}>
+                {cat.outOfStock}
+              </span>
+            </div>
+            <div>
+              <span className="report-metric-label">Low stock</span>
+              <span className={`report-metric-value ${cat.lowStock > 0 ? 'quantity-low' : ''}`}>
+                {cat.lowStock}
+              </span>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -71,53 +63,34 @@ interface ProductListProps {
 }
 
 function ProductList({ title, products, warning }: ProductListProps) {
-  if (products.length === 0) {
-    return null
-  }
+  if (products.length === 0) return null
 
   return (
-    <div className="mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-semibold text-gray-900">{title}</h3>
-        <span className={`px-2 py-1 rounded text-xs font-semibold ${
-          warning ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-        }`}>
-          {products.length}
-        </span>
-      </div>
-      <div className="space-y-2">
+    <div className="report-section">
+      <h3>
+        {title} <span className="chip">{products.length}</span>
+      </h3>
+      <ul className="plain-list">
         {products.map((product, i) => (
-          <div key={i} className={`p-3 rounded border ${
-            warning ? 'bg-red-50 border-red-200' : 'bg-yellow-50 border-yellow-200'
-          }`}>
-            <div className="flex justify-between items-start mb-1">
-              <div>
-                <div className="font-semibold text-gray-900">{product.name}</div>
-                <div className="text-xs text-gray-600">{product.sku} · {product.category}</div>
-              </div>
-              {product.quantity !== undefined && (
-                <div className="text-right">
-                  <div className={`font-bold ${
-                    product.quantity === 0 ? 'text-red-700' : 'text-yellow-700'
-                  }`}>
-                    {product.quantity} units
-                  </div>
-                  {product.reorderLevel !== undefined && (
-                    <div className="text-xs text-gray-600">
-                      Reorder at: {product.reorderLevel}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {product.lastMovement && (
-              <div className="text-xs text-gray-600 mt-2">
-                Last movement: {new Date(product.lastMovement).toLocaleDateString()}
-              </div>
+          <li key={i} className="low-stock-item">
+            <span className="low-stock-name">{product.name || 'Unnamed product'}</span>
+            <span className="mono muted">{product.sku}</span>
+            {product.quantity !== undefined && (
+              <span className={warning ? 'delta delta-down' : 'low-stock-count'}>
+                {product.reorderLevel !== undefined
+                  ? `${product.quantity} / ${product.reorderLevel} on hand`
+                  : `${product.quantity} on hand`}
+              </span>
             )}
-          </div>
+            {product.category && <span className="muted">{product.category}</span>}
+            {product.lastMovement && (
+              <span className="muted">
+                Last movement: {new Date(product.lastMovement).toLocaleDateString()}
+              </span>
+            )}
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   )
 }
@@ -128,14 +101,11 @@ interface InventoryReportViewProps {
 
 export function InventoryReportView({ report }: InventoryReportViewProps) {
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Inventory Report</h2>
-        <p className="text-sm text-gray-600 mb-4">
-          As of {new Date(report.timestamp).toLocaleString()}
-        </p>
+    <div className="screen">
+      <p className="muted">As of {new Date(report.timestamp).toLocaleString()}</p>
 
-        <h3 className="font-semibold text-gray-900 mb-3">Overview</h3>
+      <div className="report-section">
+        <h3>Overview</h3>
         <MetricsGrid>
           <MetricsCard label="Total Products" value={report.overall.totalProducts} />
           <MetricsCard label="Total Units" value={report.overall.totalUnits} highlight />
@@ -149,35 +119,20 @@ export function InventoryReportView({ report }: InventoryReportViewProps) {
             value={report.overall.lowStock}
             highlight={report.overall.lowStock > 0}
           />
-          <MetricsCard
-            label="Cost Basis"
-            value={formatCurrency(report.overall.totalCostBasis)}
-          />
-          <MetricsCard
-            label="Avg Cost/Unit"
-            value={formatCurrency(report.overall.averageCostPerUnit)}
-          />
+          <MetricsCard label="Cost Basis" value={formatCurrency(report.overall.totalCostBasis)} />
+          <MetricsCard label="Avg Cost/Unit" value={formatCurrency(report.overall.averageCostPerUnit)} />
         </MetricsGrid>
       </div>
 
       {report.byCategory.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-semibold text-gray-900 mb-3">By Category</h3>
+        <div className="report-section">
+          <h3>By category</h3>
           <CategoryTable categories={report.byCategory} />
         </div>
       )}
 
-      <ProductList
-        title="Out of Stock Products"
-        products={report.outOfStockProducts}
-        warning
-      />
-
-      <ProductList
-        title="Low Stock Products"
-        products={report.lowStockProducts}
-        warning={false}
-      />
+      <ProductList title="Out of stock products" products={report.outOfStockProducts} warning />
+      <ProductList title="Low stock products" products={report.lowStockProducts} />
     </div>
   )
 }

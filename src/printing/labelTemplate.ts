@@ -97,6 +97,29 @@ export interface LabelTemplate {
   /** Which elements are actually turned on for this label — see
    * `LabelElementVisibility`. */
   include: LabelElementVisibility
+  /**
+   * Continuous, real font size in dots for the product name/variation/SKU
+   * text — Polono-only. The Zebra's CPCL `TEXT` command only ever selects
+   * one of the printer's 8 built-in bitmap fonts (`nameFont` etc., 0–7) —
+   * there's no way to ask real Zebra firmware for an arbitrary point size,
+   * so that field stays the source of truth there. The Polono path
+   * (`browserLabelPrint.ts`) renders text as real SVG/CSS instead, which
+   * has no such limit, so these fields (when set) override the stepped
+   * `nameFont`-derived size for that path only. Unset on a template that
+   * predates this (or on the Zebra, which never sets it) falls back to
+   * `textHeightDots(nameFont)` — see `textSizeDotsFor` below — so nothing
+   * changes for existing setups until someone actually customises it.
+   */
+  nameFontSizeDots?: number
+  variationFontSizeDots?: number
+  skuFontSizeDots?: number
+  /** CSS font-family for the same three elements, same Polono-only
+   * reasoning — the Zebra's CPCL bitmap glyphs have no concept of a font
+   * family at all. One of `POLONO_FONT_CHOICES`' `family` values; anything
+   * else (a stray/corrupted value) is sanitised back to the default. */
+  nameFontFamily?: string
+  variationFontFamily?: string
+  skuFontFamily?: string
 }
 
 /**
@@ -128,6 +151,59 @@ export const MAX_LOGO_DOTS = 2000
  * "Print test label" exists. Shared so the editor and `sanitiseLabelTemplate`
  * agree on what a font size means. */
 export const textHeightDots = (font: number): number => 14 + font * 6
+
+/** A curated set of web-safe font stacks offered for the Polono's name/
+ * variation/SKU text — Zebra-incompatible, see `nameFontFamily`'s doc
+ * comment on `LabelTemplate` for why. Kept short and all genuinely
+ * available without a web font fetch (this renders straight to a print
+ * dialog, no time to wait on a font download) — every stack ends in a
+ * generic family as a safety net. */
+export const POLONO_FONT_CHOICES: { label: string; family: string }[] = [
+  { label: 'Monospace (default)', family: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
+  { label: 'Sans-serif', family: 'ui-sans-serif, -apple-system, "Segoe UI", Arial, sans-serif' },
+  { label: 'Serif', family: 'Georgia, "Times New Roman", serif' },
+  { label: 'Condensed (fits more text)', family: '"Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif' },
+]
+export const DEFAULT_POLONO_FONT_FAMILY = POLONO_FONT_CHOICES[0].family
+
+export const MIN_CUSTOM_FONT_DOTS = 6
+export const MAX_CUSTOM_FONT_DOTS = 600
+
+const TEXT_FONT_INDEX_FIELD = { name: 'nameFont', variation: 'variationFont', sku: 'skuFont' } as const
+export const FONT_SIZE_FIELD = {
+  name: 'nameFontSizeDots',
+  variation: 'variationFontSizeDots',
+  sku: 'skuFontSizeDots',
+} as const
+export const FONT_FAMILY_FIELD = {
+  name: 'nameFontFamily',
+  variation: 'variationFontFamily',
+  sku: 'skuFontFamily',
+} as const
+export type TextElementKey = keyof typeof TEXT_FONT_INDEX_FIELD
+
+/** Resolves the real, rendered text height (in dots) for the name/
+ * variation/SKU text — the single source of truth shared by the Settings ›
+ * Label template editor's live preview (`LabelCanvas`) and the actual
+ * Polono print output (`browserLabelPrint.ts`), so what's shown while
+ * dragging/resizing is exactly what prints. `polono: true` prefers the
+ * continuous `*FontSizeDots` override when the template has one; the Zebra
+ * (`polono: false`) always uses the stepped `textHeightDots(nameFont)` size
+ * instead, since that's genuinely all its firmware can do. */
+export function textSizeDotsFor(template: LabelTemplate, key: TextElementKey, polono: boolean): number {
+  const custom = template[FONT_SIZE_FIELD[key]]
+  if (polono && typeof custom === 'number') return custom
+  return textHeightDots(template[TEXT_FONT_INDEX_FIELD[key]])
+}
+
+/** Resolves the real, rendered font-family for the same three elements —
+ * always the fixed monospace look for the Zebra (CPCL bitmap glyphs have
+ * no font-family concept at all), or the template's chosen
+ * `POLONO_FONT_CHOICES` family for the Polono. */
+export function textFamilyFor(template: LabelTemplate, key: TextElementKey, polono: boolean): string {
+  if (!polono) return 'ui-monospace, monospace'
+  return template[FONT_FAMILY_FIELD[key]] ?? DEFAULT_POLONO_FONT_FAMILY
+}
 
 /** Rough glyph width for the preview and edge-of-label warnings — not an
  * exact match for the printer's built-in fonts, just enough to flag "this is
@@ -228,6 +304,27 @@ export const PRINTER_LABELS: Record<PrinterKind, string> = {
   polono: 'Polono PL80E',
 }
 
+/**
+ * How the Polono's browser print path (`browserLabelPrint.ts`) should
+ * orient the label on the page — a workaround for a real, confirmed
+ * problem: Chrome's own print dialog defaults to Portrait for this
+ * label's landscape (wider-than-tall) size and doesn't self-correct,
+ * which either leaves a manual "switch to Landscape" step in the OS's own
+ * print dialog every time (`'off'`, the safe default — nothing about
+ * printing changes from how it's always worked), or, once confirmed
+ * correct via a real test print, lets the app pre-rotate the artwork so
+ * the dialog's own Portrait default already comes out right (`'cw'`/
+ * `'ccw'` — the two possible rotation directions, since which one reads
+ * right-side-up depends on the printer driver and isn't knowable in
+ * advance; see the Settings › Label template screen's Orientation panel,
+ * which is built specifically to let this be tested safely against the
+ * print *preview* before ever touching a real label).
+ */
+export type PolonoPrintRotation = 'off' | 'cw' | 'ccw'
+export const DEFAULT_POLONO_PRINT_ROTATION: PolonoPrintRotation = 'off'
+export const sanitisePolonoPrintRotation = (value: unknown): PolonoPrintRotation =>
+  value === 'cw' || value === 'ccw' ? value : 'off'
+
 /** A 2in x 1in label at 203 dpi — the Polono PL80E's native resolution.
  * Unlike the Zebra, the Polono prints through the OS's normal print dialog
  * rather than raw commands (see `printing/browserLabelPrint.ts`), but it
@@ -280,23 +377,61 @@ export const PRINTER_LABELS: Record<PrinterKind, string> = {
  * on purpose (see above) — so the barcode is what grows to fill the
  * reclaimed space. End result: name(8–34) + gap + barcode(38–156) + gap +
  * sku(160–198) uses 198 of the label's 203 dots, not 178 — under 3% left
- * over, down from about 12%. */
+ * over, down from about 12%.
+ *
+ * **2026-08-21 pass**: despite the above already computing to ~97.5% fill,
+ * Mason measured an actual printed label (straight-down photo, pixel
+ * measurement) at only ~47–50% fill — roughly half of what the numbers on
+ * paper predicted, on a printer/driver confirmed (via the print dialog
+ * itself) to have the correct 2in×1in paper size and 100% scale, so this
+ * isn't a page-size or print-scale problem. No code-level cause for that
+ * specific gap was found. Per Mason's direct instruction ("stop
+ * overcomplicating, change the template size"), pushed every element to the
+ * literal maximum the 203-dot height allows: switched name/SKU to the
+ * Polono's continuous font-size fields (`nameFontSizeDots`/
+ * `skuFontSizeDots` — see their doc comment above) instead of the coarser
+ * stepped `nameFont`/`skuFont` index, and tightened every margin/gap to just
+ * a few dots. New layout: name(3–35) + gap(3) + barcode(38–163) + gap(2) +
+ * sku(165–199) — 199 of 203 dots, ~98%, essentially the ceiling for this
+ * canvas size. If a real print still shows large blank space after this,
+ * the cause is downstream of these dot values (something in the print
+ * pipeline itself, not a layout number) — see the notes doc for the current
+ * open-question list before attempting a further numeric change here. */
 export const DEFAULT_POLONO_LABEL_TEMPLATE: LabelTemplate = {
   widthDots: 406,
   heightDots: 203,
-  dpi: 203,
-  nameFont: 2,
+  // NOT the Polono's spec-sheet 203 dpi — see the big comment above this
+  // constant for why. Mason confirmed by direct test that manually setting
+  // "Label width/length" to 80mm × 40mm (instead of the true 50.8mm ×
+  // 25.4mm = 2in × 1in label) made the print fill the real, physical 2×1in
+  // label edge-to-edge. Since `widthIn = widthDots / dpi` is the only thing
+  // that actually reaches the printer as a physical size (the 406×203 *dot*
+  // coordinate space — and every element position/size tuned into it above
+  // — stays exactly as designed either way), the equivalent, less
+  // disruptive fix is to lower `dpi` so that same math produces ~80×40mm
+  // instead of touching every position: 406/129 ≈ 3.15in (80.0mm), 203/129
+  // ≈ 1.57in (40.0mm) — matching Mason's tested numbers almost exactly.
+  dpi: 129,
+  nameFont: 3,
   variationFont: 2,
-  skuFont: 4,
-  barcodeHeight: 118,
+  skuFont: 3,
+  // Uses the Polono's continuous font-size fields (see `nameFontSizeDots`
+  // etc. on `LabelTemplate`) instead of only the stepped `nameFont`/`skuFont`
+  // index, specifically so the default can be tuned to the exact dot height
+  // that maximises vertical fill (98% of the label's 203-dot height, see the
+  // 2026-08-21 layout math below) rather than being stuck on whichever of
+  // the 8 fixed CPCL steps happens to be closest.
+  nameFontSizeDots: 32,
+  skuFontSizeDots: 34,
+  barcodeHeight: 125,
   barcodeModuleWidth: 3,
   logoWidthDots: 60,
   logoHeightDots: 40,
   logo: { x: 330, y: 8 },
-  name: { x: 15, y: 8 },
+  name: { x: 15, y: 3 },
   variation: { x: 15, y: 36 },
   barcode: { x: 15, y: 38 },
-  sku: { x: 15, y: 160 },
+  sku: { x: 15, y: 165 },
   darkness: 14,
   printSpeedIps: 2,
   include: { ...DEFAULT_LABEL_ELEMENT_VISIBILITY, variation: false, logo: false },
@@ -350,6 +485,37 @@ export function sanitiseLabelTemplate(partial: Partial<LabelTemplate> | undefine
   const merged = { ...DEFAULT_LABEL_TEMPLATE, ...partial }
   const widthDots = clampInt(merged.widthDots, 100, 4000)
   const heightDots = clampInt(merged.heightDots, 100, 4000)
+
+  // A stray/out-of-range custom font size can't be trusted until it's
+  // clamped, but the clamped value is also needed below (twice: once to
+  // store, once to size the vertical position clamp) — so it's computed
+  // once up front for each of the three text elements.
+  const sanitiseFontSizeDots = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clampInt(value, MIN_CUSTOM_FONT_DOTS, MAX_CUSTOM_FONT_DOTS)
+      : undefined
+  const sanitiseFontFamily = (value: unknown): string | undefined =>
+    typeof value === 'string' && POLONO_FONT_CHOICES.some((choice) => choice.family === value) ? value : undefined
+  const nameFontSizeDots = sanitiseFontSizeDots(merged.nameFontSizeDots)
+  const variationFontSizeDots = sanitiseFontSizeDots(merged.variationFontSizeDots)
+  const skuFontSizeDots = sanitiseFontSizeDots(merged.skuFontSizeDots)
+
+  // The vertical position clamp for each text element needs to keep
+  // whichever height could actually end up on the label — the Zebra's
+  // stepped `textHeightDots(font)` or, if set, the Polono's larger (or
+  // smaller) continuous override — so a custom size saved on one printer
+  // can't leave a position that would run the *other* rendering off the
+  // bottom.
+  const nameHeightForClamp = Math.max(
+    textHeightDots(clampInt(merged.nameFont, MIN_FONT, MAX_FONT)),
+    nameFontSizeDots ?? 0,
+  )
+  const variationHeightForClamp = Math.max(
+    textHeightDots(clampInt(merged.variationFont, MIN_FONT, MAX_FONT)),
+    variationFontSizeDots ?? 0,
+  )
+  const skuHeightForClamp = Math.max(textHeightDots(clampInt(merged.skuFont, MIN_FONT, MAX_FONT)), skuFontSizeDots ?? 0)
+
   return {
     widthDots,
     heightDots,
@@ -380,17 +546,12 @@ export function sanitiseLabelTemplate(partial: Partial<LabelTemplate> | undefine
     // fixed, knowable quantity, so that's all that's safely clampable at
     // save time. Horizontal overrun (a long product name) is instead caught
     // live, per-product, by the editor's on-screen warning.
-    name: clampPosition(
-      partial?.name,
-      DEFAULT_LABEL_TEMPLATE.name,
-      widthDots,
-      Math.max(0, heightDots - textHeightDots(clampInt(merged.nameFont, MIN_FONT, MAX_FONT))),
-    ),
+    name: clampPosition(partial?.name, DEFAULT_LABEL_TEMPLATE.name, widthDots, Math.max(0, heightDots - nameHeightForClamp)),
     variation: clampPosition(
       partial?.variation,
       DEFAULT_LABEL_TEMPLATE.variation,
       widthDots,
-      Math.max(0, heightDots - textHeightDots(clampInt(merged.variationFont, MIN_FONT, MAX_FONT))),
+      Math.max(0, heightDots - variationHeightForClamp),
     ),
     barcode: clampPosition(
       partial?.barcode,
@@ -398,15 +559,22 @@ export function sanitiseLabelTemplate(partial: Partial<LabelTemplate> | undefine
       Math.max(0, widthDots - estimateBarcodeWidthDots(clampInt(merged.barcodeModuleWidth, 1, 10))),
       Math.max(0, heightDots - clampInt(merged.barcodeHeight, 10, 1000)),
     ),
-    sku: clampPosition(
-      partial?.sku,
-      DEFAULT_LABEL_TEMPLATE.sku,
-      widthDots,
-      Math.max(0, heightDots - textHeightDots(clampInt(merged.skuFont, MIN_FONT, MAX_FONT))),
-    ),
+    sku: clampPosition(partial?.sku, DEFAULT_LABEL_TEMPLATE.sku, widthDots, Math.max(0, heightDots - skuHeightForClamp)),
     darkness: clampInt(merged.darkness, 0, 30),
     printSpeedIps: clampInt(merged.printSpeedIps, 2, 12),
     include: sanitiseVisibility(merged.include),
+    ...(nameFontSizeDots !== undefined ? { nameFontSizeDots } : {}),
+    ...(variationFontSizeDots !== undefined ? { variationFontSizeDots } : {}),
+    ...(skuFontSizeDots !== undefined ? { skuFontSizeDots } : {}),
+    ...(sanitiseFontFamily(merged.nameFontFamily) !== undefined
+      ? { nameFontFamily: sanitiseFontFamily(merged.nameFontFamily) }
+      : {}),
+    ...(sanitiseFontFamily(merged.variationFontFamily) !== undefined
+      ? { variationFontFamily: sanitiseFontFamily(merged.variationFontFamily) }
+      : {}),
+    ...(sanitiseFontFamily(merged.skuFontFamily) !== undefined
+      ? { skuFontFamily: sanitiseFontFamily(merged.skuFontFamily) }
+      : {}),
   }
 }
 

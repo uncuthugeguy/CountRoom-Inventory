@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { createSettingsStore } from '../data/settingsStorage'
 import type { Settings } from '../data/settingsStorage'
 import type { QuickCode, QuickCodeDraft } from '../domain/quickCodes'
-import type { LabelPreset, LabelTemplate, PrinterKind } from '../printing/labelTemplate'
+import type { LabelPreset, LabelTemplate, PolonoPrintRotation, PrinterKind } from '../printing/labelTemplate'
 
 export interface SettingsApi extends Settings {
   setLogo(dataUrl: string): void
@@ -11,6 +11,7 @@ export interface SettingsApi extends Settings {
   renameChannel(oldName: string, newName: string): void
   removeChannel(name: string): void
   setPrinterKind(kind: PrinterKind): void
+  setPolonoPrintRotation(rotation: PolonoPrintRotation): void
   setLabelTemplate(template: LabelTemplate): void
   resetLabelTemplate(): void
   setPolonoLabelTemplate(template: LabelTemplate): void
@@ -64,6 +65,10 @@ export function useSettings(storage?: Storage): SettingsApi {
     },
     setPrinterKind: (kind: PrinterKind) => {
       store.setPrinterKind(kind)
+      setSettings(store.get())
+    },
+    setPolonoPrintRotation: (rotation: PolonoPrintRotation) => {
+      store.setPolonoPrintRotation(rotation)
       setSettings(store.get())
     },
     setLabelTemplate: (template: LabelTemplate) => {

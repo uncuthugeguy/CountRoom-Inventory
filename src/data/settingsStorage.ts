@@ -2,8 +2,11 @@ import { sanitiseQuickCodes, type QuickCode, type QuickCodeDraft } from '../doma
 import {
   sanitiseLabelTemplate,
   sanitisePolonoLabelTemplate,
+  sanitisePolonoPrintRotation,
+  DEFAULT_POLONO_PRINT_ROTATION,
   type LabelPreset,
   type LabelTemplate,
+  type PolonoPrintRotation,
   type PrinterKind,
 } from '../printing/labelTemplate'
 
@@ -46,6 +49,13 @@ export interface Settings {
    * different sizes/resolutions. Falls back to `DEFAULT_POLONO_LABEL_TEMPLATE`
    * when unset. Local-only, same reasoning as `printerKind` above. */
   polonoLabelTemplate?: LabelTemplate
+  /** How the Polono's browser print path orients the label on the printed
+   * page — see `PolonoPrintRotation` in `labelTemplate.ts`. Defaults to
+   * `'off'` (today's existing behaviour, unchanged) until tested and set
+   * otherwise via the Label template screen's Orientation panel.
+   * Device-local for the same reason as `printerKind` — it depends on this
+   * machine's browser/OS/driver combination, not on the business account. */
+  polonoPrintRotation: PolonoPrintRotation
   /** Named, saved label layouts — e.g. "Shipping label", "RV" — that can be
    * loaded back over `labelTemplate` at any time. Saving one doesn't change
    * what currently prints; only loading one does. Zebra-only for now — see
@@ -70,6 +80,7 @@ export interface Settings {
 const empty = (): Settings => ({
   saleChannels: [...DEFAULT_SALE_CHANNELS],
   printerKind: 'zebra',
+  polonoPrintRotation: DEFAULT_POLONO_PRINT_ROTATION,
   labelPresets: [],
   quickCodes: [],
   productCategories: [],
@@ -96,6 +107,7 @@ function read(storage: Storage): Settings {
         ? parsed.saleChannels.filter((value): value is string => typeof value === 'string')
         : [...DEFAULT_SALE_CHANNELS]
     const printerKind = sanitisePrinterKind(parsed.printerKind)
+    const polonoPrintRotation = sanitisePolonoPrintRotation(parsed.polonoPrintRotation)
     const labelTemplate =
       parsed.labelTemplate && typeof parsed.labelTemplate === 'object'
         ? sanitiseLabelTemplate(parsed.labelTemplate)
@@ -113,6 +125,7 @@ function read(storage: Storage): Settings {
       ...(logoDataUrl ? { logoDataUrl } : {}),
       saleChannels,
       printerKind,
+      polonoPrintRotation,
       ...(labelTemplate ? { labelTemplate } : {}),
       ...(polonoLabelTemplate ? { polonoLabelTemplate } : {}),
       labelPresets,
@@ -132,6 +145,7 @@ export interface SettingsStore {
   renameChannel(oldName: string, newName: string): void
   removeChannel(name: string): void
   setPrinterKind(kind: PrinterKind): void
+  setPolonoPrintRotation(rotation: PolonoPrintRotation): void
   setLabelTemplate(template: LabelTemplate): void
   resetLabelTemplate(): void
   setPolonoLabelTemplate(template: LabelTemplate): void
@@ -222,6 +236,11 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
 
     setPrinterKind(kind: PrinterKind) {
       state = { ...state, printerKind: sanitisePrinterKind(kind) }
+      persist()
+    },
+
+    setPolonoPrintRotation(rotation: PolonoPrintRotation) {
+      state = { ...state, polonoPrintRotation: sanitisePolonoPrintRotation(rotation) }
       persist()
     },
 
