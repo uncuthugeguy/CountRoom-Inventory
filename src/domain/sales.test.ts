@@ -258,14 +258,22 @@ describe('saleFeeTotal', () => {
 
 describe('checkOrderTotal', () => {
   it('returns null until an order total has been entered', () => {
-    expect(checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: null })).toBeNull()
+    expect(
+      checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, deliveryPaidBy: 'buyer', vat: 0.49, orderTotal: null }),
+    ).toBeNull()
   })
 
   it('matches when subtotal + buyer protection fee + delivery + VAT equals the order total', () => {
     // A real eBay order: Subtotal 28.00 + Buyer Protection fee 1.82 +
     // Postage 2.45 + VAT 0.49 = Order total 32.76. Compared with toBeCloseTo
     // throughout — floating-point addition lands a few femtopence off exact.
-    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    const check = checkOrderTotal(28, {
+      buyerProtectionFee: 1.82,
+      deliveryCost: 2.45,
+      deliveryPaidBy: 'buyer',
+      vat: 0.49,
+      orderTotal: 32.76,
+    })
     expect(check?.itemised).toBeCloseTo(32.76)
     expect(check?.entered).toBe(32.76)
     expect(check?.difference).toBeCloseTo(0)
@@ -276,14 +284,43 @@ describe('checkOrderTotal', () => {
     // Same real order, but with an ad fee also entered — the order total
     // check should still match, because that fee is the seller's own
     // expense and was never part of what the buyer paid.
-    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    const check = checkOrderTotal(28, {
+      buyerProtectionFee: 1.82,
+      deliveryCost: 2.45,
+      deliveryPaidBy: 'buyer',
+      vat: 0.49,
+      orderTotal: 32.76,
+    })
+    expect(check?.matches).toBe(true)
+  })
+
+  it('excludes delivery cost from the itemised total when the seller paid it', () => {
+    // Free-postage listing: the seller ate the 2.45 courier cost themselves,
+    // so it never showed up on the buyer's receipt. The buyer's order total
+    // is just subtotal + buyer protection fee + VAT = 28 + 1.82 + 0.49 = 30.31,
+    // and that should match even though a (seller-paid) delivery cost was
+    // also entered for profit purposes.
+    const check = checkOrderTotal(28, {
+      buyerProtectionFee: 1.82,
+      deliveryCost: 2.45,
+      deliveryPaidBy: 'seller',
+      vat: 0.49,
+      orderTotal: 30.31,
+    })
+    expect(check?.itemised).toBeCloseTo(30.31)
     expect(check?.matches).toBe(true)
   })
 
   it('flags a short itemised total — likely a forgotten fee — with the exact gap', () => {
     // Buyer protection fee never got entered: 28 + 0 + 2.45 + 0.49 = 30.94,
     // but the order total copied from the receipt is 32.76.
-    const check = checkOrderTotal(28, { buyerProtectionFee: 0, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.76 })
+    const check = checkOrderTotal(28, {
+      buyerProtectionFee: 0,
+      deliveryCost: 2.45,
+      deliveryPaidBy: 'buyer',
+      vat: 0.49,
+      orderTotal: 32.76,
+    })
     expect(check?.itemised).toBeCloseTo(30.94)
     expect(check?.entered).toBe(32.76)
     expect(check?.difference).toBeCloseTo(1.82)
@@ -291,12 +328,18 @@ describe('checkOrderTotal', () => {
   })
 
   it('flags an itemised total that overshoots the entered order total', () => {
-    const check = checkOrderTotal(28, { buyerProtectionFee: 5, deliveryCost: 0, vat: 0, orderTotal: 30 })
+    const check = checkOrderTotal(28, { buyerProtectionFee: 5, deliveryCost: 0, deliveryPaidBy: 'buyer', vat: 0, orderTotal: 30 })
     expect(check).toEqual({ itemised: 33, entered: 30, difference: -3, matches: false })
   })
 
   it('treats a mismatch within a penny of rounding as a match', () => {
-    const check = checkOrderTotal(28, { buyerProtectionFee: 1.82, deliveryCost: 2.45, vat: 0.49, orderTotal: 32.7601 })
+    const check = checkOrderTotal(28, {
+      buyerProtectionFee: 1.82,
+      deliveryCost: 2.45,
+      deliveryPaidBy: 'buyer',
+      vat: 0.49,
+      orderTotal: 32.7601,
+    })
     expect(check?.matches).toBe(true)
   })
 })

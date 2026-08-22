@@ -1236,9 +1236,12 @@ describe('checkout', () => {
 
     await user.type(screen.getByLabelText('Buyer protection fee'), '1')
     await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
     await user.type(screen.getByLabelText(/^vat$/i), '0.5')
 
     // Itemised: 0.05 + 1 + 2 + 0.5 = 3.55 — enter that as the order total.
+    // (Delivery only counts here because the buyer paid it — otherwise it
+    // never showed up on the buyer's own order total.)
     await user.type(screen.getByLabelText(/order total/i), '3.55')
     expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (3.55).')
 
@@ -1249,6 +1252,27 @@ describe('checkout', () => {
     expect(screen.getByTestId('order-total-check')).toHaveTextContent(
       "You've itemised 3.55, but entered an order total of 5.00 — you're 1.45 short. Check you haven't missed a fee.",
     )
+  })
+
+  it('excludes delivery cost from the itemised check when the seller paid it', async () => {
+    const { user } = await renderApp()
+    await go(user, /checkout/i)
+
+    // M6 Flat Washer: cost 0.01, price 0.05 → subtotal 0.05 for one.
+    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
+    await user.click(screen.getByRole('button', { name: /add to sale/i }))
+    await screen.findByTestId('cart-row')
+
+    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
+    await user.click(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i }))
+    await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    // Left as the default — seller paid for delivery (e.g. a free-postage
+    // listing) — so it never appeared on the buyer's own order total.
+
+    // Itemised for reconciliation purposes: 0.05 + 1 (delivery excluded) =
+    // 1.05, which is what the buyer's real order total should equal.
+    await user.type(screen.getByLabelText(/order total/i), '1.05')
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (1.05).')
   })
 
   it('flags the item-price-already-includes-a-fee mistake with an actionable message', async () => {
@@ -1267,9 +1291,11 @@ describe('checkout', () => {
 
     await user.type(screen.getByLabelText('Buyer protection fee'), '1')
     await user.type(screen.getByLabelText(/delivery cost/i), '2')
+    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
     await user.type(screen.getByLabelText(/^vat$/i), '0.5')
     // Itemised: 3 + 1 + 2 + 0.5 = 6.5, but the real order total was only 5 —
     // the fees are already baked into the (too-high) item price above.
+    // (Delivery counts here because the buyer paid it.)
     await user.type(screen.getByLabelText(/order total/i), '5')
 
     expect(screen.getByTestId('order-total-check')).toHaveTextContent(

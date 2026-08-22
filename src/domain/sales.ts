@@ -177,10 +177,19 @@ export function saleFeeTotal(fees: {
  * buyer's own receipt, confirmed against a real eBay "what your buyer paid"
  * breakdown (subtotal + Buyer Protection fee + postage + VAT = order total,
  * with the ad fee only showing up later, under "what you earned").
+ *
+ * `deliveryCost` is only folded into the itemised total when the buyer paid
+ * it. The buyer protection fee is a marketplace-mandated charge that always
+ * lands on the buyer's own order total regardless of who ultimately bears
+ * the cost, but delivery cost in this app is the seller's actual shipping
+ * expense — when the seller pays it (e.g. a free-postage listing), it never
+ * appeared on the buyer's receipt at all, so it has no business being added
+ * to a total that's supposed to reconcile against what the buyer paid.
  */
 export interface OrderTotalCheck {
-  /** subtotal + buyer protection fee + delivery cost + VAT — everything a
-   * marketplace's own order summary would show as making up the total. */
+  /** subtotal + buyer protection fee + (delivery cost, only if the buyer
+   * paid it) + VAT — everything a marketplace's own order summary would
+   * show as making up the total. */
   itemised: number
   /** The order total as entered, straight from the resolved fees. */
   entered: number
@@ -194,10 +203,11 @@ export interface OrderTotalCheck {
 
 export function checkOrderTotal(
   subtotal: number,
-  fees: { buyerProtectionFee: number; deliveryCost: number; vat: number; orderTotal: number | null },
+  fees: { buyerProtectionFee: number; deliveryCost: number; deliveryPaidBy: PaidBy; vat: number; orderTotal: number | null },
 ): OrderTotalCheck | null {
   if (fees.orderTotal === null) return null
-  const itemised = subtotal + fees.buyerProtectionFee + fees.deliveryCost + fees.vat
+  const deliveryOnBuyerReceipt = fees.deliveryPaidBy === 'buyer' ? fees.deliveryCost : 0
+  const itemised = subtotal + fees.buyerProtectionFee + deliveryOnBuyerReceipt + fees.vat
   const entered = fees.orderTotal
   const difference = entered - itemised
   return { itemised, entered, difference, matches: Math.abs(difference) < 0.005 }
