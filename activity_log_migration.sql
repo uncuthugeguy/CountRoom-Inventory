@@ -1,4 +1,4 @@
--- StockFlow: shared activity log migration (v3 — defensive column handling)
+-- CountRoom: shared activity log migration (v3 — defensive column handling)
 -- Run this in Supabase Dashboard > SQL Editor.
 --
 -- v2 hit "column entity_type does not exist" on your database — most likely
@@ -147,7 +147,7 @@ as $$
 begin
   new.account_id := public.current_account_id();
   if new.account_id is null then
-    raise exception 'You are not part of a StockFlow account.';
+    raise exception 'You are not part of a CountRoom account.';
   end if;
   new.actor_id := auth.uid();
   return new;

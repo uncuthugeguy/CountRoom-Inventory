@@ -1,4 +1,4 @@
--- StockFlow schema for Supabase/PostgreSQL
+-- CountRoom schema for Supabase/PostgreSQL
 -- Run this complete file in Supabase Dashboard > SQL Editor.
 -- Safe to re-run: every statement is idempotent (create-if-not-exists,
 -- create-or-replace, drop-then-create for policies/triggers).
@@ -17,7 +17,7 @@ create extension if not exists pgcrypto;
 -- unchanged for anyone who never invites a teammate.
 --
 -- Inviting an employee: a manager calls invite_employee(email). If that
--- email already has a StockFlow login, they're linked to the manager's
+-- email already has a CountRoom login, they're linked to the manager's
 -- account immediately. Otherwise a pending row waits for them — when they
 -- sign up with that exact email, the handle_new_user trigger below links
 -- it automatically instead of bootstrapping them as their own new account.
@@ -50,7 +50,7 @@ create index if not exists memberships_account_idx on public.memberships (accoun
 -- same policy check forever.
 -- Mandatory MFA gate ---------------------------------------------------
 --
--- Every StockFlow account must enroll a verified TOTP factor and reach
+-- Every CountRoom account must enroll a verified TOTP factor and reach
 -- AAL2 before it can touch any business data. This is enforced here,
 -- server-side — not just in the client's sign-in flow, which a direct API
 -- call could skip entirely — by making the two helper functions almost
@@ -197,7 +197,7 @@ begin
       set status = 'removed'
       where account_id = v_account and status = 'pending' and lower(invited_email) = v_email and member_id is null;
 
-    -- Already has a StockFlow login somewhere — link them in immediately.
+    -- Already has a CountRoom login somewhere — link them in immediately.
     insert into public.memberships (account_id, member_id, role, status, invited_email)
     values (v_account, v_existing_user_id, 'employee', 'active', v_email)
     on conflict (account_id, member_id) do update
@@ -302,7 +302,7 @@ as $$
 begin
   new.user_id := public.current_account_id();
   if new.user_id is null then
-    raise exception 'You are not part of a StockFlow account.';
+    raise exception 'You are not part of a CountRoom account.';
   end if;
   return new;
 end;
@@ -380,7 +380,7 @@ as $$
 begin
   new.user_id := public.current_account_id();
   if new.user_id is null then
-    raise exception 'You are not part of a StockFlow account.';
+    raise exception 'You are not part of a CountRoom account.';
   end if;
   new.created_by := auth.uid();
   return new;
@@ -1788,7 +1788,7 @@ as $$
 begin
   new.account_id := public.current_account_id();
   if new.account_id is null then
-    raise exception 'You are not part of a StockFlow account.';
+    raise exception 'You are not part of a CountRoom account.';
   end if;
   new.actor_id := auth.uid();
   return new;

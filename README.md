@@ -22,7 +22,7 @@ Installable barcode inventory PWA for macOS and iPhone. It runs immediately in l
 Requires Node.js 20 or newer.
 
 ```bash
-cd /home/ubuntuadmin/stockflow-pwa
+cd /home/ubuntuadmin/countroom-inventory
 npm install
 npm run dev
 ```
@@ -32,7 +32,7 @@ Open `http://localhost:5173`. Without environment variables, CountRoom automatic
 ## Verify
 
 ```bash
-cd /home/ubuntuadmin/stockflow-pwa
+cd /home/ubuntuadmin/countroom-inventory
 npm test -- --run
 npm run typecheck
 npm run build
@@ -65,7 +65,7 @@ The production preview runs at `http://localhost:4173`.
 4. Copy `.env.example` to `.env.local`:
 
 ```bash
-cd /home/ubuntuadmin/stockflow-pwa
+cd /home/ubuntuadmin/countroom-inventory
 cp .env.example .env.local
 ```
 
@@ -104,7 +104,7 @@ The same React/Vite code above is wrapped two different ways for native installs
 Always rebuild the web app first:
 
 ```bash
-cd /home/ubuntuadmin/stockflow-pwa
+cd /home/ubuntuadmin/countroom-inventory
 npm install
 npm run build
 ```
@@ -183,7 +183,7 @@ Each native shell needs one manual permission wire-up the first time:
 ## Deploy to Vercel
 
 ```bash
-cd /home/ubuntuadmin/stockflow-pwa
+cd /home/ubuntuadmin/countroom-inventory
 npm install -g vercel
 vercel login
 vercel
