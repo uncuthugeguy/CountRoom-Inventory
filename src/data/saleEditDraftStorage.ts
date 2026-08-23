@@ -40,7 +40,7 @@ function read(storage: Storage): SavedSaleEditDraft | null {
  * repository, it exists purely so a half-finished edit (items, quantities,
  * prices, channel, payment method, fees) survives the dialog being torn down
  * and rebuilt — which, unlike the product form, happens on every internal
- * StockFlow tab switch as well as a real tab/app switch, since the dialog is
+ * CountRoom tab switch as well as a real tab/app switch, since the dialog is
  * only ever open while History's Sales view is mounted. Cleared only by a
  * successful save or by signing out — never just by hitting Cancel or
  * switching away, same rule productDraftStorage.ts documents.

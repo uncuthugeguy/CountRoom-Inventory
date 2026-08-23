@@ -12,8 +12,12 @@ import type { CapacitorConfig } from '@capacitor/cli'
  * projects and is painful to rename after the fact.
  */
 const config: CapacitorConfig = {
+  // appId is left as-is on purpose — it's baked into the generated native
+  // projects (Android/iOS) and renaming it changes the app's identity for
+  // app stores and already-installed copies. Update it deliberately, not as
+  // part of a branding pass, if you ever want it to read "countroom".
   appId: 'com.masonsfinds.stockflow',
-  appName: 'StockFlow',
+  appName: 'CountRoom Inventory',
   webDir: 'dist',
   server: {
     // Local network calls (Supabase) still go straight over HTTPS from the

@@ -1,4 +1,4 @@
-// Removed: StockFlow no longer supports password sign-in, so there is no
+// Removed: CountRoom no longer supports password sign-in, so there is no
 // password to reset. Magic link is the only sign-in method (see
 // AuthScreen.tsx); every session is then walked through mandatory TOTP
 // enrollment/verification (see MfaEnrollScreen.tsx / MfaChallengeScreen.tsx).

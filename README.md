@@ -1,4 +1,4 @@
-# StockFlow
+# CountRoom Inventory
 
 Installable barcode inventory PWA for macOS and iPhone. It runs immediately in local demo mode and includes a Supabase adapter for cloud synchronization.
 
@@ -27,7 +27,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Without environment variables, StockFlow automatically uses its local demo database.
+Open `http://localhost:5173`. Without environment variables, CountRoom automatically uses its local demo database.
 
 ## Verify
 
@@ -47,8 +47,8 @@ The production preview runs at `http://localhost:4173`.
 
 1. Pair or connect a scanner configured as a HID keyboard.
 2. Configure its suffix to send **Enter/Return** after every barcode.
-3. Open StockFlow and scan from any screen while no edit dialog is open.
-4. StockFlow opens the matching product; unknown codes open the new-product workflow.
+3. Open CountRoom and scan from any screen while no edit dialog is open.
+4. CountRoom opens the matching product; unknown codes open the new-product workflow.
 
 ### iPhone camera
 
@@ -76,13 +76,13 @@ The schema scopes every product and movement to the signed-in *account* through 
 
 ### Sign-in: magic link only, with mandatory authenticator MFA
 
-StockFlow has no password sign-in at all — email magic link is the only way in, and every account must enroll a TOTP authenticator app (Google Authenticator, 1Password, Authy, etc.) immediately after their first sign-in. This is enforced twice: the app walks a new session through enrollment/verification before showing any screen, and `supabase/schema.sql` refuses to resolve an account (so every table's Row Level Security policy denies access) for a session that hasn't verified a TOTP factor and reached AAL2 — so it can't be bypassed by calling the API directly.
+CountRoom has no password sign-in at all — email magic link is the only way in, and every account must enroll a TOTP authenticator app (Google Authenticator, 1Password, Authy, etc.) immediately after their first sign-in. This is enforced twice: the app walks a new session through enrollment/verification before showing any screen, and `supabase/schema.sql` refuses to resolve an account (so every table's Row Level Security policy denies access) for a session that hasn't verified a TOTP factor and reached AAL2 — so it can't be bypassed by calling the API directly.
 
 Dashboard setup for this to work on a deployed domain:
 
 1. **Authentication > Providers > Email**: keep Email enabled; "Confirm email" can stay on, since the magic link itself is the confirmation.
-2. **Authentication > URL Configuration**: set **Site URL** to your production domain (e.g. `https://stockflow.example.com`) and add it under **Redirect URLs** too. Add any preview/staging domains the same way — a magic link or a stale bookmark that redirects to a URL not on this list fails with a page-not-found rather than signing in.
-3. **Authentication > Multi-Factor Authentication**: enable **TOTP**. StockFlow's own AAL2 check in `schema.sql` is what makes MFA mandatory — this dashboard toggle just needs to be on so the `auth.mfa.enroll()` calls succeed.
+2. **Authentication > URL Configuration**: set **Site URL** to your production domain (e.g. `https://countroom.example.com`) and add it under **Redirect URLs** too. Add any preview/staging domains the same way — a magic link or a stale bookmark that redirects to a URL not on this list fails with a page-not-found rather than signing in.
+3. **Authentication > Multi-Factor Authentication**: enable **TOTP**. CountRoom's own AAL2 check in `schema.sql` is what makes MFA mandatory — this dashboard toggle just needs to be on so the `auth.mfa.enroll()` calls succeed.
 
 ### Team accounts (manager/employee)
 
@@ -92,7 +92,7 @@ To bring an employee on:
 
 1. Sign in as yourself and open **Settings > Team**.
 2. Enter their email under "Invite an employee" and submit. This only works signed in as a manager (the account owner, by default).
-3. Have them open StockFlow and **sign up** (not sign in) using that *exact* email address. They're linked into your account automatically the moment their account is created — invite first, then have them sign up, in that order.
+3. Have them open CountRoom and **sign up** (not sign in) using that *exact* email address. They're linked into your account automatically the moment their account is created — invite first, then have them sign up, in that order.
 4. They'll see the same app with a few things missing: no cost or profit anywhere, no deleting a product or changing what it costs/sells for, no overriding a sale price at checkout, no approving a stocktake recount, and no processing a refund, goodwill gesture or write-off. Everything else — scanning, counting, selling at the listed price, adding new products — works the same as it does for you.
 
 Local (offline demo) mode has no real second login, so it always runs as manager — team accounts only apply once Supabase is connected.
@@ -115,7 +115,7 @@ npm run build
 npm run electron:build:mac
 ```
 
-Produces `release/StockFlow-<version>.dmg`. Open it and drag StockFlow into Applications. First launch, right-click the app and choose **Open** — it's unsigned, so a plain double-click gets blocked as "unidentified developer."
+Produces `release/CountRoom Inventory-<version>.dmg`. Open it and drag CountRoom Inventory into Applications. First launch, right-click the app and choose **Open** — it's unsigned, so a plain double-click gets blocked as "unidentified developer."
 
 ### Windows (.exe)
 
@@ -125,7 +125,7 @@ Run this on an actual Windows machine — simplest way to avoid cross-build head
 npm run electron:build:win
 ```
 
-Produces `release/StockFlow Setup <version>.exe`. Running it triggers a SmartScreen warning since it's unsigned — click **More info > Run anyway**.
+Produces `release/CountRoom Inventory Setup <version>.exe`. Running it triggers a SmartScreen warning since it's unsigned — click **More info > Run anyway**.
 
 ### Android (.apk)
 
@@ -153,7 +153,7 @@ A free Apple ID is enough for this — no paid account required to test on your 
 
 ### iPhone — testing with other people (TestFlight)
 
-Not needed for using StockFlow yourself — the free PWA (**Safari > Share > Add to Home Screen**) keeps working with no account at all, side by side with everything below. This is only for handing a native build to other people's iPhones without publishing to the App Store, which Apple doesn't allow without at least this.
+Not needed for using CountRoom yourself — the free PWA (**Safari > Share > Add to Home Screen**) keeps working with no account at all, side by side with everything below. This is only for handing a native build to other people's iPhones without publishing to the App Store, which Apple doesn't allow without at least this.
 
 1. Enrol at [developer.apple.com/programs](https://developer.apple.com/programs) — $99/year (£79/year in the UK, VAT included). Personal or sole-trader enrolment is instant; a registered company needs a D-U-N-S number first, which can take longer.
 2. In **App Store Connect** (appstoreconnect.apple.com), create a new app record — bundle ID must match `com.masonsfinds.stockflow` from `capacitor.config.ts`, registered first under **Certificates, IDs & Profiles > Identifiers**.
@@ -161,9 +161,9 @@ Not needed for using StockFlow yourself — the free PWA (**Safari > Share > Add
 4. Back in App Store Connect, under the app's **TestFlight** tab:
    - **Internal testers** — add up to 100 people who are members of your App Store Connect team; they get the build instantly by email invite, no Apple review involved.
    - **External testers** — invite anyone by email or share a public link (up to 10,000 testers); the first build goes through a lightweight **Beta App Review** (usually under a day, far less strict than a full App Store review), after which updates ship instantly.
-5. Testers install the **TestFlight** app from the App Store, accept the email/link invite, and get StockFlow through it — it shows a countdown to expiry (builds expire after 90 days, just upload a new one to extend).
+5. Testers install the **TestFlight** app from the App Store, accept the email/link invite, and get CountRoom through it — it shows a countdown to expiry (builds expire after 90 days, just upload a new one to extend).
 
-None of this requires ever actually submitting StockFlow to the public App Store — TestFlight is Apple's sanctioned "send it to people without publishing it" path, it just isn't free.
+None of this requires ever actually submitting CountRoom to the public App Store — TestFlight is Apple's sanctioned "send it to people without publishing it" path, it just isn't free.
 
 ### Camera permission (barcode scanning)
 
@@ -172,7 +172,7 @@ Each native shell needs one manual permission wire-up the first time:
 - **iOS** — after `npx cap add ios`, open `ios/App/App/Info.plist` and add:
   ```xml
   <key>NSCameraUsageDescription</key>
-  <string>StockFlow uses the camera to scan product barcodes.</string>
+  <string>CountRoom uses the camera to scan product barcodes.</string>
   ```
 - **Android** — Capacitor usually adds the camera permission automatically; if scanning never prompts for it, add `<uses-permission android:name="android.permission.CAMERA" />` to `android/app/src/main/AndroidManifest.xml`.
 

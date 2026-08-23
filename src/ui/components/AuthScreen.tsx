@@ -9,7 +9,7 @@ export interface AuthScreenProps {
 }
 
 /**
- * Magic-link sign-in — the only sign-in method StockFlow offers. There is no
+ * Magic-link sign-in — the only sign-in method CountRoom offers. There is no
  * password field anywhere in this flow: `signInWithOtp` creates a brand new
  * account automatically the first time an email is used (Supabase's
  * `shouldCreateUser` defaults to true), so the same form covers sign-up too.
@@ -72,7 +72,8 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
   if (magicLinkSent) {
     return (
       <div className="boot">
-        <h1>StockFlow</h1>
+        <img src="/mark.svg" alt="" className="boot-mark" />
+        <h1>Count<span className="brand-accent">Room</span></h1>
         <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
           <p className="preview" role="status">
             Check {email} for a sign-in link, then open it on this device.
@@ -89,7 +90,8 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
 
   return (
     <div className="boot">
-      <h1>StockFlow</h1>
+      <img src="/mark.svg" alt="" className="boot-mark" />
+      <h1>Count<span className="brand-accent">Room</span></h1>
       <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
         <h2>Sign in</h2>
         <form className="form" onSubmit={submit} noValidate>

@@ -160,7 +160,7 @@ function SupabaseGate({
     return () => sub.subscription.unsubscribe()
   }, [client])
 
-  // Every StockFlow account must have a verified authenticator app and be at
+  // Every CountRoom account must have a verified authenticator app and be at
   // AAL2 before it can touch any inventory data — enforced again, server
   // side, by the RLS policies in schema.sql, so this check can't be bypassed
   // by skipping the UI.
@@ -182,7 +182,8 @@ function SupabaseGate({
   if (!checked) {
     return (
       <div className="boot">
-        <h1>StockFlow</h1>
+        <img src="/mark.svg" alt="" className="boot-mark" />
+        <h1>Count<span className="brand-accent">Room</span></h1>
         <p className="muted" role="status">
           Checking sign-in status…
         </p>
@@ -199,7 +200,8 @@ function SupabaseGate({
   if (mfa.kind === 'checking') {
     return (
       <div className="boot">
-        <h1>StockFlow</h1>
+        <img src="/mark.svg" alt="" className="boot-mark" />
+        <h1>Count<span className="brand-accent">Room</span></h1>
         <p className="muted" role="status">
           Checking two-factor status…
         </p>
@@ -428,7 +430,8 @@ function AuthenticatedApp({
   if (inventory.status === 'error') {
     return (
       <div className="boot">
-        <h1>StockFlow</h1>
+        <img src="/mark.svg" alt="" className="boot-mark" />
+        <h1>Count<span className="brand-accent">Room</span></h1>
         <p className="alert" role="alert">
           {inventory.error}
         </p>
@@ -442,9 +445,10 @@ function AuthenticatedApp({
   if (inventory.status === 'loading') {
     return (
       <div className="boot">
-        <h1>StockFlow</h1>
+        <img src="/mark.svg" alt="" className="boot-mark" />
+        <h1>Count<span className="brand-accent">Room</span></h1>
         <p className="muted" role="status">
-          Opening the inventoryâ¦
+          Opening the inventory…
         </p>
       </div>
     )
@@ -455,13 +459,16 @@ function AuthenticatedApp({
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            â®â¯â®
+            <img src="/mark.svg" alt="" />
           </span>
-          <h1>StockFlow</h1>
+          <div className="brand-text">
+            <h1>Count<span className="brand-accent">Room</span></h1>
+            <span className="brand-sublabel">Inventory</span>
+          </div>
         </div>
         <div className="header-right">
           <span className="badge backend" data-testid="backend-badge">
-            {inventory.backend === 'supabase' ? 'Supabase â synced' : 'Offline â on this device'}
+            {inventory.backend === 'supabase' ? 'Supabase — synced' : 'Offline — on this device'}
           </span>
           {onSignOut && (
             <>

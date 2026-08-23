@@ -50,7 +50,8 @@ export function MfaChallengeScreen({ client, factorId, onVerified, onSignOut }: 
 
   return (
     <div className="boot">
-      <h1>StockFlow</h1>
+      <img src="/mark.svg" alt="" className="boot-mark" />
+      <h1>Count<span className="brand-accent">Room</span></h1>
       <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
         <h2>Enter your authenticator code</h2>
         <p className="muted">Open your authenticator app and enter the current 6-digit code.</p>

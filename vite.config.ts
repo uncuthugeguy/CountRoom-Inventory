@@ -12,18 +12,18 @@ export default defineConfig({
   // dir sits right in that sync path, so cache invalidation intermittently
   // throws EPERM on unlink and the dev server won't start. Pointing the
   // cache outside the synced tree avoids that entirely.
-  cacheDir: path.join(os.tmpdir(), 'stockflow-pwa-vite-cache'),
+  cacheDir: path.join(os.tmpdir(), 'countroom-inventory-vite-cache'),
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-512x512-maskable.png'],
       manifest: {
-        name: 'StockFlow Inventory',
-        short_name: 'StockFlow',
+        name: 'CountRoom Inventory',
+        short_name: 'CountRoom',
         description: 'Barcode-driven inventory management for Mac and iPhone.',
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
+        theme_color: '#211d19',
+        background_color: '#211d19',
         display: 'standalone',
         orientation: 'portrait',
         scope: '/',
@@ -32,7 +32,7 @@ export default defineConfig({
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
           {
-            src: 'pwa-512x512.png',
+            src: 'pwa-512x512-maskable.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',

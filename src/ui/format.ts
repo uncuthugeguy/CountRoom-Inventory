@@ -38,7 +38,7 @@ export function formatRelativeTime(iso: string): string {
 
 /** Plain 2dp numeric formatting for money amounts — matches the `.toFixed(2)`
  * convention used at checkout and elsewhere in the app (no currency symbol,
- * since StockFlow doesn't assume one). */
+ * since CountRoom doesn't assume one). */
 export const formatCurrency = (value: number): string => value.toFixed(2)
 
 /** A percentage value that's already scaled 0-100 (e.g. profit margin) — the

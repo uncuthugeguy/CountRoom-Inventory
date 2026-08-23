@@ -85,11 +85,12 @@ export function MfaEnrollScreen({ client, onEnrolled }: MfaEnrollScreenProps) {
 
   return (
     <div className="boot">
-      <h1>StockFlow</h1>
+      <img src="/mark.svg" alt="" className="boot-mark" />
+      <h1>Count<span className="brand-accent">Room</span></h1>
       <div className="panel" style={{ width: 'min(400px, 100%)', textAlign: 'left' }}>
         <h2>Set up two-factor authentication</h2>
         <p className="muted">
-          StockFlow requires an authenticator app for every account. Scan this code with an app
+          CountRoom requires an authenticator app for every account. Scan this code with an app
           like Google Authenticator, 1Password or Authy, then enter the 6-digit code it shows to
           finish setting up.
         </p>

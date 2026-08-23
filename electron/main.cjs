@@ -21,8 +21,8 @@ function createWindow() {
     height: 860,
     minWidth: 720,
     minHeight: 560,
-    backgroundColor: '#0f172a',
-    title: 'StockFlow',
+    backgroundColor: '#211d19',
+    title: 'CountRoom Inventory',
     webPreferences: {
       // Nothing in the renderer needs Node access — it's the same web app
       // that already runs in a regular browser tab, just in its own window.

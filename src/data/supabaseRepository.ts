@@ -1029,7 +1029,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       // The membership row above is what actually grants access — the email
       // below is just a courtesy so the new person doesn't have to be told
       // by hand to go sign in. Only send it for a genuinely new invite
-      // (status 'pending'); someone who already had a StockFlow login
+      // (status 'pending'); someone who already had a CountRoom login
       // elsewhere (status 'active', linked in immediately) doesn't need one.
       // A failed send never fails the invite itself — the membership already
       // exists either way — it only changes what the caller tells the

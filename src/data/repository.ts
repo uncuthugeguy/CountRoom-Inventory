@@ -73,7 +73,7 @@ export interface TeamMember {
    * brand-new invite so they can get started without being told to visit the
    * site themselves; `false` if sending it failed (they were still added to
    * the team — just tell them to sign in manually); `undefined` when no
-   * email was attempted at all (e.g. they already had a StockFlow login
+   * email was attempted at all (e.g. they already had a CountRoom login
    * elsewhere and were linked in immediately).
    */
   emailSent?: boolean

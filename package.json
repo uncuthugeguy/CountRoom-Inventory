@@ -1,5 +1,5 @@
 {
-  "name": "stockflow-pwa",
+  "name": "countroom-inventory",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -50,7 +50,7 @@
   },
   "build": {
     "appId": "com.masonsfinds.stockflow",
-    "productName": "StockFlow",
+    "productName": "CountRoom Inventory",
     "files": [
       "dist/**/*",
       "electron/**/*"

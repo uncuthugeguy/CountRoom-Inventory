@@ -121,7 +121,7 @@ function ReceiptDialog({
  * a dialog and seeded from the sale being edited.
  *
  * Rendered at the top level of the app (see App.tsx), not nested inside
- * History's Sales view — so switching to another StockFlow tab while
+ * History's Sales view — so switching to another CountRoom tab while
  * editing no longer tears this dialog down (the same reason
  * ProductFormDialog lives at that level). Autosaves to localStorage on top
  * of that, same pattern as productDraftStorage.ts, so an in-progress edit
@@ -713,7 +713,7 @@ function SalesView({
   sales: Sale[]
   role: Role
   /** Opens the sale in the top-level Edit sale dialog (see App.tsx) — lifted
-   *  out of this view entirely so switching StockFlow tabs mid-edit doesn't
+   *  out of this view entirely so switching CountRoom tabs mid-edit doesn't
    *  tear the edit down; see SaleEditDialog's own doc comment. */
   onEditSale: (sale: Sale) => void
   recalledSale?: Sale | null
