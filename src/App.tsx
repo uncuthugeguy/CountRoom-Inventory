@@ -3,6 +3,8 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { createRepository, resolveBackend, type Backend } from './data/createRepository'
 import { clearProductDraft } from './data/productDraftStorage'
 import { clearSaleEditDraft } from './data/saleEditDraftStorage'
+import { clearSupplierDraft } from './data/supplierDraftStorage'
+import { clearPurchaseOrderDraft } from './data/purchaseOrderDraftStorage'
 import { getSupabaseClient } from './data/supabaseClient'
 import { DUPLICATE_SKU, type InventoryRepository, type Role } from './data/repository'
 import { findByScan } from './domain/inventory'
@@ -61,6 +63,10 @@ export interface AppProps {
   productDraftStorage?: Storage
   /** Overridden in tests; backs the Edit-sale dialog's autosave (see saleEditDraftStorage.ts). */
   saleEditDraftStorage?: Storage
+  /** Overridden in tests; backs the supplier-form autosave (see supplierDraftStorage.ts). */
+  supplierDraftStorage?: Storage
+  /** Overridden in tests; backs the new-PO-form autosave (see purchaseOrderDraftStorage.ts). */
+  purchaseOrderDraftStorage?: Storage
   /** Overridden in tests; backs the sign-in screen's remembered-email suggestions (see recentEmailsStorage.ts). */
   emailStorage?: Storage
 }
@@ -228,11 +234,14 @@ function SupabaseGate({
     <AuthenticatedApp
       {...props}
       onSignOut={() => {
-        // Both drafts are in-progress edits tied to whoever is signed in —
-        // neither should resurface for the next person to sign in on this
-        // device (see productDraftStorage.ts / saleEditDraftStorage.ts).
+        // All of these are in-progress edits tied to whoever is signed in —
+        // none should resurface for the next person to sign in on this
+        // device (see productDraftStorage.ts / saleEditDraftStorage.ts /
+        // supplierDraftStorage.ts / purchaseOrderDraftStorage.ts).
         clearProductDraft(props.productDraftStorage)
         clearSaleEditDraft(props.saleEditDraftStorage)
+        clearSupplierDraft(props.supplierDraftStorage)
+        clearPurchaseOrderDraft(props.purchaseOrderDraftStorage)
         client.auth.signOut()
       }}
       userEmail={session.user.email ?? undefined}
@@ -251,6 +260,8 @@ function AuthenticatedApp({
   settingsStorage,
   productDraftStorage,
   saleEditDraftStorage,
+  supplierDraftStorage,
+  purchaseOrderDraftStorage,
   onSignOut,
   userEmail,
 }: AuthenticatedAppProps) {
@@ -583,7 +594,12 @@ function AuthenticatedApp({
         )}
 
         {tab === 'suppliers' && role === 'manager' && (
-          <SuppliersScreen inventory={inventory} products={inventory.products} />
+          <SuppliersScreen
+            inventory={inventory}
+            products={inventory.products}
+            supplierDraftStorage={supplierDraftStorage}
+            purchaseOrderDraftStorage={purchaseOrderDraftStorage}
+          />
         )}
 
         {tab === 'codes' && role === 'manager' && <QuickCodesScreen settings={settings} />}

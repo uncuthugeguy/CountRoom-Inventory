@@ -122,6 +122,8 @@ async function renderApp(repo?: InventoryRepository) {
       settingsStorage={memoryStorage()}
       productDraftStorage={memoryStorage()}
       saleEditDraftStorage={memoryStorage()}
+      supplierDraftStorage={memoryStorage()}
+      purchaseOrderDraftStorage={memoryStorage()}
     />,
   )
   await screen.findByTestId('stat-products')
@@ -1574,6 +1576,10 @@ describe('suppliers and purchase orders', () => {
     await user.type(screen.getByLabelText(/usual lead time/i), '5')
     await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
 
+    // Saving asks for confirmation first, same as the product form.
+    expect(await screen.findByText(/add "acme fasteners ltd" as a new supplier/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /yes, save/i }))
+
     const supplierList = await screen.findByTestId('supplier-list')
     expect(supplierList).toHaveTextContent('Acme Fasteners Ltd')
 
@@ -1586,6 +1592,10 @@ describe('suppliers and purchase orders', () => {
     await user.clear(screen.getByLabelText('Unit cost'))
     await user.type(screen.getByLabelText('Unit cost'), '0.01')
     await user.click(screen.getByRole('button', { name: /create draft po/i }))
+
+    // Same confirmation step for the PO.
+    expect(await screen.findByText(/create this purchase order for acme fasteners ltd/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /yes, create/i }))
 
     const poList = await screen.findByTestId('purchase-order-list')
     expect(poList).toHaveTextContent('Acme Fasteners Ltd')
@@ -1625,11 +1635,62 @@ describe('suppliers and purchase orders', () => {
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
     await user.type(screen.getByLabelText(/supplier name/i), 'Temp Supplier')
     await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
+    await user.click(await screen.findByRole('button', { name: /yes, save/i }))
     await screen.findByText('Temp Supplier')
 
     await user.click(screen.getByRole('button', { name: /delete temp supplier/i }))
     await waitFor(() => expect(screen.queryByText('Temp Supplier')).not.toBeInTheDocument())
     expect(screen.getByText(/no suppliers yet/i)).toBeInTheDocument()
+  })
+
+  it('remembers an in-progress supplier draft if the dialog is closed without saving', async () => {
+    const { user } = await renderApp()
+    await go(user, /suppliers/i)
+
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    await user.type(screen.getByLabelText(/supplier name/i), 'Draft Supplier Co')
+
+    // Cancelling without saving stands in for the dialog getting torn down
+    // by a real tab/app switch (e.g. a backgrounded PWA reloading) —
+    // supplierDraftStorage.ts deliberately never clears on close, only on a
+    // successful save or sign-out, same rule productDraftStorage.ts and
+    // saleEditDraftStorage.ts use.
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    const reopened = screen.getByRole('dialog')
+    expect(within(reopened).getByText(/picked up where you left off/i)).toBeInTheDocument()
+    expect(within(reopened).getByLabelText(/supplier name/i)).toHaveValue('Draft Supplier Co')
+
+    await user.click(within(reopened).getByRole('button', { name: /discard draft/i }))
+    expect(within(reopened).getByLabelText(/supplier name/i)).toHaveValue('')
+  })
+
+  it('remembers an in-progress purchase order draft if the dialog is closed without saving', async () => {
+    const { user } = await renderApp()
+    await go(user, /suppliers/i)
+
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    await user.type(screen.getByLabelText(/supplier name/i), 'Acme Fasteners Ltd')
+    await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
+    await user.click(await screen.findByRole('button', { name: /yes, save/i }))
+    await screen.findByTestId('supplier-list')
+
+    await user.click(screen.getByRole('button', { name: /new purchase order/i }))
+    await user.selectOptions(screen.getByLabelText(/^supplier$/i), 'Acme Fasteners Ltd')
+    await user.type(screen.getByLabelText(/notes \(optional\)/i), 'Ring before delivery')
+
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /new purchase order/i }))
+    const reopened = screen.getByRole('dialog')
+    expect(within(reopened).getByText(/picked up where you left off/i)).toBeInTheDocument()
+    expect(within(reopened).getByLabelText(/notes \(optional\)/i)).toHaveValue('Ring before delivery')
+
+    await user.click(within(reopened).getByRole('button', { name: /discard draft/i }))
+    expect(within(reopened).getByLabelText(/notes \(optional\)/i)).toHaveValue('')
   })
 
   it('hides the Suppliers tab from an employee', async () => {
@@ -1641,6 +1702,8 @@ describe('suppliers and purchase orders', () => {
         settingsStorage={memoryStorage()}
         productDraftStorage={memoryStorage()}
         saleEditDraftStorage={memoryStorage()}
+        supplierDraftStorage={memoryStorage()}
+        purchaseOrderDraftStorage={memoryStorage()}
       />,
     )
     await screen.findByTestId('stat-products')

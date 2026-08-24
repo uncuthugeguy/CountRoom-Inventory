@@ -1,13 +1,30 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import type { Inventory } from '../useInventory'
-import type { Product } from '../../domain/types'
+import type { Product, Result } from '../../domain/types'
 import type { PurchaseOrder, PurchaseOrderStatus, Supplier, SupplierDraft } from '../../domain/suppliers'
+import {
+  clearSupplierDraft,
+  loadSupplierDraftFor,
+  saveSupplierDraft,
+  type SupplierDraftContext,
+} from '../../data/supplierDraftStorage'
+import {
+  clearPurchaseOrderDraft,
+  loadPurchaseOrderDraft,
+  savePurchaseOrderDraft,
+  type PurchaseOrderDraft,
+  type PurchaseOrderDraftLine,
+} from '../../data/purchaseOrderDraftStorage'
 import { Dialog } from '../components/Dialog'
 import { formatCurrency } from '../format'
 
 export interface SuppliersScreenProps {
   inventory: Inventory
   products: Product[]
+  /** Overridden in tests; backs the supplier-form autosave (see supplierDraftStorage.ts). */
+  supplierDraftStorage?: Storage
+  /** Overridden in tests; backs the new-PO-form autosave (see purchaseOrderDraftStorage.ts). */
+  purchaseOrderDraftStorage?: Storage
 }
 
 const EMPTY_SUPPLIER_DRAFT: SupplierDraft = {
@@ -19,6 +36,8 @@ const EMPTY_SUPPLIER_DRAFT: SupplierDraft = {
   contactName: '',
   notes: '',
 }
+
+const EMPTY_PO_LINE: PurchaseOrderDraftLine = { productId: '', quantity: '1', unitCost: '' }
 
 const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
   draft: 'Draft',
@@ -36,33 +55,98 @@ const STATUS_BADGE_CLASS: Record<PurchaseOrderStatus, string> = {
   cancelled: 'badge badge-out',
 }
 
-/** Same fields either way, just a different starting point and submit handler. */
+/**
+ * Same fields either way, just a different starting point and submit
+ * handler. Autosaves to `supplierDraftStorage` on every change (so a
+ * half-typed supplier survives switching tabs or closing the dialog by
+ * accident) and asks for confirmation before actually saving — same pattern
+ * as ProductFormDialog, added for the same reason: a stray Enter or tap used
+ * to save-and-close immediately, which caught people out.
+ */
 function SupplierForm({
   idPrefix,
+  context,
   initial,
+  addLabel,
   submitLabel,
   onSubmit,
   onCancel,
+  draftStorage,
 }: {
   idPrefix: string
+  context: SupplierDraftContext
   initial: SupplierDraft
+  /** Whether this is adding a brand new supplier or editing an existing one — only changes the confirm-step wording. */
+  addLabel: boolean
   submitLabel: string
-  onSubmit: (draft: SupplierDraft) => void
+  onSubmit: (draft: SupplierDraft) => Promise<Result<Supplier>>
   onCancel: () => void
+  draftStorage?: Storage
 }) {
-  const [name, setName] = useState(initial.name)
-  const [email, setEmail] = useState(initial.email)
-  const [phone, setPhone] = useState(initial.phone)
-  const [address, setAddress] = useState(initial.address)
-  const [leadTimeDays, setLeadTimeDays] = useState(String(initial.leadTimeDays))
-  const [contactName, setContactName] = useState(initial.contactName)
-  const [notes, setNotes] = useState(initial.notes)
+  const [restoredDraft] = useState<SupplierDraft | null>(() => loadSupplierDraftFor(context, draftStorage))
+  const seed = restoredDraft ?? initial
+  const [name, setName] = useState(seed.name)
+  const [email, setEmail] = useState(seed.email)
+  const [phone, setPhone] = useState(seed.phone)
+  const [address, setAddress] = useState(seed.address)
+  const [leadTimeDays, setLeadTimeDays] = useState(String(seed.leadTimeDays))
+  const [contactName, setContactName] = useState(seed.contactName)
+  const [notes, setNotes] = useState(seed.notes)
+  // Whether this dialog opened with unsaved work already sitting in the
+  // autosave — shown as a note with the option to start over instead.
+  const [restored, setRestored] = useState(restoredDraft !== null)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  // Set once the form has passed validation, holding the validated draft
+  // while a "are you sure" confirmation is shown instead of saving right
+  // away — see ProductFormDialog for the same pattern and reasoning.
+  const [confirming, setConfirming] = useState<SupplierDraft | null>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Autosaves on every change so the form survives a tab switch, the phone
+  // backgrounding the PWA, or an accidental close — cleared only by a
+  // successful save (below) or by signing out (see App.tsx).
+  useEffect(() => {
+    saveSupplierDraft(
+      context,
+      {
+        name,
+        email,
+        phone,
+        address,
+        leadTimeDays: Math.max(0, Math.round(Number(leadTimeDays)) || 0),
+        contactName,
+        notes,
+      },
+      draftStorage,
+    )
+    // context is derived once from stable props (which supplier, if any, this
+    // dialog opened for) — re-deriving it every render is unnecessary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, email, phone, address, leadTimeDays, contactName, notes, draftStorage])
+
+  useEffect(() => {
+    if (confirming) confirmButtonRef.current?.focus()
+  }, [confirming])
+
+  const discardDraft = () => {
+    clearSupplierDraft(draftStorage)
+    setName(initial.name)
+    setEmail(initial.email)
+    setPhone(initial.phone)
+    setAddress(initial.address)
+    setLeadTimeDays(String(initial.leadTimeDays))
+    setContactName(initial.contactName)
+    setNotes(initial.notes)
+    setRestored(false)
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     const trimmedName = name.trim()
     if (!trimmedName) return
-    onSubmit({
+    setError(null)
+    setConfirming({
       name: trimmedName,
       email: email.trim(),
       phone: phone.trim(),
@@ -73,8 +157,60 @@ function SupplierForm({
     })
   }
 
+  const backToEditing = () => setConfirming(null)
+
+  const confirmSave = async () => {
+    if (!confirming) return
+    setSaving(true)
+    const result = await onSubmit(confirming)
+    setSaving(false)
+    if (!result.ok) {
+      setError(result.error)
+      return
+    }
+    clearSupplierDraft(draftStorage)
+    setConfirming(null)
+  }
+
+  if (confirming) {
+    return (
+      <div className="form">
+        <p className="dialog-message">
+          {addLabel ? `Add "${confirming.name}" as a new supplier?` : `Save these changes to ${confirming.name}?`}
+        </p>
+
+        {error && (
+          <p className="alert" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="dialog-actions">
+          <button type="button" className="button button-ghost" onClick={backToEditing} disabled={saving}>
+            Back
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            ref={confirmButtonRef}
+            onClick={confirmSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Yes, save'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <form className="form" onSubmit={submit}>
+      {restored && (
+        <p className="hint" role="status">
+          Picked up where you left off — this wasn't saved yet.
+        </p>
+      )}
+
       <div className="field">
         <label htmlFor={`${idPrefix}-name`}>Supplier name</label>
         <input id={`${idPrefix}-name`} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
@@ -115,7 +251,19 @@ function SupplierForm({
           onChange={(e) => setNotes(e.target.value)}
         />
       </div>
+
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+
       <div className="dialog-actions">
+        {restored && (
+          <button type="button" className="button button-ghost" onClick={discardDraft}>
+            Discard draft
+          </button>
+        )}
         <button type="button" className="button button-ghost" onClick={onCancel}>
           Cancel
         </button>
@@ -127,18 +275,25 @@ function SupplierForm({
   )
 }
 
-interface NewPoLine {
-  productId: string
-  quantity: string
-  unitCost: string
-}
+const emptyPoDraft = (defaultSupplierId: string): PurchaseOrderDraft => ({
+  supplierId: defaultSupplierId,
+  expectedDeliveryDate: '',
+  notes: '',
+  lines: [{ ...EMPTY_PO_LINE }],
+})
 
+/**
+ * Same autosave + confirm-before-save treatment as SupplierForm above.
+ * There's only ever one "new PO" draft slot (no edit-PO form to disambiguate
+ * against), so it isn't keyed to anything — see purchaseOrderDraftStorage.ts.
+ */
 function NewPurchaseOrderForm({
   idPrefix,
   suppliers,
   products,
   onSubmit,
   onCancel,
+  draftStorage,
 }: {
   idPrefix: string
   suppliers: Supplier[]
@@ -148,27 +303,64 @@ function NewPurchaseOrderForm({
     expectedDeliveryDate: string
     notes: string
     lines: { productId: string; quantity: number; unitCost: number }[]
-  }) => void
+  }) => Promise<Result<PurchaseOrder>>
   onCancel: () => void
+  draftStorage?: Storage
 }) {
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? '')
-  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('')
-  const [notes, setNotes] = useState('')
-  const [lines, setLines] = useState<NewPoLine[]>([{ productId: '', quantity: '1', unitCost: '' }])
+  const fallback = () => emptyPoDraft(suppliers[0]?.id ?? '')
+  const [restoredDraft] = useState<PurchaseOrderDraft | null>(() => loadPurchaseOrderDraft(draftStorage))
+  const seed = restoredDraft ?? fallback()
+  const [supplierId, setSupplierId] = useState(seed.supplierId)
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(seed.expectedDeliveryDate)
+  const [notes, setNotes] = useState(seed.notes)
+  const [lines, setLines] = useState<PurchaseOrderDraftLine[]>(seed.lines)
+  const [restored, setRestored] = useState(restoredDraft !== null)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [confirming, setConfirming] = useState<{
+    supplierId: string
+    expectedDeliveryDate: string
+    notes: string
+    lines: { productId: string; quantity: number; unitCost: number }[]
+  } | null>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
 
-  const setLine = (index: number, patch: Partial<NewPoLine>) =>
+  const setLine = (index: number, patch: Partial<PurchaseOrderDraftLine>) =>
     setLines((current) => current.map((line, i) => (i === index ? { ...line, ...patch } : line)))
 
-  const addLine = () => setLines((current) => [...current, { productId: '', quantity: '1', unitCost: '' }])
+  const addLine = () => setLines((current) => [...current, { ...EMPTY_PO_LINE }])
   const removeLine = (index: number) => setLines((current) => current.filter((_, i) => i !== index))
 
   const usableLines = lines.filter((line) => line.productId && Number(line.quantity) > 0)
   const subtotal = usableLines.reduce((sum, line) => sum + Number(line.quantity) * (Number(line.unitCost) || 0), 0)
+  const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? ''
+
+  // Autosaves on every change — same lifecycle as the supplier form and
+  // ProductFormDialog: survives a tab switch or an accidental close, cleared
+  // only by a successful "Create draft PO" or by signing out (see App.tsx).
+  useEffect(() => {
+    savePurchaseOrderDraft({ supplierId, expectedDeliveryDate, notes, lines }, draftStorage)
+  }, [supplierId, expectedDeliveryDate, notes, lines, draftStorage])
+
+  useEffect(() => {
+    if (confirming) confirmButtonRef.current?.focus()
+  }, [confirming])
+
+  const discardDraft = () => {
+    clearPurchaseOrderDraft(draftStorage)
+    const start = fallback()
+    setSupplierId(start.supplierId)
+    setExpectedDeliveryDate(start.expectedDeliveryDate)
+    setNotes(start.notes)
+    setLines(start.lines)
+    setRestored(false)
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!supplierId || usableLines.length === 0) return
-    onSubmit({
+    setError(null)
+    setConfirming({
       supplierId,
       expectedDeliveryDate,
       notes: notes.trim(),
@@ -180,8 +372,61 @@ function NewPurchaseOrderForm({
     })
   }
 
+  const backToEditing = () => setConfirming(null)
+
+  const confirmSave = async () => {
+    if (!confirming) return
+    setSaving(true)
+    const result = await onSubmit(confirming)
+    setSaving(false)
+    if (!result.ok) {
+      setError(result.error)
+      return
+    }
+    clearPurchaseOrderDraft(draftStorage)
+    setConfirming(null)
+  }
+
+  if (confirming) {
+    const itemCount = confirming.lines.length
+    return (
+      <div className="form">
+        <p className="dialog-message">
+          {`Create this purchase order for ${supplierName || 'this supplier'} — ${itemCount} item${itemCount === 1 ? '' : 's'}, subtotal ${formatCurrency(subtotal)}?`}
+        </p>
+
+        {error && (
+          <p className="alert" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="dialog-actions">
+          <button type="button" className="button button-ghost" onClick={backToEditing} disabled={saving}>
+            Back
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            ref={confirmButtonRef}
+            onClick={confirmSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Yes, create'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <form className="form" onSubmit={submit}>
+      {restored && (
+        <p className="hint" role="status">
+          Picked up where you left off — this wasn't saved yet.
+        </p>
+      )}
+
       <div className="field">
         <label htmlFor={`${idPrefix}-supplier`}>Supplier</label>
         <select id={`${idPrefix}-supplier`} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required>
@@ -261,7 +506,18 @@ function NewPurchaseOrderForm({
         <input id={`${idPrefix}-notes`} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+
       <div className="dialog-actions">
+        {restored && (
+          <button type="button" className="button button-ghost" onClick={discardDraft}>
+            Discard draft
+          </button>
+        )}
         <button type="button" className="button button-ghost" onClick={onCancel}>
           Cancel
         </button>
@@ -283,7 +539,7 @@ function NewPurchaseOrderForm({
  * starting point. Both are easy to add later if the simple version isn't
  * enough; see the project notes for why this was cut for the first pass.
  */
-export function SuppliersScreen({ inventory, products }: SuppliersScreenProps) {
+export function SuppliersScreen({ inventory, products, supplierDraftStorage, purchaseOrderDraftStorage }: SuppliersScreenProps) {
   const idPrefix = useId()
   const [suppliers, setSuppliers] = useState<Supplier[] | null>(null)
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[] | null>(null)
@@ -474,16 +730,19 @@ export function SuppliersScreen({ inventory, products }: SuppliersScreenProps) {
         <Dialog title="Add a supplier" onClose={() => setAddingSupplier(false)}>
           <SupplierForm
             idPrefix={`${idPrefix}-add-supplier`}
+            context={{ kind: 'new' }}
             initial={EMPTY_SUPPLIER_DRAFT}
+            addLabel
             submitLabel="Add supplier"
             onCancel={() => setAddingSupplier(false)}
+            draftStorage={supplierDraftStorage}
             onSubmit={async (draft) => {
               const result = await inventory.createSupplier(draft)
-              if (!result.ok) setError(result.error)
-              else {
+              if (result.ok) {
                 setAddingSupplier(false)
                 await refreshSuppliers()
               }
+              return result
             }}
           />
         </Dialog>
@@ -493,17 +752,20 @@ export function SuppliersScreen({ inventory, products }: SuppliersScreenProps) {
         <Dialog title={`Edit ${editingSupplier.name}`} onClose={() => setEditingSupplier(null)}>
           <SupplierForm
             idPrefix={`${idPrefix}-edit-supplier`}
+            context={{ kind: 'edit', supplierId: editingSupplier.id }}
             initial={editingSupplier}
+            addLabel={false}
             submitLabel="Save changes"
             onCancel={() => setEditingSupplier(null)}
+            draftStorage={supplierDraftStorage}
             onSubmit={async (draft) => {
               const result = await inventory.updateSupplier(editingSupplier.id, draft)
-              if (!result.ok) setError(result.error)
-              else {
+              if (result.ok) {
                 setEditingSupplier(null)
                 await refreshSuppliers()
                 await refreshPurchaseOrders()
               }
+              return result
             }}
           />
         </Dialog>
@@ -516,13 +778,14 @@ export function SuppliersScreen({ inventory, products }: SuppliersScreenProps) {
             suppliers={suppliers}
             products={products}
             onCancel={() => setCreatingPo(false)}
+            draftStorage={purchaseOrderDraftStorage}
             onSubmit={async (input) => {
               const result = await inventory.createPurchaseOrder(input)
-              if (!result.ok) setError(result.error)
-              else {
+              if (result.ok) {
                 setCreatingPo(false)
                 await refreshPurchaseOrders()
               }
+              return result
             }}
           />
         </Dialog>
