@@ -16,6 +16,7 @@ import {
   type PurchaseOrderDraftLine,
 } from '../../data/purchaseOrderDraftStorage'
 import { Dialog } from '../components/Dialog'
+import { CloseIcon } from '../components/Icons'
 import { formatCurrency } from '../format'
 
 export interface SuppliersScreenProps {
@@ -489,7 +490,7 @@ function NewPurchaseOrderForm({
             />
             {lines.length > 1 && (
               <button type="button" className="button button-ghost" aria-label="Remove line" onClick={() => removeLine(index)}>
-                ✕
+                <CloseIcon />
               </button>
             )}
           </div>

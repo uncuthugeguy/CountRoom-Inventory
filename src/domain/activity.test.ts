@@ -117,11 +117,11 @@ const sale = (overrides: Partial<Sale> = {}): Sale => ({
 
 describe('saleEntityLabel', () => {
   it('identifies a sale by channel and subtotal', () => {
-    expect(saleEntityLabel(sale())).toBe('Sale — eBay (10.00)')
+    expect(saleEntityLabel(sale())).toBe('Sale — eBay (£10.00)')
   })
 
   it('falls back to "Unspecified" for a blank channel', () => {
-    expect(saleEntityLabel(sale({ channel: '' }))).toBe('Sale — Unspecified (10.00)')
+    expect(saleEntityLabel(sale({ channel: '' }))).toBe('Sale — Unspecified (£10.00)')
   })
 })
 
@@ -133,7 +133,7 @@ describe('describeSaleEdit', () => {
 
   it('summarises a quantity change on a line', () => {
     const after = sale({ subtotal: 20, lines: [saleLine({ quantity: 2, lineTotal: 20, lineProfit: 14 })] })
-    expect(describeSaleEdit(sale(), after)).toBe('subtotal 10.00 → 20.00, items 1x SKU-1 → 2x SKU-1')
+    expect(describeSaleEdit(sale(), after)).toBe('subtotal £10.00 → £20.00, items 1x SKU-1 → 2x SKU-1')
   })
 
   it('returns an empty string when nothing tracked actually changed', () => {
@@ -173,14 +173,14 @@ describe('returnEntityLabel', () => {
 describe('describeReturnEdit', () => {
   it('summarises a refund amount change', () => {
     const after = returnCase({ refundAmount: 8 })
-    expect(describeReturnEdit(returnCase(), after)).toBe('refund 5.00 → 8.00')
+    expect(describeReturnEdit(returnCase(), after)).toBe('refund £5.00 → £8.00')
   })
 
   it('summarises an actions change', () => {
     const after = returnCase({ actions: ['refund', 'goodwill'], goodwillValue: 2 })
     const detail = describeReturnEdit(returnCase(), after)
     expect(detail).toContain('actions refund → goodwill+refund')
-    expect(detail).toContain('goodwill 0.00 → 2.00')
+    expect(detail).toContain('goodwill £0.00 → £2.00')
   })
 
   it('returns an empty string when nothing tracked actually changed', () => {

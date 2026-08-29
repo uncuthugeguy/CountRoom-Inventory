@@ -46,7 +46,7 @@ import {
 } from '../../domain/types'
 import { Dialog } from '../components/Dialog'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
-import { formatDateTime, formatNumber } from '../format'
+import { formatCurrency, formatDateTime, formatNumber } from '../format'
 
 export interface ReturnsScreenProps {
   products: Product[]
@@ -99,7 +99,7 @@ function ReturnDetailDialog({
                     {line.quantity} × {line.name} ({line.sku}) — {STOCK_DISPOSITION_LABELS[line.disposition]}
                   </td>
                   {isManager && (
-                    <td className="receipt-amount">{(line.unitCost * line.quantity).toFixed(2)}</td>
+                    <td className="receipt-amount">{formatCurrency((line.unitCost * line.quantity))}</td>
                   )}
                 </tr>
               ))}
@@ -119,7 +119,7 @@ function ReturnDetailDialog({
                     {line.quantity} × {line.name} ({line.sku})
                   </td>
                   {isManager && (
-                    <td className="receipt-amount">{(line.unitCost * line.quantity).toFixed(2)}</td>
+                    <td className="receipt-amount">{formatCurrency((line.unitCost * line.quantity))}</td>
                   )}
                 </tr>
               ))}
@@ -130,15 +130,15 @@ function ReturnDetailDialog({
 
       {rc.refundAmount > 0 && (
         <p>
-          Refund: {rc.refundAmount.toFixed(2)} ({rc.refundMethod ? PAYMENT_METHOD_LABELS[rc.refundMethod] : 'Unspecified'})
+          Refund: {formatCurrency(rc.refundAmount)} ({rc.refundMethod ? PAYMENT_METHOD_LABELS[rc.refundMethod] : 'Unspecified'})
         </p>
       )}
       {rc.goodwillValue > 0 && (
         <p>
-          Goodwill: {rc.goodwillValue.toFixed(2)} ({rc.goodwillType || 'unspecified'})
+          Goodwill: {formatCurrency(rc.goodwillValue)} ({rc.goodwillType || 'unspecified'})
         </p>
       )}
-      {isManager && <p className="muted">Total cost to business: {impact.totalCost.toFixed(2)}</p>}
+      {isManager && <p className="muted">Total cost to business: {formatCurrency(impact.totalCost)}</p>}
 
       <div className="dialog-actions">
         {isManager && (
@@ -372,7 +372,7 @@ export function ReturnsScreen({
             <option value="">No linked sale</option>
             {sales.slice(0, 100).map((sale) => (
               <option key={sale.id} value={sale.id}>
-                {formatDateTime(sale.createdAt)} — {sale.channel || 'Unspecified'} — {sale.subtotal.toFixed(2)}
+                {formatDateTime(sale.createdAt)} — {sale.channel || 'Unspecified'} — {formatCurrency(sale.subtotal)}
               </option>
             ))}
           </select>
@@ -723,10 +723,10 @@ export function ReturnsScreen({
               </span>
             ))}
           </div>
-          {lastCase.refundAmount > 0 && <p className="muted">Refund: {lastCase.refundAmount.toFixed(2)}</p>}
+          {lastCase.refundAmount > 0 && <p className="muted">Refund: {formatCurrency(lastCase.refundAmount)}</p>}
           {lastCase.goodwillValue > 0 && (
             <p className="muted">
-              Goodwill: {lastCase.goodwillValue.toFixed(2)} ({lastCase.goodwillType || 'unspecified'})
+              Goodwill: {formatCurrency(lastCase.goodwillValue)} ({lastCase.goodwillType || 'unspecified'})
             </p>
           )}
         </section>
@@ -768,16 +768,16 @@ export function ReturnsScreen({
             <span className="stat-label">Cases</span>
           </div>
           <div className="stat" data-testid="returns-refund-total">
-            <span className="stat-value">{summary.refundTotal.toFixed(2)}</span>
+            <span className="stat-value">{formatCurrency(summary.refundTotal)}</span>
             <span className="stat-label">Refunded</span>
           </div>
           <div className="stat" data-testid="returns-goodwill-total">
-            <span className="stat-value">{summary.goodwillTotal.toFixed(2)}</span>
+            <span className="stat-value">{formatCurrency(summary.goodwillTotal)}</span>
             <span className="stat-label">Goodwill given</span>
           </div>
           {isManager && (
             <div className="stat stat-danger" data-testid="returns-writeoff-loss">
-              <span className="stat-value">{summary.writeOffLoss.toFixed(2)}</span>
+              <span className="stat-value">{formatCurrency(summary.writeOffLoss)}</span>
               <span className="stat-label">Written-off loss</span>
             </div>
           )}
@@ -787,7 +787,7 @@ export function ReturnsScreen({
           </div>
           {isManager && (
             <div className="stat" data-testid="returns-total-cost">
-              <span className="stat-value">{summary.totalCost.toFixed(2)}</span>
+              <span className="stat-value">{formatCurrency(summary.totalCost)}</span>
               <span className="stat-label">Total cost</span>
             </div>
           )}
@@ -825,8 +825,8 @@ export function ReturnsScreen({
                       ))}
                     </div>
                     <div className="history-numbers">
-                      {isManager && <span className="mono">{impact.totalCost.toFixed(2)}</span>}
-                      <span className="muted">refund {impact.refundTotal.toFixed(2)}</span>
+                      {isManager && <span className="mono">{formatCurrency(impact.totalCost)}</span>}
+                      <span className="muted">refund {formatCurrency(impact.refundTotal)}</span>
                     </div>
                     <div className="history-meta">
                       <span className="muted">{formatDateTime(rc.createdAt)}</span>

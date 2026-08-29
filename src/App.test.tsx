@@ -78,6 +78,10 @@ function buildStaleSkuRepo(): InventoryRepository {
     },
     approveProfileChange: vi.fn(),
     rejectProfileChange: vi.fn(),
+    async getLoginEmail() {
+      return ''
+    },
+    updateLoginEmail: vi.fn(),
     async getAccountSettings() {
       return null
     },
@@ -651,7 +655,7 @@ describe('activity log', () => {
     const rows = screen.getAllByTestId('activity-row')
     const text = rows.map((r) => r.textContent).join(' | ')
     expect(text).toMatch(/edited.*Return case/)
-    expect(text).toMatch(/refund 2\.50 → 5\.00/)
+    expect(text).toMatch(/refund £2\.50 → £5\.00/)
   })
 })
 
@@ -720,6 +724,7 @@ describe('activity log — team changes', () => {
     const { user } = await renderApp(repository)
 
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^team$/i }))
     await screen.findByRole('heading', { name: /^team$/i })
     await user.type(screen.getByLabelText(/invite an employee/i), 'jane@example.com')
     await user.click(screen.getByRole('button', { name: /^invite$/i }))
@@ -731,6 +736,7 @@ describe('activity log — team changes', () => {
     expect(rows.map((r) => r.textContent).join(' | ')).toMatch(/invited.*jane@example\.com/)
 
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^team$/i }))
     await user.click(screen.getByRole('button', { name: /remove jane@example\.com/i }))
 
     await go(user, /history/i)
@@ -1114,7 +1120,7 @@ describe('checkout', () => {
 
     const row = await screen.findByTestId('cart-row')
     expect(row).toHaveTextContent('M6 Flat Washer')
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Subtotal: 0.05')
+    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Subtotal: £0.05')
 
     await user.click(screen.getByRole('button', { name: 'eBay' }))
     await user.type(screen.getByLabelText(/cash received/i), '1')
@@ -1122,7 +1128,7 @@ describe('checkout', () => {
 
     await waitFor(() => expect(screen.queryByTestId('cart-row')).toBeNull())
     expect(await screen.findByTestId('last-sale')).toHaveTextContent('eBay')
-    expect(screen.getByTestId('last-sale')).toHaveTextContent(/cash received 1.00.*change 0.95/i)
+    expect(screen.getByTestId('last-sale')).toHaveTextContent(/cash received £1.00.*change £0.95/i)
     expect(screen.getByRole('button', { name: /print receipt/i })).toBeInTheDocument()
 
     await go(user, /products/i)
@@ -1140,8 +1146,8 @@ describe('checkout', () => {
     const productBreakdown = screen.getByTestId('product-breakdown-row')
     expect(productBreakdown).toHaveTextContent('M6 Flat Washer')
     expect(productBreakdown).toHaveTextContent('1 sold')
-    expect(productBreakdown).toHaveTextContent('revenue 0.05')
-    expect(productBreakdown).toHaveTextContent('profit 0.04')
+    expect(productBreakdown).toHaveTextContent('revenue £0.05')
+    expect(productBreakdown).toHaveTextContent('profit £0.04')
   })
 
   it('nets marketplace fees out of profit, deducting delivery only when the seller paid it', async () => {
@@ -1165,19 +1171,19 @@ describe('checkout', () => {
     await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
 
     // 0.04 - (1 + 0.5 + 0.25) = -1.71; delivery excluded since the buyer paid it.
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: -1.71')
+    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: £-1.71')
 
     await user.click(screen.getByRole('button', { name: 'eBay' }))
     await user.type(screen.getByLabelText(/cash received/i), '1')
     await user.click(screen.getByRole('button', { name: /complete sale/i }))
 
     const lastSale = await screen.findByTestId('last-sale')
-    expect(lastSale).toHaveTextContent('profit -1.71')
+    expect(lastSale).toHaveTextContent('profit £-1.71')
     const feesLine = screen.getByTestId('last-sale-fees')
-    expect(feesLine).toHaveTextContent('Buyer protection 1.00 (Me paid)')
-    expect(feesLine).toHaveTextContent('Delivery 2.00 (Buyer paid)')
-    expect(feesLine).toHaveTextContent('VAT 0.50')
-    expect(feesLine).toHaveTextContent('Advertising 0.25')
+    expect(feesLine).toHaveTextContent('Buyer protection £1.00 (Me paid)')
+    expect(feesLine).toHaveTextContent('Delivery £2.00 (Buyer paid)')
+    expect(feesLine).toHaveTextContent('VAT £0.50')
+    expect(feesLine).toHaveTextContent('Advertising £0.25')
 
     // The marketplace fees reset for the next sale rather than carrying over.
     expect(screen.getByLabelText('Buyer protection fee')).toHaveValue(null)
@@ -1187,11 +1193,11 @@ describe('checkout', () => {
     // it used to only show the line items and total, leaving VAT and every
     // other fee off the printed copy entirely.
     const printReceipt = screen.getByTestId('print-receipt')
-    expect(printReceipt).toHaveTextContent('Buyer protection: 1.00 (Me paid)')
-    expect(printReceipt).toHaveTextContent('Delivery: 2.00 (Buyer paid)')
-    expect(printReceipt).toHaveTextContent('VAT: 0.50')
-    expect(printReceipt).toHaveTextContent('Advertising: 0.25')
-    expect(printReceipt).toHaveTextContent('Profit: -1.71')
+    expect(printReceipt).toHaveTextContent('Buyer protection: £1.00 (Me paid)')
+    expect(printReceipt).toHaveTextContent('Delivery: £2.00 (Buyer paid)')
+    expect(printReceipt).toHaveTextContent('VAT: £0.50')
+    expect(printReceipt).toHaveTextContent('Advertising: £0.25')
+    expect(printReceipt).toHaveTextContent('Profit: £-1.71')
     // And a scannable code for finding this exact sale again later.
     expect(within(printReceipt).getByRole('img', { name: /scannable code/i, hidden: true })).toBeInTheDocument()
 
@@ -1216,15 +1222,15 @@ describe('checkout', () => {
 
     // The buyer protection fee is excluded since the buyer paid it — profit
     // stays at the plain cart profit of 0.04.
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: 0.04')
+    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: £0.04')
 
     await user.click(screen.getByRole('button', { name: 'eBay' }))
     await user.type(screen.getByLabelText(/cash received/i), '1')
     await user.click(screen.getByRole('button', { name: /complete sale/i }))
 
     const lastSale = await screen.findByTestId('last-sale')
-    expect(lastSale).toHaveTextContent('profit 0.04')
-    expect(screen.getByTestId('last-sale-fees')).toHaveTextContent('Buyer protection 1.00 (Buyer paid)')
+    expect(lastSale).toHaveTextContent('profit £0.04')
+    expect(screen.getByTestId('last-sale-fees')).toHaveTextContent('Buyer protection £1.00 (Buyer paid)')
   })
 
   it('checks the itemised fees against an entered order total, flagging a mismatch with the exact gap', async () => {
@@ -1245,14 +1251,14 @@ describe('checkout', () => {
     // (Delivery only counts here because the buyer paid it — otherwise it
     // never showed up on the buyer's own order total.)
     await user.type(screen.getByLabelText(/order total/i), '3.55')
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (3.55).')
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (£3.55).')
 
     // Now change it to something that doesn't add up, as if a fee had been
     // forgotten — the gap should be called out exactly.
     await user.clear(screen.getByLabelText(/order total/i))
     await user.type(screen.getByLabelText(/order total/i), '5')
     expect(screen.getByTestId('order-total-check')).toHaveTextContent(
-      "You've itemised 3.55, but entered an order total of 5.00 — you're 1.45 short. Check you haven't missed a fee.",
+      "You've itemised £3.55, but entered an order total of £5.00 — you're £1.45 short. Check you haven't missed a fee.",
     )
   })
 
@@ -1274,7 +1280,7 @@ describe('checkout', () => {
     // Itemised for reconciliation purposes: 0.05 + 1 (delivery excluded) =
     // 1.05, which is what the buyer's real order total should equal.
     await user.type(screen.getByLabelText(/order total/i), '1.05')
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (1.05).')
+    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (£1.05).')
   })
 
   it('flags the item-price-already-includes-a-fee mistake with an actionable message', async () => {
@@ -1301,7 +1307,7 @@ describe('checkout', () => {
     await user.type(screen.getByLabelText(/order total/i), '5')
 
     expect(screen.getByTestId('order-total-check')).toHaveTextContent(
-      "You've itemised 6.50, but entered an order total of 5.00 — that's 1.50 more than the order total. " +
+      "You've itemised £6.50, but entered an order total of £5.00 — that's £1.50 more than the order total. " +
         "Check the item price above isn't already including a fee you've also entered below.",
     )
   })
@@ -1363,7 +1369,7 @@ describe('checkout', () => {
     expect(screen.getByTestId('change-due')).toHaveTextContent('—')
 
     await user.type(screen.getByLabelText(/cash received/i), '0.02')
-    expect(screen.getByTestId('change-due')).toHaveTextContent(/short 0.03/i)
+    expect(screen.getByTestId('change-due')).toHaveTextContent(/short £0.03/i)
 
     await user.click(screen.getByRole('button', { name: 'eBay' }))
     await user.click(screen.getByRole('button', { name: /complete sale/i }))
@@ -1397,7 +1403,41 @@ describe('checkout', () => {
     expect(await screen.findByRole('button', { name: 'Car Boot Sale' })).toBeInTheDocument()
 
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^catalogue$/i }))
     expect(screen.getByDisplayValue('Car Boot Sale')).toBeInTheDocument()
+  })
+})
+
+describe('login email', () => {
+  it('lets a manager request a login email change and shows the confirmation-link prompt', async () => {
+    const base = createLocalRepository({ storage: memoryStorage(), seed: true })
+    const updateLoginEmail = vi.fn(async () => ({ ok: true as const, value: true as const }))
+    const repository: InventoryRepository = {
+      ...base,
+      kind: 'supabase',
+      async getLoginEmail() {
+        return 'mason@example.com'
+      },
+      updateLoginEmail,
+    }
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await screen.findByText('mason@example.com')
+
+    await user.type(screen.getByLabelText(/new login email/i), 'newmason@example.com')
+    await user.click(screen.getByRole('button', { name: /send confirmation/i }))
+
+    expect(updateLoginEmail).toHaveBeenCalledWith('newmason@example.com')
+    expect(await screen.findByText(/check newmason@example\.com/i)).toBeInTheDocument()
+  })
+
+  it('does not offer a login email change in local (offline demo) mode', async () => {
+    const { user } = await renderApp()
+    await go(user, /settings/i)
+    await screen.findByRole('heading', { name: /^account settings$/i })
+
+    expect(screen.queryByLabelText(/new login email/i)).not.toBeInTheDocument()
   })
 })
 

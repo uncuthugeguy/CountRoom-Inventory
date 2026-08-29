@@ -26,6 +26,7 @@ import type {
   SupplierProductDraft,
   PurchaseOrder,
   PurchaseOrderInput,
+  UnboxedLineItemInput,
 } from '../domain/suppliers'
 
 /**
@@ -132,6 +133,17 @@ export interface InventoryRepository {
   approveProfileChange(requestId: string): Promise<Result<true>>
   /** Manager-only. Discards a pending edit without applying it. */
   rejectProfileChange(requestId: string): Promise<Result<true>>
+  /** The signed-in person's own login email — the address used for
+   *  magic-link sign-in, distinct from `Profile.username`. `''` in local
+   *  (offline demo) mode, where there's no real login. */
+  getLoginEmail(): Promise<string>
+  /**
+   * Requests a change to the signed-in person's own login email. Supabase
+   * sends a confirmation link to the *new* address — the change only takes
+   * effect once that link is clicked, so a typo can't lock anyone out of
+   * their account. Not supported in local (offline demo) mode.
+   */
+  updateLoginEmail(newEmail: string): Promise<Result<true>>
   // =========================================================================
   // SUPPLIER & PURCHASE ORDER MANAGEMENT (manager-only)
   // =========================================================================
@@ -159,8 +171,26 @@ export interface InventoryRepository {
   sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   /** Manager-only. Marks a sent PO as confirmed by the supplier. */
   confirmPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
-  /** Manager-only. Receives a PO and adds stock. */
+  /**
+   * Receives a PO and adds stock for its ordinary (non-lot) lines only —
+   * a lot line (`isLot`) isn't added to stock here, since its contents
+   * aren't known yet; it's added once `unboxPurchaseOrderLine` is called
+   * for it. A PO whose only unreceived work is unboxing its lot lines still
+   * moves to `received` status.
+   */
   receivePurchaseOrder(id: string, lineQuantities: Map<string, number>): Promise<Result<PurchaseOrder>>
+  /**
+   * Manager-only. Breaks down one received lot line into the real items it
+   * turned out to contain once unboxed — creating any brand-new products
+   * along the way — and adds each to stock. Can be called again for the
+   * same line (e.g. finishing unboxing over a couple of sessions); each
+   * call appends to `unboxedInto` rather than replacing it.
+   */
+  unboxPurchaseOrderLine(
+    poId: string,
+    lineId: string,
+    items: UnboxedLineItemInput[],
+  ): Promise<Result<PurchaseOrder>>
   /** Manager-only. Cancels a PO. */
   cancelPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   /**
@@ -211,3 +241,5 @@ export const SALE_NOT_FOUND = 'Sale not found.'
 export const RETURN_NOT_FOUND = 'Return not found.'
 export const TEAM_NOT_SUPPORTED = 'Team accounts need the Supabase backend — this device is running the offline demo store.'
 export const NO_PENDING_CHANGE = "That change request isn't pending any more."
+export const EMAIL_CHANGE_NOT_SUPPORTED =
+  'Changing your login email needs the Supabase backend — this device is running the offline demo store.'

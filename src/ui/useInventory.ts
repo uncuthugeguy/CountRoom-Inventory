@@ -57,6 +57,11 @@ export interface Inventory {
   listPendingProfileChanges(): Promise<ProfileChangeRequest[]>
   approveProfileChange(requestId: string): Promise<Result<true>>
   rejectProfileChange(requestId: string): Promise<Result<true>>
+  /** The signed-in person's own login email — '' in local (offline demo) mode. */
+  getLoginEmail(): Promise<string>
+  /** Requests a change to the signed-in person's own login email — see
+   *  `InventoryRepository.updateLoginEmail` for the confirmation-link flow. */
+  updateLoginEmail(newEmail: string): Promise<Result<true>>
   getAccountSettings(): Promise<AccountSettingsSync | null>
   setAccountSettings(patch: AccountSettingsSync): Promise<Result<true>>
   // Manager-only — see repository.ts's own doc comment on this section.
@@ -303,6 +308,26 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     }
   }, [])
 
+  const getLoginEmail = useCallback(async () => {
+    const repo = repoRef.current
+    if (!repo) return ''
+    try {
+      return await repo.getLoginEmail()
+    } catch {
+      return ''
+    }
+  }, [])
+
+  const updateLoginEmail = useCallback(async (newEmail: string) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.updateLoginEmail(newEmail)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
   const getAccountSettings = useCallback(async () => {
     const repo = repoRef.current
     if (!repo) return null
@@ -449,6 +474,8 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     listPendingProfileChanges,
     approveProfileChange,
     rejectProfileChange,
+    getLoginEmail,
+    updateLoginEmail,
     getAccountSettings,
     setAccountSettings,
     listSuppliers,

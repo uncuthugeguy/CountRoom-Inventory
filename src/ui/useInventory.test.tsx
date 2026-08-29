@@ -134,6 +134,8 @@ describe('useInventory', () => {
       listPendingProfileChanges: async () => [],
       approveProfileChange: vi.fn(),
       rejectProfileChange: vi.fn(),
+      getLoginEmail: async () => '',
+      updateLoginEmail: vi.fn(),
       getAccountSettings: async () => null,
       setAccountSettings: vi.fn(),
       listSuppliers: async () => [],

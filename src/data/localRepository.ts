@@ -8,7 +8,7 @@ import {
   saleEntityLabel,
 } from '../domain/activity'
 import { applyMovement } from '../domain/movements'
-import { validateDraft } from '../domain/products'
+import { validateDraft, nextSku } from '../domain/products'
 import { validateReturnCaseInput } from '../domain/returns'
 import { saleFeeTotal } from '../domain/sales'
 import type { AppliedMovement } from '../domain/movements'
@@ -42,12 +42,16 @@ import {
   type PurchaseOrder,
   type PurchaseOrderInput,
   type PurchaseOrderLine,
+  type PurchaseOrderLineUnboxedItem,
+  type UnboxedLineItemInput,
   calculatePOSubtotal,
+  calculatePOGrandTotal,
 } from '../domain/suppliers'
 import { DEMO_PRODUCTS } from './demoSeed'
 import {
   DUPLICATE_BARCODE,
   DUPLICATE_SKU,
+  EMAIL_CHANGE_NOT_SUPPORTED,
   EMPTY_SALE,
   NOT_FOUND,
   RETURN_NOT_FOUND,
@@ -787,6 +791,15 @@ export function createLocalRepository(
       return { ok: false, error: TEAM_NOT_SUPPORTED }
     },
 
+    async getLoginEmail(): Promise<string> {
+      // No real auth locally — there's no login email to report.
+      return ''
+    },
+
+    async updateLoginEmail(): Promise<Result<true>> {
+      return { ok: false, error: EMAIL_CHANGE_NOT_SUPPORTED }
+    },
+
     async listSuppliers(): Promise<Supplier[]> {
       return state.suppliers
     },
@@ -875,29 +888,62 @@ export function createLocalRepository(
       const poId = newId()
       const lines: PurchaseOrderLine[] = []
       for (const line of input.lines) {
-        const product = state.products.find((p) => p.id === line.productId)
-        if (!product) return { ok: false, error: NOT_FOUND }
-        lines.push({
-          id: newId(),
-          poId,
-          productId: product.id,
-          sku: product.sku,
-          name: product.name,
-          quantity: line.quantity,
-          unitCost: line.unitCost,
-          lineTotal: line.quantity * line.unitCost,
-        })
+        if (line.productId) {
+          const product = state.products.find((p) => p.id === line.productId)
+          if (!product) return { ok: false, error: NOT_FOUND }
+          lines.push({
+            id: newId(),
+            poId,
+            productId: product.id,
+            sku: product.sku,
+            name: product.name,
+            quantity: line.quantity,
+            unitCost: line.unitCost,
+            lineTotal: line.quantity * line.unitCost,
+            vatAmount: line.vatAmount,
+          })
+        } else {
+          // A custom-named line (a one-off item not yet in the catalogue) or
+          // a mixed lot — neither has a real product until it's received
+          // (ordinary line) or unboxed (lot line).
+          const name = (line.customName ?? '').trim()
+          if (!name) return { ok: false, error: 'Each line needs either a product or a name.' }
+          lines.push({
+            id: newId(),
+            poId,
+            sku: '',
+            name,
+            customName: name,
+            isLot: line.isLot === true,
+            quantity: line.quantity,
+            unitCost: line.unitCost,
+            lineTotal: line.quantity * line.unitCost,
+            vatAmount: line.vatAmount,
+          })
+        }
       }
+
+      const subtotal = calculatePOSubtotal(lines)
+      const deliveryCost = input.deliveryCost || 0
+      const buyersPremium = input.buyersPremium || 0
+      const vatAmount = input.vatAmount || 0
 
       const po: PurchaseOrder = {
         id: poId,
         supplierId: input.supplierId,
         supplierName: supplier.name,
         status: 'draft',
+        poNumber: input.poNumber,
+        orderDate: input.orderDate,
         expectedDeliveryDate: input.expectedDeliveryDate,
         notes: input.notes,
         lines,
-        subtotal: calculatePOSubtotal(lines),
+        subtotal,
+        deliveryCost,
+        buyersPremium,
+        vatAmount,
+        grandTotal:
+          input.grandTotal ?? calculatePOGrandTotal({ subtotal, deliveryCost, buyersPremium, vatAmount }),
         createdAt: new Date().toISOString(),
       }
       state.purchaseOrders.push(po)
@@ -950,9 +996,12 @@ export function createLocalRepository(
         return { ok: false, error: 'Only sent or confirmed POs can be received.' }
       }
 
-      // Add stock for each line
+      // Add stock for each ordinary (non-lot) line — a lot line's contents
+      // aren't known yet, so it's left alone here and only gains stock once
+      // unboxPurchaseOrderLine is called for it.
       const movements: StockMovement[] = []
       for (const line of po.lines) {
+        if (line.isLot) continue
         const qty = lineQuantities.get(line.id) ?? line.quantity
         if (qty === 0) continue
 
@@ -972,10 +1021,14 @@ export function createLocalRepository(
 
       state.movements.push(...movements)
 
-      const updatedLines = po.lines.map((line) => ({
-        ...line,
-        quantityReceived: lineQuantities.get(line.id) ?? line.quantity,
-      }))
+      const updatedLines = po.lines.map((line) =>
+        line.isLot
+          ? line
+          : {
+              ...line,
+              quantityReceived: lineQuantities.get(line.id) ?? line.quantity,
+            },
+      )
 
       const updated: PurchaseOrder = {
         ...po,
@@ -1002,6 +1055,99 @@ export function createLocalRepository(
         updatedAt: new Date().toISOString(),
       }
       state.purchaseOrders[idx] = updated
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async unboxPurchaseOrderLine(
+      poId: string,
+      lineId: string,
+      items: UnboxedLineItemInput[],
+    ): Promise<Result<PurchaseOrder>> {
+      const poIdx = state.purchaseOrders.findIndex((p) => p.id === poId)
+      if (poIdx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[poIdx]
+      if (po.status !== 'received') {
+        return { ok: false, error: 'Only a received PO can have a lot unboxed.' }
+      }
+      const lineIdx = po.lines.findIndex((l) => l.id === lineId)
+      if (lineIdx === -1) return { ok: false, error: NOT_FOUND }
+      const line = po.lines[lineIdx]
+      if (!line.isLot) return { ok: false, error: 'Only a lot line can be unboxed.' }
+      if (items.length === 0) return { ok: false, error: 'Add at least one item.' }
+
+      const unboxed: PurchaseOrderLineUnboxedItem[] = []
+      const movements: StockMovement[] = []
+
+      for (const item of items) {
+        if (item.quantity <= 0) return { ok: false, error: 'Quantity must be greater than zero.' }
+
+        let productIdx: number
+        if (item.productId) {
+          productIdx = state.products.findIndex((p) => p.id === item.productId)
+          if (productIdx === -1) return { ok: false, error: NOT_FOUND }
+        } else if (item.newProduct) {
+          const sku = item.newProduct.sku.trim() || nextSku(state.products)
+          if (state.products.some((p) => p.sku === sku)) {
+            return { ok: false, error: DUPLICATE_SKU }
+          }
+          if (item.newProduct.barcode && state.products.some((p) => p.barcode === item.newProduct!.barcode)) {
+            return { ok: false, error: DUPLICATE_BARCODE }
+          }
+          const validated = validateDraft({
+            barcode: item.newProduct.barcode,
+            sku,
+            name: item.newProduct.name,
+            category: item.newProduct.category,
+            location: item.newProduct.location,
+            variation: '',
+            quantity: 0,
+            reorderLevel: 0,
+            cost: item.quantity > 0 ? item.allocatedCost / item.quantity : 0,
+            price: 0,
+          })
+          if (!validated.ok) return validated
+          const at = new Date().toISOString()
+          const product: Product = { ...validated.value, id: newId(), createdAt: at, updatedAt: at }
+          state.products.push(product)
+          pushActivity('product', 'added', product.id, product.name, describeProductCreated(product))
+          productIdx = state.products.length - 1
+        } else {
+          return { ok: false, error: 'Each item needs an existing product or new-product details.' }
+        }
+
+        const product = state.products[productIdx]
+        const applied = applyMovement(
+          product,
+          {
+            type: 'in',
+            quantity: item.quantity,
+            reason: `Unboxed from lot "${line.name}" (${po.poNumber})`,
+          },
+          { id: newId(), at: new Date().toISOString() },
+        )
+        if (!applied.ok) return applied
+        state.products[productIdx] = applied.value.product
+        movements.push(applied.value.movement)
+
+        unboxed.push({
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: item.quantity,
+          allocatedCost: item.allocatedCost,
+        })
+      }
+
+      state.movements.push(...movements)
+
+      const updatedLine: PurchaseOrderLine = {
+        ...line,
+        unboxedInto: [...(line.unboxedInto ?? []), ...unboxed],
+      }
+      const updatedLines = po.lines.map((l, i) => (i === lineIdx ? updatedLine : l))
+      const updated: PurchaseOrder = { ...po, lines: updatedLines, updatedAt: new Date().toISOString() }
+      state.purchaseOrders[poIdx] = updated
       persist()
       return { ok: true, value: updated }
     },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { createRepository, resolveBackend, type Backend } from './data/createRepository'
+import { formatCurrency } from './ui/format'
 import { clearProductDraft } from './data/productDraftStorage'
 import { clearSaleEditDraft } from './data/saleEditDraftStorage'
 import { clearSupplierDraft } from './data/supplierDraftStorage'
@@ -380,7 +381,7 @@ function AuthenticatedApp({
     if (result.ok) {
       setLastSale(result.value)
       setCart([])
-      setToast(`Sale recorded — ${result.value.subtotal.toFixed(2)} via ${channel}.`)
+      setToast(`Sale recorded — ${formatCurrency(result.value.subtotal)} via ${channel}.`)
     }
     return result
   }
@@ -399,7 +400,7 @@ function AuthenticatedApp({
   const updateSale = async (id: string, input: SaleInput) => {
     const result = await inventory.updateSale(id, input)
     if (result.ok) {
-      setToast(`Sale updated — now ${result.value.subtotal.toFixed(2)} via ${result.value.channel || 'Unspecified'}.`)
+      setToast(`Sale updated — now ${formatCurrency(result.value.subtotal)} via ${result.value.channel || 'Unspecified'}.`)
     }
     return result
   }

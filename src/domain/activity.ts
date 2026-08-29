@@ -1,4 +1,5 @@
 import type { Product, ReturnCase, Sale } from './types'
+import { formatCurrency } from '../ui/format'
 import type { Role } from '../data/repository'
 
 /** Every product field worth calling out in the activity log, paired with
@@ -52,7 +53,7 @@ export function describeProductRemoved(product: Product): string {
 /** An identifying label for a sale in the activity log — sales have no
  * name, so this stands in for one: where it sold and what it came to. */
 export function saleEntityLabel(sale: Sale): string {
-  return `Sale — ${sale.channel || 'Unspecified'} (${sale.subtotal.toFixed(2)})`
+  return `Sale — ${sale.channel || 'Unspecified'} (${formatCurrency(sale.subtotal)})`
 }
 
 const itemsSummary = (lines: { quantity: number; sku: string }[]): string =>
@@ -72,8 +73,8 @@ export function describeSaleEdit(before: Sale, after: Sale): string {
   if (before.paymentMethod !== after.paymentMethod) {
     changes.push(`payment ${before.paymentMethod} → ${after.paymentMethod}`)
   }
-  if (before.subtotal.toFixed(2) !== after.subtotal.toFixed(2)) {
-    changes.push(`subtotal ${before.subtotal.toFixed(2)} → ${after.subtotal.toFixed(2)}`)
+  if (formatCurrency(before.subtotal) !== formatCurrency(after.subtotal)) {
+    changes.push(`subtotal ${formatCurrency(before.subtotal)} → ${formatCurrency(after.subtotal)}`)
   }
   const beforeItems = itemsSummary(before.lines)
   const afterItems = itemsSummary(after.lines)
@@ -109,11 +110,11 @@ export function describeReturnEdit(before: ReturnCase, after: ReturnCase): strin
   if (beforeActions !== afterActions) {
     changes.push(`actions ${beforeActions} → ${afterActions}`)
   }
-  if (before.refundAmount.toFixed(2) !== after.refundAmount.toFixed(2)) {
-    changes.push(`refund ${before.refundAmount.toFixed(2)} → ${after.refundAmount.toFixed(2)}`)
+  if (formatCurrency(before.refundAmount) !== formatCurrency(after.refundAmount)) {
+    changes.push(`refund ${formatCurrency(before.refundAmount)} → ${formatCurrency(after.refundAmount)}`)
   }
-  if (before.goodwillValue.toFixed(2) !== after.goodwillValue.toFixed(2)) {
-    changes.push(`goodwill ${before.goodwillValue.toFixed(2)} → ${after.goodwillValue.toFixed(2)}`)
+  if (formatCurrency(before.goodwillValue) !== formatCurrency(after.goodwillValue)) {
+    changes.push(`goodwill ${formatCurrency(before.goodwillValue)} → ${formatCurrency(after.goodwillValue)}`)
   }
   const beforeLines = returnLinesSummary(before.returnLines)
   const afterLines = returnLinesSummary(after.returnLines)

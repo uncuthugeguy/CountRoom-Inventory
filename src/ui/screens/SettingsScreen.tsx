@@ -200,6 +200,82 @@ const PROFILE_FIELDS: { key: keyof ProfileDraft; label: string; type?: string }[
   { key: 'username', label: 'Username' },
 ]
 
+/** Own subsection within the personal-details panel — changes the address
+ *  used to sign in. Only offered against the Supabase backend: local
+ *  (offline demo) mode has no real login to change (see `AuthScreen`'s own
+ *  doc comment — magic-link sign-in only exists once real Supabase
+ *  credentials are configured). */
+function LoginEmailPanel({ inventory }: { inventory: Inventory }) {
+  const idPrefix = useId()
+  const [currentEmail, setCurrentEmail] = useState<string | null>(null)
+  const [newEmail, setNewEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void inventory.getLoginEmail().then(setCurrentEmail)
+    // Only ever needs to run once per mount, same as the profile load above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const trimmed = newEmail.trim()
+    if (!trimmed) return
+    setError(null)
+    setInfo(null)
+    setBusy(true)
+    const result = await inventory.updateLoginEmail(trimmed)
+    setBusy(false)
+    if (!result.ok) {
+      setError(result.error)
+      return
+    }
+    setInfo(`Check ${trimmed} for a confirmation link — your login email won't change until you click it.`)
+    setNewEmail('')
+  }
+
+  return (
+    <div className="settings-subsection">
+      <h3>Login email</h3>
+      <p className="muted">
+        The address you sign in with. We'll email a confirmation link to the new address —
+        nothing changes until you click it, so a typo can't lock you out.
+      </p>
+      <p>
+        Currently: <strong>{currentEmail === null ? 'Loading…' : currentEmail || '(unknown)'}</strong>
+      </p>
+
+      <form className="toolbar" onSubmit={submit}>
+        <div className="field field-grow">
+          <label htmlFor={`${idPrefix}-login-email`}>New login email</label>
+          <input
+            id={`${idPrefix}-login-email`}
+            type="email"
+            autoComplete="email"
+            value={newEmail}
+            placeholder="new.email@example.com"
+            onChange={(event) => setNewEmail(event.target.value)}
+          />
+        </div>
+        <div className="toolbar-actions">
+          <button type="submit" className="button button-primary" disabled={busy}>
+            {busy ? 'Sending…' : 'Send confirmation'}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+      {info && <p className="preview">{info}</p>}
+    </div>
+  )
+}
+
 function AccountSettingsPanel({ inventory }: { inventory: Inventory }) {
   const idPrefix = useId()
   const [profile, setProfile] = useState<ProfileDraft | null>(null)
@@ -296,6 +372,8 @@ function AccountSettingsPanel({ inventory }: { inventory: Inventory }) {
           </div>
         </form>
       )}
+
+      {inventory.backend === 'supabase' && <LoginEmailPanel inventory={inventory} />}
     </section>
   )
 }
@@ -515,9 +593,27 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
   )
 }
 
+type SettingsTab = 'profile' | 'team' | 'catalogue' | 'labels'
+
+const SETTINGS_TABS: { key: SettingsTab; label: string; managerOnly?: boolean }[] = [
+  { key: 'profile', label: 'Profile' },
+  { key: 'team', label: 'Team', managerOnly: true },
+  { key: 'catalogue', label: 'Catalogue' },
+  { key: 'labels', label: 'Labels' },
+]
+
 export function SettingsScreen({ settings, inventory }: SettingsScreenProps) {
   const logoId = useId()
   const [error, setError] = useState<string | null>(null)
+  const [tab, setTab] = useState<SettingsTab>('profile')
+  const isManager = inventory.role === 'manager'
+
+  // Never leave a non-manager sitting on the manager-only Team tab — e.g. if
+  // their role changes after this screen already mounted, same reasoning
+  // HistoryScreen's Activity tab guards against.
+  useEffect(() => {
+    if (!isManager && tab === 'team') setTab('profile')
+  }, [isManager, tab])
 
   const onFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -546,55 +642,78 @@ export function SettingsScreen({ settings, inventory }: SettingsScreenProps) {
 
   return (
     <div className="screen">
-      <AccountSettingsPanel inventory={inventory} />
-      {inventory.role === 'manager' && inventory.backend === 'supabase' && (
-        <PendingProfileChangesPanel inventory={inventory} />
+      <div className="channel-picker" aria-label="Settings sections">
+        {SETTINGS_TABS.filter((t) => !t.managerOnly || isManager).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={`button chip-button ${tab === t.key ? 'chip-button-active' : ''}`}
+            aria-pressed={tab === t.key}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'profile' && <AccountSettingsPanel inventory={inventory} />}
+
+      {isManager && tab === 'team' && (
+        <>
+          {inventory.backend === 'supabase' && <PendingProfileChangesPanel inventory={inventory} />}
+          <TeamPanel inventory={inventory} />
+        </>
       )}
 
-      {inventory.role === 'manager' && <TeamPanel inventory={inventory} />}
+      {tab === 'catalogue' && (
+        <>
+          {isManager && <CategoriesPanel settings={settings} products={inventory.products} />}
+          <SaleChannelsPanel settings={settings} />
+        </>
+      )}
 
-      <section className="panel">
-        <h2>Label logo</h2>
-        <p className="muted">
-          Uploaded once here, then printed on every product label alongside the name, SKU
-          barcode and variation.
-        </p>
+      {tab === 'labels' && (
+        <>
+          <section className="panel">
+            <h2>Label logo</h2>
+            <p className="muted">
+              Uploaded once here, then printed on every product label alongside the name, SKU
+              barcode and variation.
+            </p>
 
-        {settings.logoDataUrl && (
-          <div className="logo-preview">
-            <img src={settings.logoDataUrl} alt="Uploaded logo" />
-          </div>
-        )}
+            {settings.logoDataUrl && (
+              <div className="logo-preview">
+                <img src={settings.logoDataUrl} alt="Uploaded logo" />
+              </div>
+            )}
 
-        <div className="field">
-          <label htmlFor={logoId}>{settings.logoDataUrl ? 'Replace logo' : 'Upload a logo'}</label>
-          <input id={logoId} type="file" accept="image/*" onChange={onFileChange} />
-        </div>
+            <div className="field">
+              <label htmlFor={logoId}>{settings.logoDataUrl ? 'Replace logo' : 'Upload a logo'}</label>
+              <input id={logoId} type="file" accept="image/*" onChange={onFileChange} />
+            </div>
 
-        {error && (
-          <p className="alert" role="alert">
-            {error}
-          </p>
-        )}
+            {error && (
+              <p className="alert" role="alert">
+                {error}
+              </p>
+            )}
 
-        {settings.logoDataUrl && (
-          <div className="dialog-actions">
-            <button
-              type="button"
-              className="button button-ghost"
-              onClick={() => settings.clearLogo()}
-            >
-              Remove logo
-            </button>
-          </div>
-        )}
-      </section>
+            {settings.logoDataUrl && (
+              <div className="dialog-actions">
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  onClick={() => settings.clearLogo()}
+                >
+                  Remove logo
+                </button>
+              </div>
+            )}
+          </section>
 
-      <LabelTemplateEditor settings={settings} />
-
-      {inventory.role === 'manager' && <CategoriesPanel settings={settings} products={inventory.products} />}
-
-      <SaleChannelsPanel settings={settings} />
+          <LabelTemplateEditor settings={settings} />
+        </>
+      )}
     </div>
   )
 }

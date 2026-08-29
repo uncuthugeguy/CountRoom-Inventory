@@ -26,7 +26,7 @@ import { PrintPortal } from '../components/PrintPortal'
 import { SaleFeesFields } from '../components/SaleFeesFields'
 import { ScanCode } from '../components/ScanCode'
 import type { StartCameraScan } from '../../scanner/cameraScanner'
-import { formatDateTime, formatNumber } from '../format'
+import { formatCurrency, formatDateTime, formatNumber } from '../format'
 
 export interface CheckoutScreenProps {
   products: Product[]
@@ -273,7 +273,7 @@ export function CheckoutScreen({
                         onChange={(e) => onSetPrice(line.product.id, Number(e.target.value) || 0)}
                       />
                     </label>
-                    <span className="cart-line-total">{(line.unitPrice * line.quantity).toFixed(2)}</span>
+                    <span className="cart-line-total">{formatCurrency((line.unitPrice * line.quantity))}</span>
                     <button
                       type="button"
                       className="button button-ghost"
@@ -292,8 +292,8 @@ export function CheckoutScreen({
         {cart.length > 0 && (
           <div className="cart-totals" data-testid="cart-totals">
             <span>{formatNumber(totals.itemCount)} items</span>
-            <span>Subtotal: {totals.subtotal.toFixed(2)}</span>
-            {role === 'manager' && <span>Est. profit: {netProfit.toFixed(2)}</span>}
+            <span>Subtotal: {formatCurrency(totals.subtotal)}</span>
+            {role === 'manager' && <span>Est. profit: {formatCurrency(netProfit)}</span>}
           </div>
         )}
       </section>
@@ -341,11 +341,11 @@ export function CheckoutScreen({
               data-testid="order-total-check"
             >
               {orderTotalCheck.matches
-                ? `Matches your order total (${orderTotalCheck.entered.toFixed(2)}).`
-                : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
+                ? `Matches your order total (${formatCurrency(orderTotalCheck.entered)}).`
+                : `You've itemised ${formatCurrency(orderTotalCheck.itemised)}, but entered an order total of ${formatCurrency(orderTotalCheck.entered)} — ${
                     orderTotalCheck.difference > 0
-                      ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
-                      : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
+                      ? `you're ${formatCurrency(orderTotalCheck.difference)} short. Check you haven't missed a fee.`
+                      : `that's ${formatCurrency(Math.abs(orderTotalCheck.difference))} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
                   }`}
             </p>
           )}
@@ -379,7 +379,7 @@ export function CheckoutScreen({
                 step={0.01}
                 inputMode="decimal"
                 value={cashReceived}
-                placeholder={totals.subtotal.toFixed(2)}
+                placeholder={formatCurrency(totals.subtotal)}
                 onChange={(event) => setCashReceived(event.target.value)}
               />
             </div>
@@ -392,8 +392,8 @@ export function CheckoutScreen({
                 {change === null
                   ? '—'
                   : change < 0
-                    ? `Short ${Math.abs(change).toFixed(2)}`
-                    : change.toFixed(2)}
+                    ? `Short ${formatCurrency(Math.abs(change))}`
+                    : formatCurrency(change)}
               </p>
             </div>
           </div>
@@ -412,7 +412,7 @@ export function CheckoutScreen({
         disabled={saving || cart.length === 0}
         onClick={checkout}
       >
-        {saving ? 'Completing sale…' : `Complete sale — ${totals.subtotal.toFixed(2)}`}
+        {saving ? 'Completing sale…' : `Complete sale — ${formatCurrency(totals.subtotal)}`}
       </button>
 
       {lastSale && (
@@ -422,15 +422,15 @@ export function CheckoutScreen({
             <span className="mono">{lastSale.channel}</span>
           </header>
           <p className="scan-quantity">
-            <span className="quantity">{lastSale.subtotal.toFixed(2)}</span>
+            <span className="quantity">{formatCurrency(lastSale.subtotal)}</span>
             <span className="quantity-caption">
               {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]}
-              {role === 'manager' && ` · profit ${lastSale.profit.toFixed(2)}`}
+              {role === 'manager' && ` · profit ${formatCurrency(lastSale.profit)}`}
             </span>
           </p>
           {lastSaleCash && (
             <p className="muted">
-              Cash received {lastSaleCash.tendered.toFixed(2)} · change {lastSaleCash.change.toFixed(2)}
+              Cash received {formatCurrency(lastSaleCash.tendered)} · change {formatCurrency(lastSaleCash.change)}
             </p>
           )}
 
@@ -441,11 +441,11 @@ export function CheckoutScreen({
               (lastSale.advertisingCost ?? 0) > 0) && (
               <p className="muted" data-testid="last-sale-fees">
                 {(lastSale.buyerProtectionFee ?? 0) > 0 &&
-                  `Buyer protection ${lastSale.buyerProtectionFee!.toFixed(2)} (${PAID_BY_LABELS[lastSale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
+                  `Buyer protection ${formatCurrency(lastSale.buyerProtectionFee!)} (${PAID_BY_LABELS[lastSale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
                 {(lastSale.deliveryCost ?? 0) > 0 &&
-                  `Delivery ${lastSale.deliveryCost!.toFixed(2)} (${PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']} paid) · `}
-                {(lastSale.vat ?? 0) > 0 && `VAT ${lastSale.vat!.toFixed(2)} · `}
-                {(lastSale.advertisingCost ?? 0) > 0 && `Advertising ${lastSale.advertisingCost!.toFixed(2)}`}
+                  `Delivery ${formatCurrency(lastSale.deliveryCost!)} (${PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']} paid) · `}
+                {(lastSale.vat ?? 0) > 0 && `VAT ${formatCurrency(lastSale.vat!)} · `}
+                {(lastSale.advertisingCost ?? 0) > 0 && `Advertising ${formatCurrency(lastSale.advertisingCost!)}`}
               </p>
             )}
 
@@ -459,12 +459,12 @@ export function CheckoutScreen({
                   <td>
                     {line.quantity} × {line.name} ({line.sku})
                   </td>
-                  <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
+                  <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="receipt-total">Total: {lastSale.subtotal.toFixed(2)}</p>
+          <p className="receipt-total">Total: {formatCurrency(lastSale.subtotal)}</p>
 
           <div className="dialog-actions">
             <button type="button" className="button" onClick={() => window.print()}>
@@ -492,17 +492,17 @@ export function CheckoutScreen({
                     <td>
                       {line.quantity} × {line.name} ({line.sku})
                     </td>
-                    <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
+                    <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="receipt-total">Total: {lastSale.subtotal.toFixed(2)}</p>
+            <p className="receipt-total">Total: {formatCurrency(lastSale.subtotal)}</p>
             <p>Payment: {PAYMENT_METHOD_LABELS[lastSale.paymentMethod]}</p>
             {lastSaleCash && (
               <>
-                <p>Cash received: {lastSaleCash.tendered.toFixed(2)}</p>
-                <p>Change given: {lastSaleCash.change.toFixed(2)}</p>
+                <p>Cash received: {formatCurrency(lastSaleCash.tendered)}</p>
+                <p>Change given: {formatCurrency(lastSaleCash.change)}</p>
               </>
             )}
 
@@ -519,24 +519,24 @@ export function CheckoutScreen({
                   <p className="receipt-total">Fees</p>
                   {(lastSale.buyerProtectionFee ?? 0) > 0 && (
                     <p>
-                      Buyer protection: {lastSale.buyerProtectionFee!.toFixed(2)} (
+                      Buyer protection: {formatCurrency(lastSale.buyerProtectionFee!)} (
                       {PAID_BY_LABELS[lastSale.buyerProtectionFeePaidBy ?? 'seller']} paid)
                     </p>
                   )}
                   {(lastSale.deliveryCost ?? 0) > 0 && (
                     <p>
-                      Delivery: {lastSale.deliveryCost!.toFixed(2)} ({PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']}{' '}
+                      Delivery: {formatCurrency(lastSale.deliveryCost!)} ({PAID_BY_LABELS[lastSale.deliveryPaidBy ?? 'seller']}{' '}
                       paid)
                     </p>
                   )}
-                  {(lastSale.vat ?? 0) > 0 && <p>VAT: {lastSale.vat!.toFixed(2)}</p>}
-                  {(lastSale.advertisingCost ?? 0) > 0 && <p>Advertising: {lastSale.advertisingCost!.toFixed(2)}</p>}
+                  {(lastSale.vat ?? 0) > 0 && <p>VAT: {formatCurrency(lastSale.vat!)}</p>}
+                  {(lastSale.advertisingCost ?? 0) > 0 && <p>Advertising: {formatCurrency(lastSale.advertisingCost!)}</p>}
                   {lastSale.orderTotal !== null && lastSale.orderTotal !== undefined && (
-                    <p>Order total: {lastSale.orderTotal.toFixed(2)}</p>
+                    <p>Order total: {formatCurrency(lastSale.orderTotal)}</p>
                   )}
                 </>
               )}
-            {role === 'manager' && <p className="receipt-total">Profit: {lastSale.profit.toFixed(2)}</p>}
+            {role === 'manager' && <p className="receipt-total">Profit: {formatCurrency(lastSale.profit)}</p>}
 
             {/* A scannable code for this exact sale — scan it back in on the
                 History screen later (with a camera or a wedge scanner) to

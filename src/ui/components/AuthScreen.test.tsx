@@ -29,7 +29,7 @@ describe('AuthScreen', () => {
     const user = userEvent.setup()
     render(<AuthScreen client={client} emailStorage={memoryStorage()} />)
 
-    await user.type(screen.getByLabelText(/email/i), 'jane@example.com')
+    await user.type(screen.getByLabelText(/^email$/i), 'jane@example.com')
     await user.click(screen.getByRole('button', { name: /send sign-in link/i }))
 
     expect(client.auth.signInWithOtp).toHaveBeenCalledWith({
@@ -46,7 +46,7 @@ describe('AuthScreen', () => {
     const user = userEvent.setup()
     render(<AuthScreen client={client} emailStorage={memoryStorage()} />)
 
-    await user.type(screen.getByLabelText(/email/i), 'jane@example.com')
+    await user.type(screen.getByLabelText(/^email$/i), 'jane@example.com')
     await user.click(screen.getByRole('button', { name: /send sign-in link/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests')
@@ -57,7 +57,7 @@ describe('AuthScreen', () => {
     const user = userEvent.setup()
     render(<AuthScreen client={client} emailStorage={memoryStorage()} />)
 
-    await user.type(screen.getByLabelText(/email/i), 'jane@example.com')
+    await user.type(screen.getByLabelText(/^email$/i), 'jane@example.com')
     await user.click(screen.getByRole('button', { name: /send sign-in link/i }))
     await screen.findByText(/check jane@example.com for a sign-in link/i)
 
@@ -71,7 +71,7 @@ describe('AuthScreen', () => {
     const user = userEvent.setup()
     render(<AuthScreen client={client} emailStorage={memoryStorage()} />)
 
-    await user.type(screen.getByLabelText(/email/i), 'new@example.com')
+    await user.type(screen.getByLabelText(/^email$/i), 'new@example.com')
     await user.click(screen.getByRole('button', { name: /send sign-in link/i }))
 
     // No separate sign-up mode/fields exist — signInWithOtp creates the
@@ -83,16 +83,59 @@ describe('AuthScreen', () => {
     expect(await screen.findByText(/check new@example.com for a sign-in link/i)).toBeInTheDocument()
   })
 
+  it('does not show a dropdown toggle on a device with no remembered sign-ins', () => {
+    render(<AuthScreen client={mockClient()} emailStorage={memoryStorage()} />)
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue('')
+    expect(screen.queryByRole('button', { name: /show previously used emails/i })).toBeNull()
+  })
+
+  it('opens the list of remembered emails from the permanent dropdown toggle, without focusing the field', async () => {
+    const storage = memoryStorage()
+    storage.setItem('stockflow.recentEmails.v1', JSON.stringify(['jane@example.com', 'older@example.com']))
+    const user = userEvent.setup()
+    render(<AuthScreen client={mockClient()} emailStorage={storage} />)
+
+    const toggle = screen.getByRole('button', { name: /show previously used emails/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('option', { name: 'jane@example.com' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'older@example.com' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('option', { name: 'older@example.com' }))
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue('older@example.com')
+  })
+
+  it('closes the dropdown toggle list on a second click', async () => {
+    const storage = memoryStorage()
+    storage.setItem('stockflow.recentEmails.v1', JSON.stringify(['jane@example.com']))
+    const user = userEvent.setup()
+    render(<AuthScreen client={mockClient()} emailStorage={storage} />)
+
+    const toggle = screen.getByRole('button', { name: /show previously used emails/i })
+    await user.click(toggle)
+    expect(screen.getByRole('option', { name: 'jane@example.com' })).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(screen.queryByRole('option', { name: 'jane@example.com' })).toBeNull()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('offers a previously used email as a click-to-fill suggestion instead of retyping it', async () => {
     const storage = memoryStorage()
     storage.setItem('stockflow.recentEmails.v1', JSON.stringify(['jane@example.com']))
     const user = userEvent.setup()
     render(<AuthScreen client={mockClient()} emailStorage={storage} />)
 
-    await user.click(screen.getByLabelText(/email/i))
+    await user.click(screen.getByLabelText(/^email$/i))
     await user.click(await screen.findByRole('option', { name: 'jane@example.com' }))
 
-    expect(screen.getByLabelText(/email/i)).toHaveValue('jane@example.com')
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue('jane@example.com')
   })
 
   it('remembers an email after a successful sign-in, for next time', async () => {
@@ -101,15 +144,15 @@ describe('AuthScreen', () => {
     const user = userEvent.setup()
     render(<AuthScreen client={client} emailStorage={storage} />)
 
-    await user.type(screen.getByLabelText(/email/i), 'jane@example.com')
+    await user.type(screen.getByLabelText(/^email$/i), 'jane@example.com')
     await user.click(screen.getByRole('button', { name: /send sign-in link/i }))
     await screen.findByText(/check jane@example.com for a sign-in link/i)
 
     expect(JSON.parse(storage.getItem('stockflow.recentEmails.v1') ?? '[]')).toContain('jane@example.com')
 
     await user.click(screen.getByRole('button', { name: /use a different email/i }))
-    await user.clear(screen.getByLabelText(/email/i))
-    await user.click(screen.getByLabelText(/email/i))
+    await user.clear(screen.getByLabelText(/^email$/i))
+    await user.click(screen.getByLabelText(/^email$/i))
 
     expect(await screen.findByRole('option', { name: 'jane@example.com' })).toBeInTheDocument()
   })

@@ -41,6 +41,8 @@ function fakeSupabaseRepo(overrides: Partial<InventoryRepository> = {}): Invento
     listPendingProfileChanges: async () => [],
     approveProfileChange: vi.fn(),
     rejectProfileChange: vi.fn(),
+    getLoginEmail: async () => '',
+    updateLoginEmail: vi.fn(),
     getAccountSettings: async () => null,
     setAccountSettings: vi.fn(okTrue),
     listSuppliers: async () => [],

@@ -1155,6 +1155,22 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       return { ok: true, value: true }
     },
 
+    async getLoginEmail(): Promise<string> {
+      const { data } = await db.auth.getUser()
+      return data.user?.email ?? ''
+    },
+
+    async updateLoginEmail(newEmail: string): Promise<Result<true>> {
+      // Supabase emails a confirmation link to the *new* address and only
+      // swaps the login email over once that's clicked — this call just
+      // kicks that off, it doesn't change anything immediately. A stray
+      // "already registered" style error surfaces via `error.message` as-is,
+      // same as every other RPC/auth error in this file.
+      const { error } = await db.auth.updateUser({ email: newEmail })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
+    },
+
     async removeTeamMember(membershipId: string): Promise<Result<true>> {
       // Read first and log *before* removing — best-effort, same reasoning
       // as deleteProduct's own read-before-delete above: once the membership

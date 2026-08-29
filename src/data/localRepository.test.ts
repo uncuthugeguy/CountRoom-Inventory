@@ -362,7 +362,7 @@ describe('activity log', () => {
     const activity = await repo.listActivity()
     expect(activity[0]).toMatchObject({ entityType: 'return', action: 'edited', entityId: original.value.id })
     expect(activity[0].entityLabel).toMatch(/^Return case/)
-    expect(activity[0].detail).toBe('refund 5.00 → 8.00')
+    expect(activity[0].detail).toBe('refund £5.00 → £8.00')
   })
 })
 

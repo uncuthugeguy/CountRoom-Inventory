@@ -7,7 +7,9 @@ export const formatDelta = (delta: number): string =>
 export function formatDateTime(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  // 24-hour, per the design system's content rule: 12-hour am/pm is used
+  // nowhere in the suite.
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', hour12: false })
 }
 
 /** "2h ago" style relative timestamp, used by the activity log so a recent
@@ -36,10 +38,10 @@ export function formatRelativeTime(iso: string): string {
   return formatDateTime(iso)
 }
 
-/** Plain 2dp numeric formatting for money amounts — matches the `.toFixed(2)`
- * convention used at checkout and elsewhere in the app (no currency symbol,
- * since CountRoom doesn't assume one). */
-export const formatCurrency = (value: number): string => value.toFixed(2)
+/** £ + 2dp, per the design system's content rule: "currency symbol every
+ * time (£12.40, not 12.40)". CountRoom is GBP-only today, so the symbol
+ * is hardcoded rather than derived from a locale/currency setting. */
+export const formatCurrency = (value: number): string => `£${value.toFixed(2)}`
 
 /** A percentage value that's already scaled 0-100 (e.g. profit margin) — the
  * caller appends its own `%` sign so this stays reusable in sentences. */

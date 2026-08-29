@@ -115,6 +115,7 @@ describe('employee role', () => {
   it('shows a Team panel in settings for a manager', async () => {
     const { user } = await renderAs('manager')
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^team$/i }))
 
     expect(await screen.findByRole('heading', { name: /^team$/i })).toBeInTheDocument()
     expect(screen.getByText(/^you\b/i)).toBeInTheDocument()
@@ -123,6 +124,7 @@ describe('employee role', () => {
   it('does not show a Product categories panel in settings', async () => {
     const { user } = await renderAs('employee')
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^catalogue$/i }))
 
     expect(screen.queryByRole('heading', { name: /product categories/i })).not.toBeInTheDocument()
   })
@@ -130,6 +132,7 @@ describe('employee role', () => {
   it('shows a Product categories panel in settings for a manager', async () => {
     const { user } = await renderAs('manager')
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^catalogue$/i }))
 
     expect(await screen.findByRole('heading', { name: /product categories/i })).toBeInTheDocument()
   })
@@ -137,6 +140,7 @@ describe('employee role', () => {
   it('offers only the manager-curated category list in the product form, not free text', async () => {
     const { user } = await renderAs('manager')
     await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^catalogue$/i }))
 
     const categoriesPanel = screen.getByRole('heading', { name: /product categories/i }).closest('section')!
     await user.type(within(categoriesPanel).getByLabelText(/add a category/i), 'Hand Tools')

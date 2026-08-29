@@ -706,13 +706,13 @@ function LabelCanvas({
         y={-FRAME_PAD}
         width={width + FRAME_PAD * 2}
         height={height + FRAME_PAD * 2}
-        fill="rgba(57,211,187,0.06)"
-        stroke={drag?.key === key ? '#39d3bb' : 'rgba(57,211,187,0.55)'}
+        fill="rgba(140,74,47,0.06)"
+        stroke={drag?.key === key ? '#8c4a2f' : 'rgba(140,74,47,0.55)'}
         strokeDasharray={drag?.key === key ? undefined : '5 4'}
         strokeWidth={drag?.key === key ? 2 : 1}
         rx={4}
       />
-      <text x={0} y={-7} fontSize={9} fontFamily="ui-sans-serif, system-ui" fill="#39d3bb" style={{ pointerEvents: 'none' }}>
+      <text x={0} y={-7} fontSize={9} fontFamily="ui-sans-serif, system-ui" fill="#8c4a2f" style={{ pointerEvents: 'none' }}>
         {ELEMENT_LABEL[key]}
       </text>
       {content}
@@ -736,8 +736,8 @@ function LabelCanvas({
               cx={cx}
               cy={cy}
               r={6}
-              fill="#39d3bb"
-              stroke="#07111f"
+              fill="#8c4a2f"
+              stroke="#211d19"
               strokeWidth={1.5}
               tabIndex={0}
               role="slider"
@@ -767,7 +767,7 @@ function LabelCanvas({
         onPointerUp={endInteraction}
         onPointerCancel={endInteraction}
       >
-        <rect x={0} y={0} width={t.widthDots} height={t.heightDots} fill="#fff" stroke="#243b55" />
+        <rect x={0} y={0} width={t.widthDots} height={t.heightDots} fill="#fff" stroke="#d3cabc" />
 
         {t.include.logo &&
           (logoDataUrl
@@ -786,7 +786,7 @@ function LabelCanvas({
                 logoPos.y,
                 logoWidth,
                 logoHeight,
-                <text x={logoWidth / 2} y={logoHeight / 2 + 4} textAnchor="middle" fontSize={11} fill="#94a3b8" style={{ pointerEvents: 'none' }}>
+                <text x={logoWidth / 2} y={logoHeight / 2 + 4} textAnchor="middle" fontSize={11} fill="#8a7f70" style={{ pointerEvents: 'none' }}>
                   (no logo uploaded)
                 </text>,
                 'logo',
@@ -1201,9 +1201,9 @@ export function LabelTemplateEditor({ settings }: LabelTemplateEditorProps) {
             fontSize: `${previewPx}px`,
             padding: '6px 10px',
             marginTop: 4,
-            border: '1px solid rgba(57,211,187,0.35)',
+            border: '1px solid rgba(140,74,47,0.35)',
             borderRadius: 6,
-            background: 'rgba(57,211,187,0.06)',
+            background: 'rgba(140,74,47,0.06)',
             color: '#0a0a0a',
             whiteSpace: 'nowrap',
             overflow: 'hidden',

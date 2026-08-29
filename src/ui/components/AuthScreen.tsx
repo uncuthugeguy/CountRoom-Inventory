@@ -97,18 +97,36 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
         <form className="form" onSubmit={submit} noValidate>
           <div className="field email-field" ref={fieldRef}>
             <label htmlFor="auth-email">Email</label>
-            <input
-              id="auth-email"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value)
-                setShowSuggestions(true)
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              required
-            />
+            <div className="email-input-wrap">
+              <input
+                id="auth-email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setShowSuggestions(true)
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                required
+              />
+              {/* Always-visible affordance for the remembered-emails list below, rather
+                  than relying on someone noticing suggestions appear when they focus an
+                  empty field — see recentEmailsStorage.ts for why picking a remembered
+                  address matters here. */}
+              {recentEmails.length > 0 && (
+                <button
+                  type="button"
+                  className="email-dropdown-toggle"
+                  aria-label="Show previously used emails"
+                  aria-haspopup="listbox"
+                  aria-expanded={showSuggestions}
+                  onClick={() => setShowSuggestions((open) => !open)}
+                >
+                  <span aria-hidden="true">&#9662;</span>
+                </button>
+              )}
+            </div>
             {showSuggestions && matchingSuggestions.length > 0 && (
               <ul className="email-suggestions" role="listbox" aria-label="Previously used addresses">
                 {matchingSuggestions.map((saved) => (

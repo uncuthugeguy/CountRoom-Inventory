@@ -159,7 +159,7 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
         <Stat
           id="stat-revenue-today"
           label="Revenue today"
-          value={today.revenue.toFixed(2)}
+          value={formatCurrency(today.revenue)}
           active={detail === 'sales'}
           onClick={() => toggle('sales')}
         />
@@ -167,7 +167,7 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
           <Stat
             id="stat-profit-today"
             label="Profit today"
-            value={today.profit.toFixed(2)}
+            value={formatCurrency(today.profit)}
             active={detail === 'sales'}
             onClick={() => toggle('sales')}
           />
@@ -235,8 +235,8 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
                 {todaysSales.map((sale) => (
                   <li key={sale.id} className="activity-item">
                     <span>{sale.channel || 'Unspecified'}</span>
-                    <span className="mono">{sale.subtotal.toFixed(2)}</span>
-                    {role === 'manager' && <span className="muted">profit {sale.profit.toFixed(2)}</span>}
+                    <span className="mono">{formatCurrency(sale.subtotal)}</span>
+                    {role === 'manager' && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
                     <span className="muted">{PAYMENT_METHOD_LABELS[sale.paymentMethod]}</span>
                     <span className="muted">{formatDateTime(sale.createdAt)}</span>
                   </li>

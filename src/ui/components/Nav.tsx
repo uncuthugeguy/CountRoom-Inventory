@@ -1,3 +1,17 @@
+import {
+  CheckoutIcon,
+  CodesIcon,
+  DashboardIcon,
+  HistoryIcon,
+  ProductsIcon,
+  ReportsIcon,
+  ReturnsIcon,
+  ScanIcon,
+  SettingsIcon,
+  StocktakeIcon,
+  SuppliersIcon,
+} from './Icons'
+
 export const TABS = [
   'dashboard',
   'products',
@@ -28,18 +42,19 @@ const LABELS: Record<Tab, string> = {
   settings: 'Settings',
 }
 
-const ICONS: Record<Tab, string> = {
-  dashboard: '▦',
-  products: '☰',
-  scan: '⬒',
-  checkout: '$',
-  returns: '↩',
-  stocktake: '☑',
-  history: '↻',
-  reports: '📊',
-  suppliers: '🚚',
-  codes: '⊞',
-  settings: '⚙',
+/** No emoji, no Unicode glyphs as icons — see Icons.tsx. */
+const ICONS: Record<Tab, (props: { className?: string }) => JSX.Element> = {
+  dashboard: DashboardIcon,
+  products: ProductsIcon,
+  scan: ScanIcon,
+  checkout: CheckoutIcon,
+  returns: ReturnsIcon,
+  stocktake: StocktakeIcon,
+  history: HistoryIcon,
+  reports: ReportsIcon,
+  suppliers: SuppliersIcon,
+  codes: CodesIcon,
+  settings: SettingsIcon,
 }
 
 export interface NavProps {
@@ -62,8 +77,11 @@ export function Nav({ tab, onChange, hiddenTabs = [] }: NavProps) {
           aria-current={value === tab ? 'page' : undefined}
           onClick={() => onChange(value)}
         >
-          <span className="nav-icon" aria-hidden="true">
-            {ICONS[value]}
+          <span className="nav-icon">
+            {(() => {
+              const Icon = ICONS[value]
+              return <Icon />
+            })()}
           </span>
           <span className="nav-label">{LABELS[value]}</span>
         </button>

@@ -43,7 +43,7 @@ import {
 import { Dialog } from '../components/Dialog'
 import { SaleFeesFields } from '../components/SaleFeesFields'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
-import { formatDateTime, formatDelta, formatNumber, formatRelativeTime } from '../format'
+import { formatCurrency, formatDateTime, formatDelta, formatNumber, formatRelativeTime } from '../format'
 import {
   clearSaleEditDraft,
   hydrateSaleEditCart,
@@ -78,12 +78,12 @@ function ReceiptDialog({
               <td>
                 {line.quantity} × {line.name} ({line.sku})
               </td>
-              <td className="receipt-amount">{line.lineTotal.toFixed(2)}</td>
+              <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="receipt-total">Total: {sale.subtotal.toFixed(2)}</p>
+      <p className="receipt-total">Total: {formatCurrency(sale.subtotal)}</p>
       <p>Payment: {PAYMENT_METHOD_LABELS[sale.paymentMethod]}</p>
       {isManager &&
         ((sale.buyerProtectionFee ?? 0) > 0 ||
@@ -93,15 +93,15 @@ function ReceiptDialog({
           (sale.orderTotal !== null && sale.orderTotal !== undefined)) && (
           <p className="muted" data-testid="receipt-fees">
             {(sale.buyerProtectionFee ?? 0) > 0 &&
-              `Buyer protection ${sale.buyerProtectionFee!.toFixed(2)} (${PAID_BY_LABELS[sale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
+              `Buyer protection ${formatCurrency(sale.buyerProtectionFee!)} (${PAID_BY_LABELS[sale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
             {(sale.deliveryCost ?? 0) > 0 &&
-              `Delivery ${sale.deliveryCost!.toFixed(2)} (${PAID_BY_LABELS[sale.deliveryPaidBy ?? 'seller']} paid) · `}
-            {(sale.vat ?? 0) > 0 && `VAT ${sale.vat!.toFixed(2)} · `}
-            {(sale.advertisingCost ?? 0) > 0 && `Advertising ${sale.advertisingCost!.toFixed(2)} · `}
-            {sale.orderTotal !== null && sale.orderTotal !== undefined && `Order total ${sale.orderTotal.toFixed(2)}`}
+              `Delivery ${formatCurrency(sale.deliveryCost!)} (${PAID_BY_LABELS[sale.deliveryPaidBy ?? 'seller']} paid) · `}
+            {(sale.vat ?? 0) > 0 && `VAT ${formatCurrency(sale.vat!)} · `}
+            {(sale.advertisingCost ?? 0) > 0 && `Advertising ${formatCurrency(sale.advertisingCost!)} · `}
+            {sale.orderTotal !== null && sale.orderTotal !== undefined && `Order total ${formatCurrency(sale.orderTotal)}`}
           </p>
         )}
-      {isManager && <p className="muted">Profit: {sale.profit.toFixed(2)}</p>}
+      {isManager && <p className="muted">Profit: {formatCurrency(sale.profit)}</p>}
       <div className="dialog-actions">
         {isManager && (
           <button type="button" className="button" onClick={onEdit}>
@@ -333,7 +333,7 @@ export function SaleEditDialog({
                       }
                     />
                   </label>
-                  <span className="cart-line-total">{(line.unitPrice * line.quantity).toFixed(2)}</span>
+                  <span className="cart-line-total">{formatCurrency((line.unitPrice * line.quantity))}</span>
                   <button
                     type="button"
                     className="button button-ghost"
@@ -351,8 +351,8 @@ export function SaleEditDialog({
 
       {cart.length > 0 && (
         <div className="cart-totals" data-testid="edit-sale-totals">
-          <span>Subtotal: {totals.subtotal.toFixed(2)}</span>
-          {role === 'manager' && <span>Est. profit: {netProfit.toFixed(2)}</span>}
+          <span>Subtotal: {formatCurrency(totals.subtotal)}</span>
+          {role === 'manager' && <span>Est. profit: {formatCurrency(netProfit)}</span>}
         </div>
       )}
 
@@ -397,11 +397,11 @@ export function SaleEditDialog({
           data-testid="order-total-check"
         >
           {orderTotalCheck.matches
-            ? `Matches your order total (${orderTotalCheck.entered.toFixed(2)}).`
-            : `You've itemised ${orderTotalCheck.itemised.toFixed(2)}, but entered an order total of ${orderTotalCheck.entered.toFixed(2)} — ${
+            ? `Matches your order total (${formatCurrency(orderTotalCheck.entered)}).`
+            : `You've itemised ${formatCurrency(orderTotalCheck.itemised)}, but entered an order total of ${formatCurrency(orderTotalCheck.entered)} — ${
                 orderTotalCheck.difference > 0
-                  ? `you're ${orderTotalCheck.difference.toFixed(2)} short. Check you haven't missed a fee.`
-                  : `that's ${Math.abs(orderTotalCheck.difference).toFixed(2)} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
+                  ? `you're ${formatCurrency(orderTotalCheck.difference)} short. Check you haven't missed a fee.`
+                  : `that's ${formatCurrency(Math.abs(orderTotalCheck.difference))} more than the order total. Check the item price above isn't already including a fee you've also entered below.`
               }`}
         </p>
       )}
@@ -769,18 +769,18 @@ function SalesView({
 
       <section className="stats" aria-label="Profit and loss summary">
         <div className="stat" data-testid="pl-revenue">
-          <span className="stat-value">{summary.revenue.toFixed(2)}</span>
+          <span className="stat-value">{formatCurrency(summary.revenue)}</span>
           <span className="stat-label">Revenue</span>
         </div>
         {isManager && (
           <div className="stat" data-testid="pl-cost">
-            <span className="stat-value">{summary.cost.toFixed(2)}</span>
+            <span className="stat-value">{formatCurrency(summary.cost)}</span>
             <span className="stat-label">Cost of goods</span>
           </div>
         )}
         {isManager && (
           <div className="stat" data-testid="pl-profit">
-            <span className="stat-value">{summary.profit.toFixed(2)}</span>
+            <span className="stat-value">{formatCurrency(summary.profit)}</span>
             <span className="stat-label">Profit</span>
           </div>
         )}
@@ -801,8 +801,8 @@ function SalesView({
                 {byChannel.map((row) => (
                   <li key={row.key} className="breakdown-row">
                     <span>{row.key}</span>
-                    <span className="mono">{row.revenue.toFixed(2)}</span>
-                    {isManager && <span className="muted">profit {row.profit.toFixed(2)}</span>}
+                    <span className="mono">{formatCurrency(row.revenue)}</span>
+                    {isManager && <span className="muted">profit {formatCurrency(row.profit)}</span>}
                   </li>
                 ))}
               </ul>
@@ -813,8 +813,8 @@ function SalesView({
                 {byPayment.map((row) => (
                   <li key={row.key} className="breakdown-row">
                     <span>{PAYMENT_METHOD_LABELS[row.key as keyof typeof PAYMENT_METHOD_LABELS] ?? row.key}</span>
-                    <span className="mono">{row.revenue.toFixed(2)}</span>
-                    {isManager && <span className="muted">profit {row.profit.toFixed(2)}</span>}
+                    <span className="mono">{formatCurrency(row.revenue)}</span>
+                    {isManager && <span className="muted">profit {formatCurrency(row.profit)}</span>}
                   </li>
                 ))}
               </ul>
@@ -831,8 +831,8 @@ function SalesView({
                   </span>
                   <span className="mono">{formatNumber(row.unitsSold)} sold</span>
                   <span className="muted">
-                    revenue {row.revenue.toFixed(2)}
-                    {isManager && ` · profit ${row.profit.toFixed(2)}`}
+                    revenue {formatCurrency(row.revenue)}
+                    {isManager && ` · profit ${formatCurrency(row.profit)}`}
                   </span>
                 </li>
               ))}
@@ -848,8 +848,8 @@ function SalesView({
                   {sale.updatedAt && <span className="badge">Edited</span>}
                 </div>
                 <div className="history-numbers">
-                  <span className="mono">{sale.subtotal.toFixed(2)}</span>
-                  {isManager && <span className="muted">profit {sale.profit.toFixed(2)}</span>}
+                  <span className="mono">{formatCurrency(sale.subtotal)}</span>
+                  {isManager && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
                 </div>
                 <div className="history-meta">
                   <span className="muted">{formatDateTime(sale.createdAt)}</span>
