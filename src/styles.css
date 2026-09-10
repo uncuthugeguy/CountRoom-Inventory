@@ -164,11 +164,15 @@ h1, h2, h3, p { margin-top: 0; }
 .form { display: grid; gap: .9rem; }
 .dialog-actions { justify-content: flex-end; }
 .toast { position: fixed; left: 50%; bottom: 88px; z-index: 80; width: max-content; max-width: calc(100% - 2rem); margin: 0; padding: .75rem 1rem; transform: translateX(-50%); border: 1px solid var(--stone-900); border-radius: .75rem; color: var(--clay-50); background: var(--stone-900); box-shadow: 0 10px 35px rgba(33,29,25,.4); }
-/* grid-auto-columns (rather than a fixed repeat(N, 1fr)) so the bar lays
-   out correctly whether all tabs are showing or one is hidden — e.g. Quick
-   codes, which only managers see. */
-.nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border-top: 1px solid var(--dark-border); background: rgba(33,29,25,.96); backdrop-filter: blur(14px); }
-.nav-item { display: grid; place-items: center; gap: .15rem; min-height: 68px; border: 0; color: rgba(246,243,238,.6); background: transparent; }
+/* Mobile: a horizontally scrollable flex row (flex: 0 0 auto on each
+   item, see .nav-item) so tabs stay reachable via swipe instead of being
+   squeezed to fit and clipped — this app has 11 tabs, more than a phone
+   width can show at once. Desktop/tablet (>=700px) switches back to a
+   fixed-height vertical grid sidebar, see the min-width: 700px block
+   below. */
+.nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; border-top: 1px solid var(--dark-border); background: rgba(33,29,25,.96); backdrop-filter: blur(14px); }
+.nav::-webkit-scrollbar { display: none; }
+.nav-item { display: grid; place-items: center; gap: .15rem; min-height: 68px; flex: 0 0 auto; white-space: nowrap; border: 0; color: rgba(246,243,238,.6); background: transparent; }
 .nav-item-active { color: var(--accent-on-dark); background: rgba(210,158,126,.12); }
 .nav-icon { display: inline-flex; width: 1.2rem; height: 1.2rem; }
 .nav-icon svg { width: 100%; height: 100%; }
@@ -273,7 +277,7 @@ h1, h2, h3, p { margin-top: 0; }
 }
 @media (min-width: 700px) {
   .app { padding-bottom: 0; padding-left: 92px; }
-  .nav { top: 0; right: auto; width: 92px; grid-auto-flow: row; grid-template-columns: 1fr; grid-auto-rows: 80px; align-content: center; border-top: 0; border-right: 1px solid var(--dark-border); }
+  .nav { top: 0; right: auto; width: 92px; display: grid; grid-auto-flow: row; grid-template-columns: 1fr; grid-auto-rows: 80px; align-content: center; overflow: visible; border-top: 0; border-right: 1px solid var(--dark-border); }
   .app-header { padding-left: max(1rem, calc((100vw - 1000px)/2)); }
   .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .field-row { grid-template-columns: 1fr 1fr; }
