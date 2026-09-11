@@ -152,6 +152,7 @@ describe('useInventory', () => {
       confirmPurchaseOrder: vi.fn(),
       receivePurchaseOrder: vi.fn(),
       cancelPurchaseOrder: vi.fn(),
+    unboxPurchaseOrderLine: vi.fn(),
       listActivity: async () => [],
       logActivity: vi.fn(),
     }

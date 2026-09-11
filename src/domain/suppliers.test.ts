@@ -142,6 +142,8 @@ describe('Supplier Domain', () => {
       supplierId: 's1',
       supplierName: 'Supplier',
       status: status as any,
+      poNumber: `PO-${status}`,
+      orderDate: '2026-01-01',
       expectedDeliveryDate: '2026-09-01',
       notes: '',
       lines: productIds.map((productId) => ({
@@ -155,6 +157,10 @@ describe('Supplier Domain', () => {
         lineTotal: 50,
       })),
       subtotal: 50,
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+      grandTotal: 50,
       createdAt: '2026-01-01T00:00:00Z',
     })
 

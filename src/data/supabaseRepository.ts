@@ -12,7 +12,7 @@ import {
 } from '../domain/activity'
 import { applyMovement } from '../domain/movements'
 import { MANAGER_ONLY, isManager, productEditNeedsManager } from '../domain/permissions'
-import { validateDraft } from '../domain/products'
+import { validateDraft, nextSku } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
 import type {
   ActivityAction,
@@ -45,12 +45,15 @@ import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
+  PurchaseOrderLineUnboxedItem,
   PurchaseOrderStatus,
   Supplier,
   SupplierDraft,
   SupplierProduct,
   SupplierProductDraft,
+  UnboxedLineItemInput,
 } from '../domain/suppliers'
+import { calculatePOGrandTotal } from '../domain/suppliers'
 import { getSupabaseClient } from './supabaseClient'
 import {
   DUPLICATE_BARCODE,
@@ -204,10 +207,23 @@ interface PurchaseOrderLineRow {
   product_id: string | null
   sku: string
   name: string
+  custom_name: string | null
+  is_lot: boolean
   quantity: number
   unit_cost: number
   line_total: number
+  vat_amount: number | null
   quantity_received: number | null
+}
+
+interface PurchaseOrderUnboxedItemRow {
+  id: string
+  purchase_order_line_id: string
+  product_id: string | null
+  sku: string
+  name: string
+  quantity: number
+  allocated_cost: number
 }
 
 interface PurchaseOrderRow {
@@ -215,10 +231,16 @@ interface PurchaseOrderRow {
   supplier_id: string
   supplier_name: string
   status: PurchaseOrderStatus
+  po_number: string
+  order_date: string | null
   expected_delivery_date: string
   received_date: string | null
   notes: string
   subtotal: number
+  delivery_cost: number
+  buyers_premium: number
+  vat_amount: number
+  grand_total: number
   created_at: string
   updated_at: string | null
 }
@@ -378,16 +400,31 @@ const toSupplierProductRow = (draft: SupplierProductDraft) => ({
   notes: draft.notes,
 })
 
-const toPurchaseOrderLine = (row: PurchaseOrderLineRow): PurchaseOrderLine => ({
-  id: row.id,
-  poId: row.purchase_order_id,
+const toUnboxedItem = (row: PurchaseOrderUnboxedItemRow): PurchaseOrderLineUnboxedItem => ({
   productId: row.product_id ?? '',
   sku: row.sku,
   name: row.name,
   quantity: row.quantity,
+  allocatedCost: row.allocated_cost,
+})
+
+const toPurchaseOrderLine = (
+  row: PurchaseOrderLineRow,
+  unboxedInto?: PurchaseOrderLineUnboxedItem[],
+): PurchaseOrderLine => ({
+  id: row.id,
+  poId: row.purchase_order_id,
+  productId: row.product_id ?? undefined,
+  sku: row.sku,
+  name: row.name,
+  customName: row.custom_name ?? undefined,
+  isLot: row.is_lot,
+  quantity: row.quantity,
   unitCost: row.unit_cost,
   lineTotal: row.line_total,
+  vatAmount: row.vat_amount ?? undefined,
   quantityReceived: row.quantity_received ?? undefined,
+  unboxedInto: unboxedInto && unboxedInto.length > 0 ? unboxedInto : undefined,
 })
 
 const toPurchaseOrder = (row: PurchaseOrderRow, lines: PurchaseOrderLine[]): PurchaseOrder => ({
@@ -395,11 +432,17 @@ const toPurchaseOrder = (row: PurchaseOrderRow, lines: PurchaseOrderLine[]): Pur
   supplierId: row.supplier_id,
   supplierName: row.supplier_name,
   status: row.status,
+  poNumber: row.po_number,
+  orderDate: row.order_date ?? '',
   expectedDeliveryDate: row.expected_delivery_date,
   receivedDate: row.received_date ?? undefined,
   notes: row.notes,
   lines,
   subtotal: row.subtotal,
+  deliveryCost: row.delivery_cost,
+  buyersPremium: row.buyers_premium,
+  vatAmount: row.vat_amount,
+  grandTotal: row.grand_total,
   createdAt: row.created_at,
   updatedAt: row.updated_at ?? undefined,
 })
@@ -512,10 +555,31 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     }
   }
 
+  const fetchUnboxedItemsForLines = async (
+    lineIds: string[],
+  ): Promise<Map<string, PurchaseOrderLineUnboxedItem[]>> => {
+    const byLine = new Map<string, PurchaseOrderLineUnboxedItem[]>()
+    if (lineIds.length === 0) return byLine
+    const { data, error } = await db
+      .from('purchase_order_unboxed_items')
+      .select('*')
+      .in('purchase_order_line_id', lineIds)
+    if (error) throw new Error(error.message)
+    for (const row of data as PurchaseOrderUnboxedItemRow[]) {
+      const item = toUnboxedItem(row)
+      const existing = byLine.get(row.purchase_order_line_id)
+      if (existing) existing.push(item)
+      else byLine.set(row.purchase_order_line_id, [item])
+    }
+    return byLine
+  }
+
   const fetchPurchaseOrderLines = async (poId: string): Promise<PurchaseOrderLine[]> => {
     const { data, error } = await db.from('purchase_order_lines').select('*').eq('purchase_order_id', poId)
     if (error) throw new Error(error.message)
-    return (data as PurchaseOrderLineRow[]).map(toPurchaseOrderLine)
+    const rows = data as PurchaseOrderLineRow[]
+    const unboxedByLine = await fetchUnboxedItemsForLines(rows.map((row) => row.id))
+    return rows.map((row) => toPurchaseOrderLine(row, unboxedByLine.get(row.id)))
   }
 
   const fetchPurchaseOrder = async (id: string): Promise<PurchaseOrder | null> => {
@@ -1329,12 +1393,14 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         .order('created_at', { ascending: false })
       if (error) throw new Error(error.message)
 
-      const { data: lineRows, error: linesError } = await db.from('purchase_order_lines').select('*')
+      const { data: lineRowsData, error: linesError } = await db.from('purchase_order_lines').select('*')
       if (linesError) throw new Error(linesError.message)
+      const lineRows = lineRowsData as PurchaseOrderLineRow[]
+      const unboxedByLine = await fetchUnboxedItemsForLines(lineRows.map((row) => row.id))
 
       const linesByPo = new Map<string, PurchaseOrderLine[]>()
-      for (const row of lineRows as PurchaseOrderLineRow[]) {
-        const line = toPurchaseOrderLine(row)
+      for (const row of lineRows) {
+        const line = toPurchaseOrderLine(row, unboxedByLine.get(row.id))
         const existing = linesByPo.get(line.poId)
         if (existing) existing.push(line)
         else linesByPo.set(line.poId, [line])
@@ -1356,38 +1422,73 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (!supplierRow) return { ok: false, error: NOT_FOUND }
       const supplier = toSupplier(supplierRow as SupplierRow)
 
-      // Snapshot sku/name from the real product rows for every line — never
-      // trust the client's own idea of a product's current sku/name, the
-      // same reasoning recordSale builds sale_items from a fresh read.
-      const productIds = [...new Set(input.lines.map((line) => line.productId))]
-      const { data: productRows, error: productsError } = await db
-        .from('products')
-        .select('*')
-        .in('id', productIds)
-      if (productsError) return { ok: false, error: productsError.message }
-      const productById = new Map((productRows as ProductRow[]).map((row) => [row.id, toProduct(row)]))
+      // Snapshot sku/name from the real product rows for every line that
+      // names a catalogue product — never trust the client's own idea of a
+      // product's current sku/name, the same reasoning recordSale builds
+      // sale_items from a fresh read. A line with no productId (a one-off
+      // custom-named item, or a mixed lot) has no product to snapshot yet.
+      const productIds = [...new Set(input.lines.map((line) => line.productId).filter((id): id is string => !!id))]
+      const productById = new Map<string, Product>()
+      if (productIds.length > 0) {
+        const { data: productRows, error: productsError } = await db
+          .from('products')
+          .select('*')
+          .in('id', productIds)
+        if (productsError) return { ok: false, error: productsError.message }
+        for (const row of productRows as ProductRow[]) {
+          const product = toProduct(row)
+          productById.set(product.id, product)
+        }
+      }
 
       const linesToInsert: Array<{
-        product_id: string
+        product_id: string | null
         sku: string
         name: string
+        custom_name: string | null
+        is_lot: boolean
         quantity: number
         unit_cost: number
         line_total: number
+        vat_amount: number | null
       }> = []
       for (const line of input.lines) {
-        const product = productById.get(line.productId)
-        if (!product) return { ok: false, error: NOT_FOUND }
-        linesToInsert.push({
-          product_id: product.id,
-          sku: product.sku,
-          name: product.name,
-          quantity: line.quantity,
-          unit_cost: line.unitCost,
-          line_total: line.quantity * line.unitCost,
-        })
+        if (line.productId) {
+          const product = productById.get(line.productId)
+          if (!product) return { ok: false, error: NOT_FOUND }
+          linesToInsert.push({
+            product_id: product.id,
+            sku: product.sku,
+            name: product.name,
+            custom_name: null,
+            is_lot: false,
+            quantity: line.quantity,
+            unit_cost: line.unitCost,
+            line_total: line.quantity * line.unitCost,
+            vat_amount: line.vatAmount ?? null,
+          })
+        } else {
+          const name = (line.customName ?? '').trim()
+          if (!name) return { ok: false, error: 'Each line needs either a product or a name.' }
+          linesToInsert.push({
+            product_id: null,
+            sku: '',
+            name,
+            custom_name: name,
+            is_lot: line.isLot === true,
+            quantity: line.quantity,
+            unit_cost: line.unitCost,
+            line_total: line.quantity * line.unitCost,
+            vat_amount: line.vatAmount ?? null,
+          })
+        }
       }
       const subtotal = linesToInsert.reduce((sum, line) => sum + line.line_total, 0)
+      const deliveryCost = input.deliveryCost || 0
+      const buyersPremium = input.buyersPremium || 0
+      const vatAmount = input.vatAmount || 0
+      const grandTotal =
+        input.grandTotal ?? calculatePOGrandTotal({ subtotal, deliveryCost, buyersPremium, vatAmount })
 
       const { data: poRow, error: poError } = await db
         .from('purchase_orders')
@@ -1396,9 +1497,15 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
           supplier_id: input.supplierId,
           supplier_name: supplier.name,
           status: 'draft',
+          po_number: input.poNumber,
+          order_date: input.orderDate || null,
           expected_delivery_date: input.expectedDeliveryDate,
           notes: input.notes,
           subtotal,
+          delivery_cost: deliveryCost,
+          buyers_premium: buyersPremium,
+          vat_amount: vatAmount,
+          grand_total: grandTotal,
         })
         .select()
         .single()
@@ -1414,7 +1521,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         .select()
       if (linesError) return { ok: false, error: linesError.message }
 
-      return { ok: true, value: toPurchaseOrder(po, (lineRows as PurchaseOrderLineRow[]).map(toPurchaseOrderLine)) }
+      return { ok: true, value: toPurchaseOrder(po, (lineRows as PurchaseOrderLineRow[]).map((row) => toPurchaseOrderLine(row))) }
     },
 
     async sendPurchaseOrder(id): Promise<Result<PurchaseOrder>> {
@@ -1466,6 +1573,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       // localRepository's receivePurchaseOrder, which is also best-effort
       // per line rather than all-or-nothing.
       for (const line of existing.lines) {
+        if (line.isLot) continue
         const qty = lineQuantities.get(line.id) ?? line.quantity
         await db.from('purchase_order_lines').update({ quantity_received: qty }).eq('id', line.id)
         if (qty === 0 || !line.productId) continue
@@ -1535,6 +1643,126 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (error) return { ok: false, error: error.message }
       if (!data) return { ok: false, error: NOT_FOUND }
       return { ok: true, value: toPurchaseOrder(data as PurchaseOrderRow, existing.lines) }
+    },
+
+    async unboxPurchaseOrderLine(poId: string, lineId: string, items: UnboxedLineItemInput[]): Promise<Result<PurchaseOrder>> {
+      if (role !== 'manager') return { ok: false, error: MANAGER_ONLY.manageSuppliers }
+      const existing = await fetchPurchaseOrder(poId)
+      if (!existing) return { ok: false, error: NOT_FOUND }
+      if (existing.status !== 'received') {
+        return { ok: false, error: 'Only a received PO can have a lot unboxed.' }
+      }
+      const line = existing.lines.find((l) => l.id === lineId)
+      if (!line) return { ok: false, error: NOT_FOUND }
+      if (!line.isLot) return { ok: false, error: 'Only a lot line can be unboxed.' }
+      if (items.length === 0) return { ok: false, error: 'Add at least one item.' }
+
+      const userId = await currentUserId()
+      if (!userId) return { ok: false, error: 'Sign in to unbox a lot.' }
+
+      const unboxedRowsToInsert: Array<{
+        purchase_order_line_id: string
+        product_id: string
+        sku: string
+        name: string
+        quantity: number
+        allocated_cost: number
+      }> = []
+
+      for (const item of items) {
+        if (item.quantity <= 0) return { ok: false, error: 'Quantity must be greater than zero.' }
+
+        let product: Product
+        if (item.productId) {
+          const { data: productRow, error: productError } = await db
+            .from('products')
+            .select('*')
+            .eq('id', item.productId)
+            .maybeSingle()
+          if (productError) return { ok: false, error: productError.message }
+          if (!productRow) return { ok: false, error: NOT_FOUND }
+          product = toProduct(productRow as ProductRow)
+        } else if (item.newProduct) {
+          const { data: existingProducts, error: listError } = await db.from('products').select('*')
+          if (listError) return { ok: false, error: listError.message }
+          const allProducts = (existingProducts as ProductRow[]).map(toProduct)
+          const sku = item.newProduct.sku.trim() || nextSku(allProducts)
+          if (allProducts.some((p) => p.sku === sku)) return { ok: false, error: DUPLICATE_SKU }
+          if (item.newProduct.barcode && allProducts.some((p) => p.barcode === item.newProduct!.barcode)) {
+            return { ok: false, error: DUPLICATE_BARCODE }
+          }
+          const validated = validateDraft({
+            barcode: item.newProduct.barcode,
+            sku,
+            name: item.newProduct.name,
+            category: item.newProduct.category,
+            location: item.newProduct.location,
+            variation: '',
+            quantity: 0,
+            reorderLevel: 0,
+            cost: item.quantity > 0 ? item.allocatedCost / item.quantity : 0,
+            price: 0,
+          })
+          if (!validated.ok) return validated
+          const { data: created, error: createError } = await db
+            .from('products')
+            .insert(toRow(validated.value))
+            .select()
+            .single()
+          if (createError) return { ok: false, error: createError.message }
+          product = toProduct(created as ProductRow)
+        } else {
+          return { ok: false, error: 'Each item needs an existing product or new-product details.' }
+        }
+
+        const applied = applyMovement(product, {
+          type: 'in',
+          quantity: item.quantity,
+          reason: `Unboxed from lot "${line.name}" (${existing.poNumber})`,
+        })
+        if (!applied.ok) return applied
+
+        const { data: updatedProduct, error: updateError } = await db
+          .from('products')
+          .update({ quantity: applied.value.product.quantity, updated_at: applied.value.product.updatedAt })
+          .eq('id', product.id)
+          .eq('updated_at', product.updatedAt)
+          .select()
+          .maybeSingle()
+        if (updateError) return { ok: false, error: updateError.message }
+        if (!updatedProduct) {
+          return { ok: false, error: 'That product changed at the same time — try again.' }
+        }
+
+        const movement = applied.value.movement
+        await db.from('stock_movements').insert({
+          product_id: movement.productId,
+          user_id: userId,
+          type: movement.type,
+          quantity: movement.quantity,
+          delta: movement.delta,
+          previous_quantity: movement.previousQuantity,
+          new_quantity: movement.newQuantity,
+          reason: movement.reason ?? null,
+          created_at: movement.createdAt,
+        })
+
+        unboxedRowsToInsert.push({
+          purchase_order_line_id: lineId,
+          product_id: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: item.quantity,
+          allocated_cost: item.allocatedCost,
+        })
+      }
+
+      const { error: insertError } = await db.from('purchase_order_unboxed_items').insert(unboxedRowsToInsert)
+      if (insertError) return { ok: false, error: insertError.message }
+
+      const updated = await fetchPurchaseOrder(poId)
+      if (!updated) return { ok: false, error: NOT_FOUND }
+      return { ok: true, value: updated }
     },
 
     async listActivity(): Promise<ActivityLogEntry[]> {

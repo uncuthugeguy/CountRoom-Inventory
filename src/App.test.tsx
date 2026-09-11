@@ -100,6 +100,7 @@ function buildStaleSkuRepo(): InventoryRepository {
     confirmPurchaseOrder: vi.fn(),
     receivePurchaseOrder: vi.fn(),
     cancelPurchaseOrder: vi.fn(),
+    unboxPurchaseOrderLine: vi.fn(),
     async listActivity() {
       return []
     },
@@ -1634,7 +1635,7 @@ describe('suppliers and purchase orders', () => {
     await user.click(screen.getByRole('button', { name: /create draft po/i }))
 
     // Same confirmation step for the PO.
-    expect(await screen.findByText(/create this purchase order for acme fasteners ltd/i)).toBeInTheDocument()
+    expect(await screen.findByText(/create po-\d+ for acme fasteners ltd/i)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /yes, create/i }))
 
     const poList = await screen.findByTestId('purchase-order-list')

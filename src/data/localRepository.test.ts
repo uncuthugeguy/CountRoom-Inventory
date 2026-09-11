@@ -981,3 +981,220 @@ describe('updateReturn', () => {
     })
   })
 })
+
+describe('purchase orders — custom items, mixed lots, and unboxing', () => {
+  const makeSupplier = async (repo: ReturnType<typeof createLocalRepository>) => {
+    const result = await repo.createSupplier({
+      name: 'Acme Auctions',
+      email: '',
+      phone: '',
+      address: '',
+      leadTimeDays: 0,
+      contactName: '',
+      notes: '',
+    })
+    if (!result.ok) throw new Error(result.error)
+    return result.value
+  }
+
+  it('creates a PO line for a one-off item with no catalogue product', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+
+    const result = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0001',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [{ customName: 'Assorted phone cases', quantity: 5, unitCost: 2 }],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.lines[0].productId).toBeUndefined()
+    expect(result.value.lines[0]).toMatchObject({
+      customName: 'Assorted phone cases',
+      name: 'Assorted phone cases',
+      isLot: false,
+    })
+    expect(result.value.subtotal).toBe(10)
+  })
+
+  it('creates a mixed-lot line and computes the grand total from delivery/premium/VAT', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+
+    const result = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0002',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [
+        {
+          customName: 'QUANTITY OF HEALTH & BEAUTY ITEMS TO INCLUDE REMINGTON XR1500',
+          isLot: true,
+          quantity: 1,
+          unitCost: 40,
+          vatAmount: 8,
+        },
+      ],
+      deliveryCost: 10.98,
+      buyersPremium: 17.25,
+      vatAmount: 19.45,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.lines[0].isLot).toBe(true)
+    expect(result.value.subtotal).toBe(40)
+    // 40 + 10.98 + 17.25 + 19.45 = 87.68
+    expect(result.value.grandTotal).toBeCloseTo(87.68, 2)
+  })
+
+  it('rejects a line with neither a product nor a name', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+
+    const result = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0003',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [{ quantity: 1, unitCost: 1 }],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+
+    expect(result.ok).toBe(false)
+  })
+
+  it('receiving a PO skips lot lines but still adds stock for ordinary lines', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+    const productResult = await repo.createProduct(draft({ sku: 'SKU-WASHER', name: 'Washer', quantity: 5 }))
+    if (!productResult.ok) throw new Error(productResult.error)
+
+    const poResult = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0004',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [
+        { productId: productResult.value.id, quantity: 10, unitCost: 0.1 },
+        { customName: 'Mystery lot', isLot: true, quantity: 1, unitCost: 30 },
+      ],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    if (!poResult.ok) throw new Error(poResult.error)
+
+    await repo.sendPurchaseOrder(poResult.value.id)
+    await repo.confirmPurchaseOrder(poResult.value.id)
+    const lineQuantities = new Map(poResult.value.lines.map((l) => [l.id, l.quantity]))
+    const received = await repo.receivePurchaseOrder(poResult.value.id, lineQuantities)
+
+    expect(received.ok).toBe(true)
+    if (!received.ok) return
+    expect(received.value.status).toBe('received')
+    const lotLine = received.value.lines.find((l) => l.isLot)
+    expect(lotLine?.quantityReceived).toBeUndefined()
+
+    const products = await repo.listProducts()
+    expect(products.find((p) => p.id === productResult.value.id)?.quantity).toBe(15) // 5 + 10
+  })
+
+  it('unboxes a received lot into real products, creating a brand-new one and adding stock', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+    const existingProduct = await repo.createProduct(draft({ sku: 'SKU-XR1500', name: 'Remington XR1500', quantity: 0 }))
+    if (!existingProduct.ok) throw new Error(existingProduct.error)
+
+    const poResult = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0005',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [
+        {
+          customName: 'QUANTITY OF HEALTH & BEAUTY ITEMS TO INCLUDE REMINGTON XR1500',
+          isLot: true,
+          quantity: 1,
+          unitCost: 40,
+        },
+      ],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    if (!poResult.ok) throw new Error(poResult.error)
+
+    await repo.sendPurchaseOrder(poResult.value.id)
+    await repo.confirmPurchaseOrder(poResult.value.id)
+    const lineQuantities = new Map(poResult.value.lines.map((l) => [l.id, l.quantity]))
+    const received = await repo.receivePurchaseOrder(poResult.value.id, lineQuantities)
+    if (!received.ok) throw new Error(received.error)
+    const lotLine = received.value.lines.find((l) => l.isLot)
+    if (!lotLine) throw new Error('expected a lot line')
+
+    const unboxed = await repo.unboxPurchaseOrderLine(poResult.value.id, lotLine.id, [
+      { productId: existingProduct.value.id, quantity: 1, allocatedCost: 25 },
+      {
+        newProduct: { sku: '', name: 'Random beauty item', category: '', location: '', barcode: '' },
+        quantity: 3,
+        allocatedCost: 15,
+      },
+    ])
+
+    expect(unboxed.ok).toBe(true)
+    if (!unboxed.ok) return
+    const updatedLine = unboxed.value.lines.find((l) => l.id === lotLine.id)
+    expect(updatedLine?.unboxedInto).toHaveLength(2)
+
+    const products = await repo.listProducts()
+    expect(products.find((p) => p.id === existingProduct.value.id)?.quantity).toBe(1)
+    const newProduct = products.find((p) => p.name === 'Random beauty item')
+    expect(newProduct).toBeDefined()
+    expect(newProduct?.quantity).toBe(3)
+    expect(newProduct?.sku).toMatch(/^SKU-\d+$/)
+  })
+
+  it('refuses to unbox a line that is not a lot', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+    const product = await repo.createProduct(draft({ sku: 'SKU-ORDINARY' }))
+    if (!product.ok) throw new Error(product.error)
+
+    const poResult = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0006',
+      orderDate: '2026-08-22',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [{ productId: product.value.id, quantity: 1, unitCost: 1 }],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    if (!poResult.ok) throw new Error(poResult.error)
+    await repo.sendPurchaseOrder(poResult.value.id)
+    await repo.confirmPurchaseOrder(poResult.value.id)
+    const lineQuantities = new Map(poResult.value.lines.map((l) => [l.id, l.quantity]))
+    const received = await repo.receivePurchaseOrder(poResult.value.id, lineQuantities)
+    if (!received.ok) throw new Error(received.error)
+
+    const result = await repo.unboxPurchaseOrderLine(poResult.value.id, received.value.lines[0].id, [
+      { productId: product.value.id, quantity: 1, allocatedCost: 1 },
+    ])
+    expect(result.ok).toBe(false)
+  })
+})

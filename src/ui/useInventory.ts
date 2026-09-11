@@ -17,7 +17,7 @@ import type {
   StockMovement,
 } from '../domain/types'
 import type { AccountSettingsSync, InventoryRepository, Role, TeamMember } from '../data/repository'
-import type { PurchaseOrder, PurchaseOrderInput, Supplier, SupplierDraft } from '../domain/suppliers'
+import type { PurchaseOrder, PurchaseOrderInput, Supplier, SupplierDraft, UnboxedLineItemInput } from '../domain/suppliers'
 
 export type InventoryStatus = 'loading' | 'ready' | 'error'
 
@@ -80,6 +80,13 @@ export interface Inventory {
   /** Adds stock for every line and marks the PO received — refreshes the
    *  product catalogue on success, unlike the other supplier/PO methods. */
   receivePurchaseOrder(id: string, lineQuantities: Map<string, number>): Promise<Result<PurchaseOrder>>
+  /** Also adds stock (for whichever real items a lot turned out to
+   *  contain), so this refreshes the catalogue on success too. */
+  unboxPurchaseOrderLine(
+    poId: string,
+    lineId: string,
+    items: UnboxedLineItemInput[],
+  ): Promise<Result<PurchaseOrder>>
   cancelPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
 }
 
@@ -437,6 +444,14 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     [run],
   )
 
+  // Also adds real stock (whatever a lot turned out to contain) — goes
+  // through `run` for the same reason receivePurchaseOrder does above.
+  const unboxPurchaseOrderLine = useCallback(
+    (poId: string, lineId: string, items: UnboxedLineItemInput[]) =>
+      run((repo) => repo.unboxPurchaseOrderLine(poId, lineId, items)),
+    [run],
+  )
+
   const cancelPurchaseOrder = useCallback(async (id: string) => {
     const repo = repoRef.current
     if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
@@ -487,6 +502,7 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     sendPurchaseOrder,
     confirmPurchaseOrder,
     receivePurchaseOrder,
+    unboxPurchaseOrderLine,
     cancelPurchaseOrder,
   }
 }

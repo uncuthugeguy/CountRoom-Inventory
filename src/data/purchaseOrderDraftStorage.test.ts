@@ -10,9 +10,14 @@ import { memoryStorage } from '../test/memoryStorage'
 
 const draft: PurchaseOrderDraft = {
   supplierId: 'sup-1',
+  poNumber: 'PO-0001',
+  orderDate: '2026-08-30',
   expectedDeliveryDate: '2026-09-01',
   notes: 'Ring before delivery',
-  lines: [{ productId: 'prod-1', quantity: '20', unitCost: '0.01' }],
+  lines: [{ kind: 'product', productId: 'prod-1', customName: '', isLot: false, quantity: '20', unitCost: '0.01', vatAmount: '' }],
+  deliveryCost: '0',
+  buyersPremium: '0',
+  vatAmount: '0',
 }
 
 describe('purchaseOrderDraftStorage', () => {

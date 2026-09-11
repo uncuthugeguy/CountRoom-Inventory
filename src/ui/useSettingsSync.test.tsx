@@ -59,6 +59,7 @@ function fakeSupabaseRepo(overrides: Partial<InventoryRepository> = {}): Invento
     confirmPurchaseOrder: vi.fn(),
     receivePurchaseOrder: vi.fn(),
     cancelPurchaseOrder: vi.fn(),
+    unboxPurchaseOrderLine: vi.fn(),
     listActivity: async () => [],
     logActivity: vi.fn(),
     ...overrides,

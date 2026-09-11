@@ -1,19 +1,33 @@
-export const PURCHASE_ORDER_DRAFT_STORAGE_KEY = 'stockflow.purchaseOrderDraft.v1'
+export const PURCHASE_ORDER_DRAFT_STORAGE_KEY = 'stockflow.purchaseOrderDraft.v2'
 
 /** Mirrors the "New purchase order" form's own field state — kept as
  *  strings (not numbers) so a field can sit empty mid-edit without snapping
- *  to 0, same reasoning ProductFormDialog's quantity/reorder fields use. */
+ *  to 0, same reasoning ProductFormDialog's quantity/reorder fields use.
+ *  Provide either `productId` (an existing catalogue product) or
+ *  `customName` (a one-off item, or — when `isLot` is checked — a mixed lot
+ *  whose contents aren't known yet). */
+export type PurchaseOrderDraftLineKind = 'product' | 'custom' | 'lot'
+
 export interface PurchaseOrderDraftLine {
+  kind: PurchaseOrderDraftLineKind
   productId: string
+  customName: string
+  isLot: boolean
   quantity: string
   unitCost: string
+  vatAmount: string
 }
 
 export interface PurchaseOrderDraft {
   supplierId: string
+  poNumber: string
+  orderDate: string
   expectedDeliveryDate: string
   notes: string
   lines: PurchaseOrderDraftLine[]
+  deliveryCost: string
+  buyersPremium: string
+  vatAmount: string
 }
 
 interface SavedPurchaseOrderDraft {
