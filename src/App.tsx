@@ -191,6 +191,7 @@ function SupabaseGate({
       <div className="boot">
         <img src="/mark.svg" alt="" className="boot-mark" />
         <h1>Count<span className="brand-accent">Room</span></h1>
+        <span className="brand-sublabel">Inventory</span>
         <p className="muted" role="status">
           Checking sign-in status…
         </p>
@@ -209,6 +210,7 @@ function SupabaseGate({
       <div className="boot">
         <img src="/mark.svg" alt="" className="boot-mark" />
         <h1>Count<span className="brand-accent">Room</span></h1>
+        <span className="brand-sublabel">Inventory</span>
         <p className="muted" role="status">
           Checking two-factor status…
         </p>
@@ -444,6 +446,7 @@ function AuthenticatedApp({
       <div className="boot">
         <img src="/mark.svg" alt="" className="boot-mark" />
         <h1>Count<span className="brand-accent">Room</span></h1>
+        <span className="brand-sublabel">Inventory</span>
         <p className="alert" role="alert">
           {inventory.error}
         </p>
@@ -459,6 +462,7 @@ function AuthenticatedApp({
       <div className="boot">
         <img src="/mark.svg" alt="" className="boot-mark" />
         <h1>Count<span className="brand-accent">Room</span></h1>
+        <span className="brand-sublabel">Inventory</span>
         <p className="muted" role="status">
           Opening the inventory…
         </p>

@@ -74,6 +74,7 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
       <div className="boot">
         <img src="/mark.svg" alt="" className="boot-mark" />
         <h1>Count<span className="brand-accent">Room</span></h1>
+        <span className="brand-sublabel">Inventory</span>
         <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
           <p className="preview" role="status">
             Check {email} for a sign-in link, then open it on this device.
@@ -92,6 +93,7 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
     <div className="boot">
       <img src="/mark.svg" alt="" className="boot-mark" />
       <h1>Count<span className="brand-accent">Room</span></h1>
+      <span className="brand-sublabel">Inventory</span>
       <div className="panel" style={{ width: 'min(360px, 100%)', textAlign: 'left' }}>
         <h2>Sign in</h2>
         <form className="form" onSubmit={submit} noValidate>

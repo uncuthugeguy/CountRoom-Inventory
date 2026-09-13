@@ -87,6 +87,7 @@ export function MfaEnrollScreen({ client, onEnrolled }: MfaEnrollScreenProps) {
     <div className="boot">
       <img src="/mark.svg" alt="" className="boot-mark" />
       <h1>Count<span className="brand-accent">Room</span></h1>
+      <span className="brand-sublabel">Inventory</span>
       <div className="panel" style={{ width: 'min(400px, 100%)', textAlign: 'left' }}>
         <h2>Set up two-factor authentication</h2>
         <p className="muted">
