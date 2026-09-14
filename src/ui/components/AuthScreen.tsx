@@ -30,15 +30,34 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
   const [recentEmails, setRecentEmails] = useState<string[]>(() => loadRecentEmails(emailStorage))
   const [showSuggestions, setShowSuggestions] = useState(false)
   const fieldRef = useRef<HTMLDivElement>(null)
+  const emailInputRef = useRef<HTMLInputElement>(null)
+  // Set right before an Escape-triggered focus() call below, so the input's
+  // own onFocus handler (which normally reopens the list) doesn't undo the
+  // very close Escape just asked for.
+  const suppressFocusReopenRef = useRef(false)
 
-  // Closes the suggestion list on a click anywhere outside the field.
+  // Closes the suggestion list on a click anywhere outside the field, or on Escape.
   useEffect(() => {
     if (!showSuggestions) return
     const onPointerDown = (event: MouseEvent) => {
       if (!fieldRef.current?.contains(event.target as Node)) setShowSuggestions(false)
     }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setShowSuggestions(false)
+      // Keep focus on (or return it to) the email input rather than letting it
+      // get trapped on whatever suggestion/toggle element had it.
+      if (emailInputRef.current && document.activeElement !== emailInputRef.current) {
+        suppressFocusReopenRef.current = true
+        emailInputRef.current.focus()
+      }
+    }
     window.addEventListener('mousedown', onPointerDown)
-    return () => window.removeEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
   }, [showSuggestions])
 
   const matchingSuggestions = recentEmails.filter((saved) =>
@@ -102,6 +121,7 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
             <div className="email-input-wrap">
               <input
                 id="auth-email"
+                ref={emailInputRef}
                 type="email"
                 autoComplete="email"
                 value={email}
@@ -109,7 +129,13 @@ export function AuthScreen({ client, emailStorage }: AuthScreenProps) {
                   setEmail(e.target.value)
                   setShowSuggestions(true)
                 }}
-                onFocus={() => setShowSuggestions(true)}
+                onFocus={() => {
+                  if (suppressFocusReopenRef.current) {
+                    suppressFocusReopenRef.current = false
+                    return
+                  }
+                  setShowSuggestions(true)
+                }}
                 required
               />
               {/* Always-visible affordance for the remembered-emails list below, rather

@@ -126,6 +126,23 @@ describe('AuthScreen', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('closes the dropdown on Escape and keeps focus on the email input', async () => {
+    const storage = memoryStorage()
+    storage.setItem('stockflow.recentEmails.v1', JSON.stringify(['jane@example.com']))
+    const user = userEvent.setup()
+    render(<AuthScreen client={mockClient()} emailStorage={storage} />)
+
+    const toggle = screen.getByRole('button', { name: /show previously used emails/i })
+    await user.click(toggle)
+    expect(screen.getByRole('option', { name: 'jane@example.com' })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('option', { name: 'jane@example.com' })).toBeNull()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByLabelText(/^email$/i)).toHaveFocus()
+  })
+
   it('offers a previously used email as a click-to-fill suggestion instead of retyping it', async () => {
     const storage = memoryStorage()
     storage.setItem('stockflow.recentEmails.v1', JSON.stringify(['jane@example.com']))
