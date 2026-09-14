@@ -49,6 +49,7 @@ import {
 } from '../domain/suppliers'
 import { DEMO_PRODUCTS } from './demoSeed'
 import {
+  ACCOUNT_DELETION_NOT_SUPPORTED,
   DUPLICATE_BARCODE,
   DUPLICATE_SKU,
   EMAIL_CHANGE_NOT_SUPPORTED,
@@ -57,6 +58,7 @@ import {
   RETURN_NOT_FOUND,
   SALE_NOT_FOUND,
   TEAM_NOT_SUPPORTED,
+  type AccountDeletionPreview,
   type InventoryRepository,
   type TeamMember,
 } from './repository'
@@ -763,6 +765,26 @@ export function createLocalRepository(
 
     async removeTeamMember(): Promise<Result<true>> {
       return { ok: false, error: TEAM_NOT_SUPPORTED }
+    },
+
+    async previewAccountDeletion(): Promise<AccountDeletionPreview> {
+      // No real multi-tenant account to delete locally — see the `role`
+      // comment above. Reported as not deletable so a caller (defensively;
+      // the UI never shows this panel outside Supabase mode) can't act on
+      // a stale assumption.
+      return {
+        canDelete: false,
+        otherActiveTeamMembers: 0,
+        productCount: state.products.length,
+        saleCount: state.sales.length,
+        purchaseOrderCount: state.purchaseOrders.length,
+        supplierCount: state.suppliers.length,
+        otherTeamMemberships: 0,
+      }
+    },
+
+    async deleteOwnAccount(): Promise<Result<true>> {
+      return { ok: false, error: ACCOUNT_DELETION_NOT_SUPPORTED }
     },
 
     async getProfile(): Promise<Profile> {

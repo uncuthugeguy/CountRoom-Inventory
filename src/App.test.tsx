@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { createLocalRepository } from './data/localRepository'
-import { DUPLICATE_SKU, type InventoryRepository, type TeamMember } from './data/repository'
+import { DUPLICATE_SKU, type AccountDeletionPreview, type InventoryRepository, type TeamMember } from './data/repository'
 import { memoryStorage } from './test/memoryStorage'
 import type { ActivityLogEntry, Product } from './domain/types'
 
@@ -69,6 +69,8 @@ function buildStaleSkuRepo(): InventoryRepository {
     },
     inviteEmployee: vi.fn(),
     removeTeamMember: vi.fn(),
+    previewAccountDeletion: vi.fn(),
+    deleteOwnAccount: vi.fn(),
     async getProfile() {
       return { fullName: '', birthday: '', address: '', employeeNumber: '', username: '', updatedAt: 't' }
     },
@@ -745,6 +747,107 @@ describe('activity log — team changes', () => {
     rows = screen.getAllByTestId('activity-row')
     const text = rows.map((r) => r.textContent).join(' | ')
     expect(text).toMatch(/removed.*jane@example\.com/)
+  })
+})
+
+/**
+ * The local repository doesn't support account deletion at all (see
+ * repository.ts's ACCOUNT_DELETION_NOT_SUPPORTED) and SettingsScreen only
+ * renders the Delete account panel for `backend === 'supabase'` in the
+ * first place — so exercising it needs a repo double that reports itself
+ * as Supabase-backed and overrides the two methods involved, same
+ * technique buildTeamCapableRepo above uses. `onDelete` is called instead
+ * of tracking a call count on the double itself, so each test can assert
+ * on it directly.
+ */
+function buildAccountDeletableRepo(
+  base: InventoryRepository,
+  preview: AccountDeletionPreview,
+  onDelete: () => ReturnType<InventoryRepository['deleteOwnAccount']>,
+): InventoryRepository {
+  return {
+    ...base,
+    kind: 'supabase',
+    async previewAccountDeletion() {
+      return preview
+    },
+    deleteOwnAccount: onDelete,
+  }
+}
+
+const EMPTY_DELETION_PREVIEW: AccountDeletionPreview = {
+  canDelete: true,
+  otherActiveTeamMembers: 0,
+  productCount: 0,
+  saleCount: 0,
+  purchaseOrderCount: 0,
+  supplierCount: 0,
+  otherTeamMemberships: 0,
+}
+
+describe('deleting your own account', () => {
+  it('lets you delete a stray account with nothing in it', async () => {
+    const deleteOwnAccount = vi.fn(async () => ({ ok: true as const, value: true as const }))
+    const repository = buildAccountDeletableRepo(
+      createLocalRepository({ storage: memoryStorage(), seed: false }),
+      EMPTY_DELETION_PREVIEW,
+      deleteOwnAccount,
+    )
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await screen.findByRole('heading', { name: /^delete account$/i })
+    await user.click(screen.getByRole('button', { name: /^delete my account$/i }))
+    await screen.findByRole('heading', { name: /delete your account\?/i })
+    await user.click(screen.getByRole('button', { name: /yes, delete my account/i }))
+
+    await waitFor(() => expect(deleteOwnAccount).toHaveBeenCalledTimes(1))
+  })
+
+  it("shows what's at stake for an account that actually has data in it", async () => {
+    const repository = buildAccountDeletableRepo(
+      createLocalRepository({ storage: memoryStorage(), seed: false }),
+      { ...EMPTY_DELETION_PREVIEW, productCount: 8, saleCount: 3 },
+      vi.fn(),
+    )
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^delete my account$/i }))
+    await screen.findByText(/8 products, 3 sales/i)
+  })
+
+  it('blocks deletion while other active team members are still on the account', async () => {
+    const deleteOwnAccount = vi.fn()
+    const repository = buildAccountDeletableRepo(
+      createLocalRepository({ storage: memoryStorage(), seed: false }),
+      { ...EMPTY_DELETION_PREVIEW, canDelete: false, otherActiveTeamMembers: 2 },
+      deleteOwnAccount,
+    )
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await screen.findByText(/2 other active team members/i)
+    expect(screen.queryByRole('button', { name: /^delete my account$/i })).not.toBeInTheDocument()
+    expect(deleteOwnAccount).not.toHaveBeenCalled()
+  })
+
+  it('shows the error inline and leaves the account intact if the backend refuses', async () => {
+    const deleteOwnAccount = vi.fn(async () => ({ ok: false as const, error: 'Something else went wrong.' }))
+    const repository = buildAccountDeletableRepo(
+      createLocalRepository({ storage: memoryStorage(), seed: false }),
+      EMPTY_DELETION_PREVIEW,
+      deleteOwnAccount,
+    )
+    const { user } = await renderApp(repository)
+
+    await go(user, /settings/i)
+    await user.click(screen.getByRole('button', { name: /^delete my account$/i }))
+    await user.click(screen.getByRole('button', { name: /yes, delete my account/i }))
+
+    await screen.findByText('Something else went wrong.')
+    // Still on the settings screen, not booted out — the delete never went through.
+    expect(screen.getByRole('heading', { name: /^delete account$/i })).toBeInTheDocument()
   })
 })
 

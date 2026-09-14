@@ -1,15 +1,20 @@
 import { useEffect, useId, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
-import type { TeamMember } from '../../data/repository'
+import type { AccountDeletionPreview, TeamMember } from '../../data/repository'
 import { knownCategories } from '../../domain/products'
 import type { ProfileChangeRequest, ProfileDraft } from '../../domain/types'
 import type { Inventory } from '../useInventory'
 import type { SettingsApi } from '../useSettings'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { LabelTemplateEditor } from '../components/LabelTemplateEditor'
 import { resizeLogoForStorage } from '../logoResize'
 
 export interface SettingsScreenProps {
   settings: SettingsApi
   inventory: Inventory
+  /** Called once `deleteOwnAccount` succeeds — the caller is responsible for
+   *  the actual sign-out (clearing the session, in-progress drafts, etc.),
+   *  same split of responsibility as `AuthenticatedApp`'s own `onSignOut`. */
+  onAccountDeleted?: () => void
 }
 
 /** `localStorage` throws a DOMException whose message varies by browser but
@@ -593,6 +598,98 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
   )
 }
 
+function DeleteAccountPanel({
+  inventory,
+  onAccountDeleted,
+}: {
+  inventory: Inventory
+  onAccountDeleted?: () => void
+}) {
+  const [preview, setPreview] = useState<AccountDeletionPreview | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void inventory.previewAccountDeletion().then(setPreview)
+    // Only ever needs to run once per mount, same as the other panels above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const confirmDelete = async () => {
+    setBusy(true)
+    const result = await inventory.deleteOwnAccount()
+    setBusy(false)
+    if (!result.ok) {
+      setConfirming(false)
+      setError(result.error)
+      return
+    }
+    onAccountDeleted?.()
+  }
+
+  const summary = (p: AccountDeletionPreview) => {
+    const counted: [number, string][] = [
+      [p.productCount, 'product'],
+      [p.saleCount, 'sale'],
+      [p.purchaseOrderCount, 'purchase order'],
+      [p.supplierCount, 'supplier'],
+    ]
+    const parts = counted
+      .filter(([count]) => count > 0)
+      .map(([count, noun]) => `${count} ${noun}${count === 1 ? '' : 's'}`)
+    const owned = parts.length ? `, including ${parts.join(', ')},` : ''
+    const otherTeams = p.otherTeamMemberships
+      ? ` You'll also lose access to ${p.otherTeamMemberships} other team${p.otherTeamMemberships === 1 ? '' : 's'} you're on.`
+      : ''
+    return `This permanently deletes your account${owned} and signs you out for good.${otherTeams} This cannot be undone.`
+  }
+
+  return (
+    <section className="panel">
+      <h2>Delete account</h2>
+      <p className="muted">
+        Permanently deletes this CountRoom login and everything it owns. Mainly useful for
+        cleaning up a brand-new account created by mistake (a mistyped sign-in email, for
+        instance) — for a real account with a team on it, remove everyone else first from the
+        Team tab.
+      </p>
+
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+
+      {preview === null ? (
+        <p className="muted" role="status">
+          Checking your account…
+        </p>
+      ) : preview.canDelete ? (
+        <button type="button" className="button button-danger" onClick={() => setConfirming(true)}>
+          Delete my account
+        </button>
+      ) : (
+        <p className="muted">
+          You have {preview.otherActiveTeamMembers} other active team member
+          {preview.otherActiveTeamMembers === 1 ? '' : 's'} on this account — remove them from the
+          Team tab first, then come back here.
+        </p>
+      )}
+
+      {confirming && preview && (
+        <ConfirmDialog
+          title="Delete your account?"
+          message={summary(preview)}
+          confirmLabel={busy ? 'Deleting…' : 'Yes, delete my account'}
+          onCancel={() => setConfirming(false)}
+          onConfirm={confirmDelete}
+        />
+      )}
+    </section>
+  )
+}
+
 type SettingsTab = 'profile' | 'team' | 'catalogue' | 'labels'
 
 const SETTINGS_TABS: { key: SettingsTab; label: string; managerOnly?: boolean }[] = [
@@ -602,7 +699,7 @@ const SETTINGS_TABS: { key: SettingsTab; label: string; managerOnly?: boolean }[
   { key: 'labels', label: 'Labels' },
 ]
 
-export function SettingsScreen({ settings, inventory }: SettingsScreenProps) {
+export function SettingsScreen({ settings, inventory, onAccountDeleted }: SettingsScreenProps) {
   const logoId = useId()
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<SettingsTab>('profile')
@@ -657,6 +754,10 @@ export function SettingsScreen({ settings, inventory }: SettingsScreenProps) {
       </div>
 
       {tab === 'profile' && <AccountSettingsPanel inventory={inventory} />}
+
+      {tab === 'profile' && inventory.backend === 'supabase' && (
+        <DeleteAccountPanel inventory={inventory} onAccountDeleted={onAccountDeleted} />
+      )}
 
       {isManager && tab === 'team' && (
         <>

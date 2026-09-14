@@ -80,6 +80,21 @@ export interface TeamMember {
   emailSent?: boolean
 }
 
+export interface AccountDeletionPreview {
+  /** False only when the caller still owns their account and other active
+   *  team members depend on it — remove them first (existing Team panel)
+   *  before their own account can be deleted. */
+  canDelete: boolean
+  otherActiveTeamMembers: number
+  productCount: number
+  saleCount: number
+  purchaseOrderCount: number
+  supplierCount: number
+  /** Active memberships this person holds under *other* accounts (as an
+   *  invited employee) — deleting their own account also gives these up. */
+  otherTeamMemberships: number
+}
+
 export interface InventoryRepository {
   /** Shown in the UI so it is obvious which backend is live. */
   readonly kind: 'local' | 'supabase'
@@ -119,6 +134,19 @@ export interface InventoryRepository {
   inviteEmployee(email: string): Promise<Result<TeamMember>>
   /** Manager-only. Revokes access without deleting their activity history. */
   removeTeamMember(membershipId: string): Promise<Result<true>>
+  /**
+   * What deleting the signed-in person's own account would remove, and
+   * whether it's currently allowed — see `AccountDeletionPreview`.
+   */
+  previewAccountDeletion(): Promise<AccountDeletionPreview>
+  /**
+   * Permanently deletes the signed-in person's own account: every product,
+   * sale, purchase order and other record it owns, every team they belong
+   * to (their own account and anyone else's they've joined), and their
+   * login itself. Irreversible. Blocked while their own account still has
+   * other active team members — remove them first.
+   */
+  deleteOwnAccount(): Promise<Result<true>>
   /** The signed-in person's own profile — empty fields until they've set anything. */
   getProfile(): Promise<Profile>
   /**
@@ -240,6 +268,8 @@ export const EMPTY_RETURN = 'Add at least one action, item, refund, or note befo
 export const SALE_NOT_FOUND = 'Sale not found.'
 export const RETURN_NOT_FOUND = 'Return not found.'
 export const TEAM_NOT_SUPPORTED = 'Team accounts need the Supabase backend — this device is running the offline demo store.'
+export const ACCOUNT_DELETION_NOT_SUPPORTED =
+  'Deleting your account needs the Supabase backend — this device is running the offline demo store.'
 export const NO_PENDING_CHANGE = "That change request isn't pending any more."
 export const EMAIL_CHANGE_NOT_SUPPORTED =
   'Changing your login email needs the Supabase backend — this device is running the offline demo store.'

@@ -129,6 +129,8 @@ describe('useInventory', () => {
       listTeam: async () => [],
       inviteEmployee: vi.fn(),
       removeTeamMember: vi.fn(),
+    previewAccountDeletion: vi.fn(),
+    deleteOwnAccount: vi.fn(),
       getProfile: async () => ({ fullName: '', birthday: '', address: '', employeeNumber: '', username: '', updatedAt: 't' }),
       updateProfile: vi.fn(),
       listPendingProfileChanges: async () => [],

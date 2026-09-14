@@ -16,7 +16,13 @@ import type {
   SaleInput,
   StockMovement,
 } from '../domain/types'
-import type { AccountSettingsSync, InventoryRepository, Role, TeamMember } from '../data/repository'
+import type {
+  AccountDeletionPreview,
+  AccountSettingsSync,
+  InventoryRepository,
+  Role,
+  TeamMember,
+} from '../data/repository'
 import type { PurchaseOrder, PurchaseOrderInput, Supplier, SupplierDraft, UnboxedLineItemInput } from '../domain/suppliers'
 
 export type InventoryStatus = 'loading' | 'ready' | 'error'
@@ -62,6 +68,12 @@ export interface Inventory {
   /** Requests a change to the signed-in person's own login email — see
    *  `InventoryRepository.updateLoginEmail` for the confirmation-link flow. */
   updateLoginEmail(newEmail: string): Promise<Result<true>>
+  /** What deleting the signed-in person's own account would remove, and
+   *  whether it's currently allowed — see `AccountDeletionPreview`. */
+  previewAccountDeletion(): Promise<AccountDeletionPreview>
+  /** Permanently deletes the signed-in person's own account and everything
+   *  it owns. Irreversible — see `InventoryRepository.deleteOwnAccount`. */
+  deleteOwnAccount(): Promise<Result<true>>
   getAccountSettings(): Promise<AccountSettingsSync | null>
   setAccountSettings(patch: AccountSettingsSync): Promise<Result<true>>
   // Manager-only — see repository.ts's own doc comment on this section.
@@ -335,6 +347,31 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     }
   }, [])
 
+  const previewAccountDeletion = useCallback(async () => {
+    const repo = repoRef.current
+    if (!repo)
+      return {
+        canDelete: false,
+        otherActiveTeamMembers: 0,
+        productCount: 0,
+        saleCount: 0,
+        purchaseOrderCount: 0,
+        supplierCount: 0,
+        otherTeamMemberships: 0,
+      }
+    return repo.previewAccountDeletion()
+  }, [])
+
+  const deleteOwnAccount = useCallback(async () => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.deleteOwnAccount()
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
   const getAccountSettings = useCallback(async () => {
     const repo = repoRef.current
     if (!repo) return null
@@ -491,6 +528,8 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     rejectProfileChange,
     getLoginEmail,
     updateLoginEmail,
+    previewAccountDeletion,
+    deleteOwnAccount,
     getAccountSettings,
     setAccountSettings,
     listSuppliers,

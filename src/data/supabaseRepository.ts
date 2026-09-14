@@ -60,6 +60,7 @@ import {
   DUPLICATE_SKU,
   EMPTY_SALE,
   NOT_FOUND,
+  type AccountDeletionPreview,
   type AccountSettingsSync,
   type InventoryRepository,
   type Role,
@@ -1254,6 +1255,23 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         await logActivityBestEffort('member', 'removed', membershipId, label, describeMemberRemoved(row.role))
       }
 
+      return { ok: true, value: true }
+    },
+
+    async previewAccountDeletion(): Promise<AccountDeletionPreview> {
+      const { data, error } = await db.rpc('preview_account_deletion')
+      if (error) throw new Error(error.message)
+      return data as AccountDeletionPreview
+    },
+
+    // Deliberately no activity-log entry here (unlike removeTeamMember
+    // above) — when this succeeds, the account_id any such entry would be
+    // scoped to no longer exists, and any *other* account this person was
+    // an employee on isn't reachable through the generic logActivity path
+    // (it always targets the caller's own current_account_id()).
+    async deleteOwnAccount(): Promise<Result<true>> {
+      const { error } = await db.rpc('delete_own_account')
+      if (error) return { ok: false, error: error.message }
       return { ok: true, value: true }
     },
 

@@ -29,6 +29,8 @@ function fakeSupabaseRepo(overrides: Partial<InventoryRepository> = {}): Invento
     listTeam: async () => [],
     inviteEmployee: vi.fn(),
     removeTeamMember: vi.fn(),
+    previewAccountDeletion: vi.fn(),
+    deleteOwnAccount: vi.fn(),
     getProfile: async () => ({
       fullName: '',
       birthday: '',

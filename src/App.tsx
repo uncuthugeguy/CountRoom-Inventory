@@ -247,6 +247,16 @@ function SupabaseGate({
         clearPurchaseOrderDraft(props.purchaseOrderDraftStorage)
         client.auth.signOut()
       }}
+      onAccountDeleted={() => {
+        // The account is already gone server-side by the time this fires
+        // (deleteOwnAccount already succeeded) — same local cleanup as
+        // onSignOut above, since there's nothing left to stay signed into.
+        clearProductDraft(props.productDraftStorage)
+        clearSaleEditDraft(props.saleEditDraftStorage)
+        clearSupplierDraft(props.supplierDraftStorage)
+        clearPurchaseOrderDraft(props.purchaseOrderDraftStorage)
+        client.auth.signOut()
+      }}
       userEmail={session.user.email ?? undefined}
     />
   )
@@ -254,6 +264,10 @@ function SupabaseGate({
 
 interface AuthenticatedAppProps extends AppProps {
   onSignOut?: () => void
+  /** Called once the signed-in person deletes their own account from
+   *  Settings — same local cleanup as onSignOut (their account is already
+   *  gone server-side by this point; this just clears the client). */
+  onAccountDeleted?: () => void
   userEmail?: string
 }
 
@@ -266,6 +280,7 @@ function AuthenticatedApp({
   supplierDraftStorage,
   purchaseOrderDraftStorage,
   onSignOut,
+  onAccountDeleted,
   userEmail,
 }: AuthenticatedAppProps) {
   const inventory = useInventory(openRepository)
@@ -609,7 +624,9 @@ function AuthenticatedApp({
 
         {tab === 'codes' && role === 'manager' && <QuickCodesScreen settings={settings} />}
 
-        {tab === 'settings' && <SettingsScreen settings={settings} inventory={inventory} />}
+        {tab === 'settings' && (
+          <SettingsScreen settings={settings} inventory={inventory} onAccountDeleted={onAccountDeleted} />
+        )}
       </main>
 
       <Nav tab={tab} onChange={setTab} hiddenTabs={role === 'manager' ? [] : ['reports', 'suppliers', 'codes']} />
