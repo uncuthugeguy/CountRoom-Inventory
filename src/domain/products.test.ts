@@ -72,7 +72,7 @@ describe('normaliseDraft', () => {
   it('trims every text field', () => {
     const draft = normaliseDraft({
       barcode: ' 5012345678900 \r\n',
-      sku: ' sku-1 ',
+      sku: ' widget-1 ',
       name: '  Widget  ',
       category: ' Hardware ',
       location: ' A1 ',
@@ -84,7 +84,7 @@ describe('normaliseDraft', () => {
     })
     expect(draft).toEqual({
       barcode: '5012345678900',
-      sku: 'sku-1',
+      sku: 'WIDGET-1',
       name: 'Widget',
       category: 'Hardware',
       location: 'A1',
@@ -94,6 +94,12 @@ describe('normaliseDraft', () => {
       cost: 1,
       price: 2,
     })
+  })
+
+  it('forces the SKU to upper case regardless of how it was typed', () => {
+    expect(normaliseDraft({ ...emptyDraft(), sku: 'sku-017' }).sku).toBe('SKU-017')
+    expect(normaliseDraft({ ...emptyDraft(), sku: 'Sku-017' }).sku).toBe('SKU-017')
+    expect(normaliseDraft({ ...emptyDraft(), sku: 'SKU-017' }).sku).toBe('SKU-017')
   })
 })
 

@@ -15,12 +15,17 @@ export function emptyDraft(barcode = ''): ProductDraft {
   }
 }
 
-/** Trims the text fields; barcodes arrive from scanners with trailing newlines. */
+/** Trims the text fields; barcodes arrive from scanners with trailing newlines.
+ * SKU is additionally forced to upper case — mixed-case SKUs (e.g. a
+ * hand-typed `sku-017` next to an auto-generated `SKU-018`) have caused real
+ * mismatches before (case-sensitive lookups/joins treating them as
+ * different codes), so every SKU is normalised to upper case the moment it
+ * passes through here, whether auto-generated, hand-typed, or edited. */
 export function normaliseDraft(draft: ProductDraft): ProductDraft {
   return {
     ...draft,
     barcode: draft.barcode.trim(),
-    sku: draft.sku.trim(),
+    sku: draft.sku.trim().toUpperCase(),
     name: draft.name.trim(),
     category: draft.category.trim(),
     location: draft.location.trim(),
