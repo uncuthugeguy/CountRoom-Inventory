@@ -113,11 +113,20 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
   adjust: 'Adjust',
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'other'
+/** The three payment methods Inventory has always offered in its own pickers. */
+export type BuiltInPaymentMethod = 'cash' | 'card' | 'other'
 
-export const PAYMENT_METHODS: PaymentMethod[] = ['cash', 'card', 'other']
+/** Any payment method key a sale or refund can carry — one of the built-ins
+ * above, or one a business added itself in CountRoom Register
+ * (account_settings.payment_methods, e.g. "ebay_online_payment"). The
+ * `string & {}` keeps editor autocomplete for the built-ins while still
+ * accepting any key. Display it with `paymentMethodLabel()` from
+ * `domain/paymentMethods`, never by indexing PAYMENT_METHOD_LABELS directly. */
+export type PaymentMethod = BuiltInPaymentMethod | (string & {})
 
-export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+export const PAYMENT_METHODS: BuiltInPaymentMethod[] = ['cash', 'card', 'other']
+
+export const PAYMENT_METHOD_LABELS: Record<BuiltInPaymentMethod, string> = {
   cash: 'Cash',
   card: 'Card',
   other: 'Other',

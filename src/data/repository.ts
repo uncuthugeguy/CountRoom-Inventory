@@ -44,6 +44,10 @@ export interface AccountSettingsSync {
   quickCodes?: QuickCode[]
   /** Manager-curated product category list — see `Settings.productCategories`. */
   productCategories?: string[]
+  /** Read-only here: payment methods are managed in CountRoom Register
+   * (account_settings.payment_methods). Inventory only reads them to show
+   * the right labels, and `setAccountSettings` never writes them. */
+  paymentMethods?: { key: string; label: string }[]
 }
 
 /**

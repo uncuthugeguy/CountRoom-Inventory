@@ -33,6 +33,7 @@ export interface SettingsApi extends Settings {
     labelPresets?: LabelPreset[]
     quickCodes?: QuickCode[]
     productCategories?: string[]
+    paymentMethods?: { key: string; label: string }[]
   }): void
 }
 

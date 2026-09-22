@@ -196,30 +196,4 @@ describe('employee role', () => {
     await user.click(screen.getByRole('button', { name: /^activity$/i }))
     expect(await screen.findByText(/no activity yet/i)).toBeInTheDocument()
   })
-
-  it('hides marketplace fees (and the profit they feed into) from an employee at checkout', async () => {
-    const { user } = await renderAs('employee')
-    await go(user, /checkout/i)
-
-    expect(screen.queryByRole('heading', { name: /marketplace fees/i })).not.toBeInTheDocument()
-    expect(screen.queryByText(/est\. profit/i)).not.toBeInTheDocument()
-  })
-
-  it('shows marketplace fees to a manager at checkout', async () => {
-    const { user } = await renderAs('manager')
-    await go(user, /checkout/i)
-
-    expect(screen.getByRole('heading', { name: /marketplace fees/i })).toBeInTheDocument()
-    // Exact match — the paid-by toggle buttons below also have "buyer
-    // protection fee" in their accessible name via aria-label.
-    expect(screen.getByLabelText('Buyer protection fee')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /me paid the buyer protection fee/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/^vat$/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/delivery cost/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /me paid for delivery/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /buyer paid for delivery/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/advertising cost/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/order total/i)).toBeInTheDocument()
-  })
 })

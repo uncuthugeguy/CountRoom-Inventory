@@ -1,3 +1,4 @@
+import { paymentMethodLabel, paymentMethodOptions } from '../../domain/paymentMethods'
 import { useEffect, useId, useMemo, useState } from 'react'
 import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
@@ -29,8 +30,6 @@ import {
   ACTIVITY_ENTITY_LABELS,
   PAID_BY_LABELS,
   MOVEMENT_LABELS,
-  PAYMENT_METHODS,
-  PAYMENT_METHOD_LABELS,
   type ActivityEntityType,
   type ActivityLogEntry,
   type PaymentMethod,
@@ -84,7 +83,7 @@ function ReceiptDialog({
         </tbody>
       </table>
       <p className="receipt-total">Total: {formatCurrency(sale.subtotal)}</p>
-      <p>Payment: {PAYMENT_METHOD_LABELS[sale.paymentMethod]}</p>
+      <p>Payment: {paymentMethodLabel(sale.paymentMethod)}</p>
       {isManager &&
         ((sale.buyerProtectionFee ?? 0) > 0 ||
           (sale.deliveryCost ?? 0) > 0 ||
@@ -376,7 +375,7 @@ export function SaleEditDialog({
       <div className="field">
         <span>Payment method</span>
         <div className="channel-picker">
-          {PAYMENT_METHODS.map((method) => (
+          {paymentMethodOptions(sale.paymentMethod).map((method) => (
             <button
               key={method}
               type="button"
@@ -384,7 +383,7 @@ export function SaleEditDialog({
               aria-pressed={paymentMethod === method}
               onClick={() => setPaymentMethod(method)}
             >
-              {PAYMENT_METHOD_LABELS[method]}
+              {paymentMethodLabel(method)}
             </button>
           ))}
         </div>
@@ -812,7 +811,7 @@ function SalesView({
               <ul className="plain-list">
                 {byPayment.map((row) => (
                   <li key={row.key} className="breakdown-row">
-                    <span>{PAYMENT_METHOD_LABELS[row.key as keyof typeof PAYMENT_METHOD_LABELS] ?? row.key}</span>
+                    <span>{paymentMethodLabel(row.key)}</span>
                     <span className="mono">{formatCurrency(row.revenue)}</span>
                     {isManager && <span className="muted">profit {formatCurrency(row.profit)}</span>}
                   </li>
@@ -844,7 +843,7 @@ function SalesView({
               <li key={sale.id} className="history-row" data-testid="sale-row">
                 <div className="history-main">
                   <span className="history-product">{sale.channel || 'Unspecified'}</span>
-                  <span className="badge">{PAYMENT_METHOD_LABELS[sale.paymentMethod]}</span>
+                  <span className="badge">{paymentMethodLabel(sale.paymentMethod)}</span>
                   {sale.updatedAt && <span className="badge">Edited</span>}
                 </div>
                 <div className="history-numbers">

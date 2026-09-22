@@ -8,21 +8,10 @@ import { clearSupplierDraft } from './data/supplierDraftStorage'
 import { clearPurchaseOrderDraft } from './data/purchaseOrderDraftStorage'
 import { getSupabaseClient } from './data/supabaseClient'
 import { DUPLICATE_SKU, type InventoryRepository, type Role } from './data/repository'
-import { findByScan } from './domain/inventory'
 import { nextSku } from './domain/products'
-import {
-  addToCart,
-  buildSaleInput,
-  removeFromCart,
-  setCartPrice,
-  setCartQuantity,
-  type Cart,
-  type SaleFeesDraft,
-} from './domain/sales'
 import type {
   MovementInput,
   MovementType,
-  PaymentMethod,
   Product,
   ProductDraft,
   ReturnCaseInput,
@@ -39,7 +28,6 @@ import { MovementDialog } from './ui/components/MovementDialog'
 import { Nav, type Tab } from './ui/components/Nav'
 import { ProductFormDialog } from './ui/components/ProductFormDialog'
 import { printProductLabel } from './printing/printLabel'
-import { CheckoutScreen } from './ui/screens/CheckoutScreen'
 import { DashboardScreen } from './ui/screens/DashboardScreen'
 import { HistoryScreen, SaleEditDialog } from './ui/screens/HistoryScreen'
 import { ProductsScreen } from './ui/screens/ProductsScreen'
@@ -83,7 +71,6 @@ const TITLES: Record<Tab, string> = {
   dashboard: 'Dashboard',
   products: 'Products',
   scan: 'Scan',
-  checkout: 'Checkout',
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
@@ -292,14 +279,13 @@ function AuthenticatedApp({
   useSettingsSync(inventory, settings)
   const [tab, setTab] = useState<Tab>('dashboard')
   const [lastScan, setLastScan] = useState<string | null>(null)
-  const [cart, setCart] = useState<Cart>([])
-  const [lastSale, setLastSale] = useState<Sale | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [toast, setToast] = useState<string | null>(null)
   // A sale looked up by scanning the QR code printed on its own receipt —
-  // see handleScan below and the "Scan to find this sale" code CheckoutScreen
-  // prints. Handed to HistoryScreen, which pops the sale's receipt open and
-  // clears this back to null once it has.
+  // see handleScan below. Handed to HistoryScreen, which pops the sale's
+  // receipt open and clears this back to null once it has. Receipts are
+  // printed by whatever rang the sale up (CountRoom Register, now that
+  // Inventory no longer has its own checkout).
   const [recalledSale, setRecalledSale] = useState<Sale | null>(null)
 
   useEffect(() => {
@@ -308,26 +294,13 @@ function AuthenticatedApp({
     return () => clearTimeout(timer)
   }, [toast])
 
-  const addScanToCart = (code: string) => {
-    const match = findByScan(inventory.products, code)
-    if (!match) {
-      setToast(`No product matches "${code.trim()}".`)
-      return
-    }
-    setCart((current) => addToCart(current, match))
-  }
-
-  // On every other screen a scan looks a product up; on Checkout it rings
-  // one up instead; on History it's a receipt's own code, recalling that
-  // exact sale. Deliberately not memoised — useWedgeScanner re-reads this
-  // closure on every render via a ref, so it always sees the current tab
-  // without needing to re-subscribe its keydown listener.
+  // On every other screen a scan looks a product up; on History it's a
+  // receipt's own code, recalling that exact sale. Deliberately not
+  // memoised — useWedgeScanner re-reads this closure on every render via a
+  // ref, so it always sees the current tab without needing to re-subscribe
+  // its keydown listener.
   const handleScan = (code: string) => {
     const trimmed = code.trim()
-    if (tab === 'checkout') {
-      addScanToCart(trimmed)
-      return
-    }
     if (tab === 'history') {
       const sale = inventory.sales.find((s) => s.id === trimmed)
       if (!sale) {
@@ -391,16 +364,6 @@ function AuthenticatedApp({
     setToast(`Sending ${product.name} label to the printer…`)
     const result = await printProductLabel(product, settings)
     setToast(result.ok ? `${product.name} label sent to the printer.` : `Print failed: ${result.error}`)
-  }
-
-  const checkoutSale = async (channel: string, paymentMethod: PaymentMethod, fees: SaleFeesDraft) => {
-    const result = await inventory.recordSale(buildSaleInput(cart, channel, paymentMethod, fees))
-    if (result.ok) {
-      setLastSale(result.value)
-      setCart([])
-      setToast(`Sale recorded — ${formatCurrency(result.value.subtotal)} via ${channel}.`)
-    }
-    return result
   }
 
   const recordReturn = async (input: ReturnCaseInput) => {
@@ -550,24 +513,6 @@ function AuthenticatedApp({
             onMove={openMovement}
             onCreate={(barcode) => setDialog({ kind: 'product', barcode })}
             onQuickAdjust={quickAdjust}
-            startCamera={startCamera}
-          />
-        )}
-
-        {tab === 'checkout' && (
-          <CheckoutScreen
-            products={inventory.products}
-            cart={cart}
-            role={role}
-            channels={settings.saleChannels}
-            lastSale={lastSale}
-            onAddByCode={addScanToCart}
-            onAddProduct={(product) => setCart((current) => addToCart(current, product))}
-            onSetQuantity={(id, quantity) => setCart((current) => setCartQuantity(current, id, quantity))}
-            onSetPrice={(id, price) => setCart((current) => setCartPrice(current, id, price))}
-            onRemove={(id) => setCart((current) => removeFromCart(current, id))}
-            onAddChannel={settings.addChannel}
-            onCheckout={checkoutSale}
             startCamera={startCamera}
           />
         )}

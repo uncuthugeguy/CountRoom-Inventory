@@ -55,16 +55,6 @@ export function ScanIcon(props: IconProps) {
   )
 }
 
-export function CheckoutIcon(props: IconProps) {
-  return (
-    <svg {...base} {...props} aria-hidden="true">
-      <circle cx="9" cy="20" r="1.4" fill="currentColor" stroke="none" />
-      <circle cx="18" cy="20" r="1.4" fill="currentColor" stroke="none" />
-      <path d="M2.5 4h2l2.2 11.2a1.8 1.8 0 0 0 1.8 1.5h8.7a1.8 1.8 0 0 0 1.77-1.47L20.5 8H6.2" />
-    </svg>
-  )
-}
-
 export function ReturnsIcon(props: IconProps) {
   return (
     <svg {...base} {...props} aria-hidden="true">

@@ -1,3 +1,4 @@
+import { paymentMethodLabel } from '../../domain/paymentMethods'
 import { useState } from 'react'
 import type { Role } from '../../data/repository'
 import { lowStockProducts, summarise } from '../../domain/inventory'
@@ -6,7 +7,6 @@ import { generateSalesReport } from '../../domain/reports'
 import { salesSince, summariseSales } from '../../domain/sales'
 import {
   MOVEMENT_LABELS,
-  PAYMENT_METHOD_LABELS,
   type Product,
   type Sale,
   type StockMovement,
@@ -237,7 +237,7 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
                     <span>{sale.channel || 'Unspecified'}</span>
                     <span className="mono">{formatCurrency(sale.subtotal)}</span>
                     {role === 'manager' && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
-                    <span className="muted">{PAYMENT_METHOD_LABELS[sale.paymentMethod]}</span>
+                    <span className="muted">{paymentMethodLabel(sale.paymentMethod)}</span>
                     <span className="muted">{formatDateTime(sale.createdAt)}</span>
                   </li>
                 ))}

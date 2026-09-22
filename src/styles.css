@@ -1,7 +1,7 @@
 :root {
   font-family: var(--font-ui);
-  color: #211d19;
-  background: #faf7f2;
+  color: var(--stone-900);
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   /* CountRoom brand palette — matched to the design system's --cr- tokens
@@ -11,10 +11,12 @@
   --font-ui: "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-num: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --stone-900: #211d19;
+  --ink: #211d19;
   --clay-500: #9c5b36;
   --clay-300: #d29e7e;
   --clay-50: #fbf3ee;
   --bg: #faf7f2;
+  --bg-hotspot: #ffffff;
   --surface: #fffdfa;
   --surface-2: #f2ede5;
   --border: #e6dfd4;
@@ -24,21 +26,111 @@
   --danger: #732b1d;
   --warning: #8a6828;
   --success: #4e6b4f;
-  /* Dark ground — header/nav and the brand's inverse lockup. */
+  /* Dark ground — header/nav and the brand's inverse lockup. Fixed: this is
+     the app's chrome accent (nav/header when *not* in dark theme), not the
+     dark-theme surface below, so it doesn't flip with --theme-dark. */
   --dark: #211d19;
   --dark-surface: #332d27;
   --dark-border: rgba(210, 158, 126, 0.25);
   --accent-on-dark: #d29e7e;
+  /* Semi-transparent chrome (sticky header/nav blur) — themed separately
+     from --surface since these need to stay translucent. */
+  --header-bg-translucent: rgba(255, 253, 250, 0.92);
+  --nav-bg-translucent: rgba(242, 237, 229, 0.96);
+  /* Status/badge tones — moss for ok, rust for negative/out, ochre for
+     warning/adjust, slate for informational. Matches the design system's
+     status tokens (tokens/colors.css); previously hardcoded per badge
+     class, now centralised so dark mode only has to override them once. */
+  --status-ok: #3a5139;
+  --status-ok-bg: rgba(78, 107, 79, 0.12);
+  --status-ok-border: #c3d4bc;
+  --status-out: #732b1d;
+  --status-out-bg: rgba(115, 43, 29, 0.1);
+  --status-out-border: #e6c3ac;
+  --status-warn: #8a6828;
+  --status-warn-bg: rgba(138, 104, 40, 0.12);
+  --status-warn-border: #ecd8ad;
+  --status-info: #374b54;
+  --status-info-bg: rgba(74, 100, 112, 0.1);
+  --status-info-border: #c7d3d6;
+  --status-role: #48533a;
+  --status-role-bg: rgba(111, 125, 80, 0.12);
+  --status-role-border: #d3d9c4;
+}
+
+/* ---- Dark theme ----
+   Three states, controlled by <html data-theme="...">: no attribute follows
+   the OS (this @media block), "dark"/"light" force one regardless of OS.
+   See src/ui/theme.ts for the toggle. Only surfaces/text/borders/status
+   flip; --primary/--danger/etc. are self-contained fill+text pairs so stay
+   put, same reasoning as packages/branding/tokens.css in the Register/
+   Listings monorepo (this app is a separate repo, so this block is its own
+   copy rather than a shared import). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --stone-900: #faf7f2;
+    --bg: #211d19;
+    --bg-hotspot: #332d27;
+    --surface: #332d27;
+    --surface-2: #4c443b;
+    --border: #4c443b;
+    --muted: #b0a597;
+    --primary: #b87a55;
+    --header-bg-translucent: rgba(33, 29, 25, 0.92);
+    --nav-bg-translucent: rgba(33, 29, 25, 0.96);
+    --status-ok: #a8c7a1;
+    --status-ok-bg: rgba(78, 107, 79, 0.28);
+    --status-ok-border: #4e6b4f;
+    --status-out: #e0917a;
+    --status-out-bg: rgba(224, 145, 122, 0.2);
+    --status-out-border: #9a3b28;
+    --status-warn: #dfbe7d;
+    --status-warn-bg: rgba(223, 190, 125, 0.2);
+    --status-warn-border: #b98f3d;
+    --status-info: #9db3bb;
+    --status-info-bg: rgba(157, 179, 187, 0.18);
+    --status-info-border: #4a6470;
+    --status-role: #b7c294;
+    --status-role-bg: rgba(183, 194, 148, 0.18);
+    --status-role-border: #6f7d50;
+  }
+}
+:root[data-theme="dark"] {
+  --stone-900: #faf7f2;
+  --bg: #211d19;
+  --bg-hotspot: #332d27;
+  --surface: #332d27;
+  --surface-2: #4c443b;
+  --border: #4c443b;
+  --muted: #b0a597;
+  --primary: #b87a55;
+  --header-bg-translucent: rgba(33, 29, 25, 0.92);
+  --nav-bg-translucent: rgba(33, 29, 25, 0.96);
+  --status-ok: #a8c7a1;
+  --status-ok-bg: rgba(78, 107, 79, 0.28);
+  --status-ok-border: #4e6b4f;
+  --status-out: #e0917a;
+  --status-out-bg: rgba(224, 145, 122, 0.2);
+  --status-out-border: #9a3b28;
+  --status-warn: #dfbe7d;
+  --status-warn-bg: rgba(223, 190, 125, 0.2);
+  --status-warn-border: #b98f3d;
+  --status-info: #9db3bb;
+  --status-info-bg: rgba(157, 179, 187, 0.18);
+  --status-info-border: #4a6470;
+  --status-role: #b7c294;
+  --status-role-bg: rgba(183, 194, 148, 0.18);
+  --status-role-border: #6f7d50;
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at top right, #ffffff 0, var(--bg) 38rem); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at top right, var(--bg-hotspot) 0, var(--bg) 38rem); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 h1, h2, h3, p { margin-top: 0; }
 .app { min-height: 100vh; padding-bottom: 82px; }
-.app-header { position: sticky; top: 0; z-index: 20; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem max(1rem, calc((100vw - 1100px)/2)); border-bottom: 1px solid var(--border); background: rgba(255,253,250,.92); backdrop-filter: blur(14px); color: var(--stone-900); }
+.app-header { position: sticky; top: 0; z-index: 20; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem max(1rem, calc((100vw - 1100px)/2)); border-bottom: 1px solid var(--border); background: var(--header-bg-translucent); backdrop-filter: blur(14px); color: var(--stone-900); }
 .brand { display: flex; align-items: center; gap: .65rem; }
 .brand-mark { display: grid; place-items: center; width: 2.35rem; height: 2.35rem; flex: 0 0 auto; }
 .brand-mark img { width: 100%; height: 100%; display: block; }
@@ -81,7 +173,7 @@ h1, h2, h3, p { margin-top: 0; }
 .icon-button:hover, .icon-button:focus-visible { background: var(--surface-2); }
 .field { display: grid; gap: .35rem; min-width: 0; }
 .field label { color: var(--stone-900); font-size: .9rem; font-weight: 700; }
-.field input, .field select, .field textarea { width: 100%; min-height: 2.7rem; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: .65rem; color: var(--stone-900); background: #fff; }
+.field input, .field select, .field textarea { width: 100%; min-height: 2.7rem; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: .65rem; color: var(--stone-900); background: var(--surface); }
 .field-grow { flex: 1 1 17rem; }
 .field-row { display: grid; grid-template-columns: 1fr; gap: .8rem; }
 .sale-fees-fields { display: grid; gap: .8rem; margin-top: .4rem; }
@@ -94,12 +186,12 @@ h1, h2, h3, p { margin-top: 0; }
 /* Click-to-fill list of previously used sign-in emails — see AuthScreen.tsx
    and recentEmailsStorage.ts. A plain <datalist> would be simpler but iOS
    Safari doesn't reliably show one, and this app is mainly used on iPhone. */
-.email-suggestions { position: absolute; top: calc(100% + .3rem); left: 0; right: 0; z-index: 10; display: grid; gap: 0; margin: 0; padding: .3rem; list-style: none; border: 1px solid var(--border); border-radius: .65rem; background: #fff; box-shadow: 0 12px 30px rgba(33,29,25,.18); }
+.email-suggestions { position: absolute; top: calc(100% + .3rem); left: 0; right: 0; z-index: 10; display: grid; gap: 0; margin: 0; padding: .3rem; list-style: none; border: 1px solid var(--border); border-radius: .65rem; background: var(--surface); box-shadow: 0 12px 30px rgba(33,29,25,.18); }
 .email-suggestion { width: 100%; padding: .55rem .65rem; border: 0; border-radius: .5rem; color: var(--stone-900); background: transparent; text-align: left; font: inherit; cursor: pointer; }
 .email-suggestion:hover, .email-suggestion:focus-visible { background: rgba(156,91,54,.1); }
 .label-like { color: var(--stone-900); font-size: .9rem; font-weight: 700; }
 .checkbox-field-row { display: flex; flex-wrap: wrap; gap: .6rem .9rem; }
-.checkbox-field { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.7rem; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: .65rem; background: #fff; color: var(--stone-900); font-weight: 600; cursor: pointer; }
+.checkbox-field { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.7rem; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: .65rem; background: var(--surface); color: var(--stone-900); font-weight: 600; cursor: pointer; }
 .checkbox-field input { width: auto; min-height: 0; }
 .number-stepper { display: flex; align-items: stretch; gap: .4rem; }
 .number-stepper input { flex: 1 1 auto; min-width: 0; text-align: center; }
@@ -118,19 +210,19 @@ h1, h2, h3, p { margin-top: 0; }
    warning/adjust, slate for informational (invited), olive as the
    second voice for role changes — there is no purple/teal in the
    palette, so those two no longer improvise one. */
-.backend { color: #3a5139; border-color: #c3d4bc; background: rgba(78,107,79,.12); }
-.badge-in { color: #3a5139; border-color: #c3d4bc; background: rgba(78,107,79,.12); }
-.badge-out { color: #732b1d; border-color: #e6c3ac; background: rgba(115,43,29,.1); }
-.badge-adjust { color: #8a6828; border-color: #ecd8ad; background: rgba(138,104,40,.12); }
-.badge-activity-added { color: #3a5139; border-color: #c3d4bc; background: rgba(78,107,79,.12); }
-.badge-activity-edited { color: #8a6828; border-color: #ecd8ad; background: rgba(138,104,40,.12); }
-.badge-activity-removed { color: #732b1d; border-color: #e6c3ac; background: rgba(115,43,29,.1); }
-.badge-activity-invited { color: #374b54; border-color: #c7d3d6; background: rgba(74,100,112,.1); }
-.badge-activity-role_changed { color: #48533a; border-color: #d3d9c4; background: rgba(111,125,80,.12); }
+.backend { color: var(--status-ok); border-color: var(--status-ok-border); background: var(--status-ok-bg); }
+.badge-in { color: var(--status-ok); border-color: var(--status-ok-border); background: var(--status-ok-bg); }
+.badge-out { color: var(--status-out); border-color: var(--status-out-border); background: var(--status-out-bg); }
+.badge-adjust { color: var(--status-warn); border-color: var(--status-warn-border); background: var(--status-warn-bg); }
+.badge-activity-added { color: var(--status-ok); border-color: var(--status-ok-border); background: var(--status-ok-bg); }
+.badge-activity-edited { color: var(--status-warn); border-color: var(--status-warn-border); background: var(--status-warn-bg); }
+.badge-activity-removed { color: var(--status-out); border-color: var(--status-out-border); background: var(--status-out-bg); }
+.badge-activity-invited { color: var(--status-info); border-color: var(--status-info-border); background: var(--status-info-bg); }
+.badge-activity-role_changed { color: var(--status-role); border-color: var(--status-role-border); background: var(--status-role-bg); }
 .mono { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 .empty { padding: 1.5rem; border: 1px dashed var(--border); border-radius: .8rem; color: var(--muted); text-align: center; }
-.alert { margin: .4rem 0; padding: .75rem; border: 1px solid #e6c3ac; border-radius: .625rem; color: #732b1d; background: rgba(115,43,29,.08); }
-.preview { padding: .75rem; border-radius: .625rem; color: #3a5139; background: rgba(78,107,79,.12); }
+.alert { margin: .4rem 0; padding: .75rem; border: 1px solid var(--status-out-border); border-radius: .625rem; color: var(--status-out); background: var(--status-out-bg); }
+.preview { padding: .75rem; border-radius: .625rem; color: var(--status-ok); background: var(--status-ok-bg); }
 .low-stock-item, .activity-item, .history-row { display: grid; gap: .35rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
 .low-stock-count, .delta-down { color: var(--danger); }
 .delta-up { color: var(--success); }
@@ -158,18 +250,18 @@ h1, h2, h3, p { margin-top: 0; }
   .camera-overlay-controls { top: max(.8rem, env(safe-area-inset-top)); }
 }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: end center; padding: 1rem; background: rgba(33,29,25,.55); }
-.dialog { width: min(600px, 100%); max-height: 92vh; overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: 1.25rem; background: #fff; box-shadow: 0 16px 32px rgba(33,29,25,.12), 0 4px 8px rgba(33,29,25,.10); }
+.dialog { width: min(600px, 100%); max-height: 92vh; overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: 1.25rem; background: var(--surface); box-shadow: 0 16px 32px rgba(33,29,25,.12), 0 4px 8px rgba(33,29,25,.10); }
 .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .form { display: grid; gap: .9rem; }
 .dialog-actions { justify-content: flex-end; }
-.toast { position: fixed; left: 50%; bottom: 88px; z-index: 80; width: max-content; max-width: calc(100% - 2rem); margin: 0; padding: .75rem 1rem; transform: translateX(-50%); border: 1px solid var(--stone-900); border-radius: .75rem; color: var(--clay-50); background: var(--stone-900); box-shadow: 0 10px 35px rgba(33,29,25,.4); }
+.toast { position: fixed; left: 50%; bottom: 88px; z-index: 80; width: max-content; max-width: calc(100% - 2rem); margin: 0; padding: .75rem 1rem; transform: translateX(-50%); border: 1px solid var(--ink); border-radius: .75rem; color: var(--clay-50); background: var(--ink); box-shadow: 0 10px 35px rgba(33,29,25,.4); }
 /* Mobile: a horizontally scrollable flex row (flex: 0 0 auto on each
    item, see .nav-item) so tabs stay reachable via swipe instead of being
    squeezed to fit and clipped — this app has 11 tabs, more than a phone
    width can show at once. Desktop/tablet (>=700px) switches back to a
    fixed-height vertical grid sidebar, see the min-width: 700px block
    below. */
-.nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; border-top: 1px solid var(--border); background: rgba(242,237,229,.96); backdrop-filter: blur(14px); }
+.nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; border-top: 1px solid var(--border); background: var(--nav-bg-translucent); backdrop-filter: blur(14px); }
 .nav::-webkit-scrollbar { display: none; }
 .nav-item { display: grid; place-items: center; gap: .15rem; min-height: 68px; flex: 0 0 auto; white-space: nowrap; border: 0; color: var(--muted); background: transparent; }
 .nav-item-active { color: var(--primary); background: var(--clay-50); }
@@ -180,7 +272,7 @@ h1, h2, h3, p { margin-top: 0; }
 .boot-mark { width: 3.5rem; height: 3.5rem; margin: 0 auto; }
 .boot h1 { color: var(--stone-900); }
 .result-count { margin: 0; }
-.logo-preview { display: grid; place-items: center; padding: 1rem; margin-bottom: .8rem; border: 1px solid var(--border); border-radius: .8rem; background: #fff; }
+.logo-preview { display: grid; place-items: center; padding: 1rem; margin-bottom: .8rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); }
 .logo-preview img { max-width: 220px; max-height: 140px; }
 .label-preview-wrap { display: grid; justify-items: start; gap: .5rem; margin-bottom: 1rem; }
 .label-preview-svg { border-radius: .4rem; box-shadow: 0 8px 24px rgba(33,29,25,.25); }
@@ -199,7 +291,7 @@ h1, h2, h3, p { margin-top: 0; }
 .cart-identity { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .cart-fields { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; }
 .cart-field { display: grid; gap: .25rem; font-size: .8rem; color: var(--muted); }
-.cart-field input { width: 5.5rem; min-height: 2.4rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: .55rem; color: var(--stone-900); background: #fff; }
+.cart-field input { width: 5.5rem; min-height: 2.4rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: .55rem; color: var(--stone-900); background: var(--surface); }
 .cart-line-total { min-width: 4.5rem; font-weight: 800; text-align: right; color: var(--stone-900); }
 .cart-totals { display: flex; flex-wrap: wrap; gap: 1rem; padding: .8rem 1rem; margin-top: .2rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface-2); font-weight: 700; color: var(--stone-900); }
 .stock-warning { color: var(--danger); font-size: .82rem; font-weight: 700; }
@@ -210,14 +302,14 @@ h1, h2, h3, p { margin-top: 0; }
 .channel-list { gap: .5rem; }
 .settings-subsection { margin-top: 1.4rem; padding-top: 1.2rem; border-top: 1px solid var(--border); }
 .channel-row { display: flex; align-items: center; gap: .6rem; }
-.channel-rename-input { flex: 1 1 auto; min-height: 2.6rem; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; color: var(--stone-900); background: #fff; }
+.channel-rename-input { flex: 1 1 auto; min-height: 2.6rem; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; color: var(--stone-900); background: var(--surface); }
 .quick-code-group { margin-top: 1rem; }
 .quick-code-group h3 { margin: 0 0 .5rem; font-size: 1rem; }
 .quick-code-row { flex-wrap: wrap; justify-content: space-between; }
 .quick-code-info { flex: 1 1 14rem; min-width: 0; }
 .scan-code-dialog { display: grid; justify-items: center; gap: .8rem; text-align: center; }
-.scan-code-fallback { display: grid; place-content: center; gap: .5rem; padding: 1rem; border: 1px dashed var(--border); border-radius: .8rem; color: var(--muted); text-align: center; background: #fff; }
-.scan-code-fallback code { word-break: break-all; color: #211d19; font-family: var(--font-num); }
+.scan-code-fallback { display: grid; place-content: center; gap: .5rem; padding: 1rem; border: 1px dashed var(--border); border-radius: .8rem; color: var(--muted); text-align: center; background: var(--surface); }
+.scan-code-fallback code { word-break: break-all; color: var(--stone-900); font-family: var(--font-num); }
 .breakdown-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .5rem 0; border-bottom: 1px solid var(--border); }
 /* Reports — card rows rather than real <table> markup, matching
    .product-row/.low-stock-item elsewhere: a multi-column table doesn't fit
@@ -236,9 +328,9 @@ h1, h2, h3, p { margin-top: 0; }
 .stat-subtext { display: block; margin-top: .2rem; font-size: .72rem; color: var(--muted); }
 .cash-row { margin-top: .8rem; }
 .change-due { margin: 0; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface-2); font-size: 1.2rem; font-weight: 800; color: var(--stone-900); }
-.change-due-short { color: var(--danger); border-color: #e6c3ac; }
+.change-due-short { color: var(--danger); border-color: var(--status-out-border); }
 .order-total-check { margin: .4rem 0 0; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface-2); font-size: .85rem; }
-.order-total-check-mismatch { color: var(--danger); border-color: #e6c3ac; font-weight: 700; }
+.order-total-check-mismatch { color: var(--danger); border-color: var(--status-out-border); font-weight: 700; }
 .product-added { font-size: .78rem; }
 .stocktake-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; padding: .8rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); }
 .stocktake-numbers { display: flex; flex-wrap: wrap; gap: 1rem; }

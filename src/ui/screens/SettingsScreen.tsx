@@ -7,6 +7,7 @@ import type { SettingsApi } from '../useSettings'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { LabelTemplateEditor } from '../components/LabelTemplateEditor'
 import { resizeLogoForStorage } from '../logoResize'
+import { ThemeToggle } from '../components/ThemeToggle'
 
 export interface SettingsScreenProps {
   settings: SettingsApi
@@ -44,7 +45,7 @@ function SaleChannelsPanel({ settings }: { settings: SettingsApi }) {
     <section className="panel">
       <h2>Sale channels</h2>
       <p className="muted">
-        Offered as quick picks at checkout for where a sale happened — eBay, Facebook
+        Offered as quick picks when recording or editing a sale — eBay, Facebook
         Marketplace, a walk-in sale, and so on. Rename or remove any of these, or add your own.
       </p>
 
@@ -534,7 +535,7 @@ function TeamPanel({ inventory }: { inventory: Inventory }) {
       <p className="muted">
         Invite an employee by email — we'll send them a sign-in link at that address, and once
         they use it they land in this business automatically, with restricted access: no cost or
-        profit figures, no deleting products, no price overrides at checkout, no refunds,
+        profit figures, no deleting products, no price overrides on a sale, no refunds,
         goodwill gestures or write-offs, and no approving a stocktake recount.
       </p>
 
@@ -752,6 +753,14 @@ export function SettingsScreen({ settings, inventory, onAccountDeleted }: Settin
           </button>
         ))}
       </div>
+
+      {tab === 'profile' && (
+        <section className="panel">
+          <h2>Appearance</h2>
+          <p className="muted">Applies to this device only.</p>
+          <ThemeToggle />
+        </section>
+      )}
 
       {tab === 'profile' && <AccountSettingsPanel inventory={inventory} />}
 

@@ -1,3 +1,4 @@
+import { setCustomPaymentMethods } from '../domain/paymentMethods'
 import { sanitiseQuickCodes, type QuickCode, type QuickCodeDraft } from '../domain/quickCodes'
 import {
   sanitiseLabelTemplate,
@@ -31,7 +32,7 @@ export const DEFAULT_SALE_CHANNELS = [
 export interface Settings {
   /** Data URL of the uploaded logo, printed on labels when present. */
   logoDataUrl?: string
-  /** Where a sale can be attributed to — user-managed, checkout offers these as quick picks. */
+  /** Where a sale can be attributed to — user-managed, offered as quick picks when recording or editing a sale. */
   saleChannels: string[]
   /**
    * Which printer `printProductLabel` sends to — defaults to `'zebra'` so
@@ -185,6 +186,7 @@ export interface SettingsStore {
     labelPresets?: LabelPreset[]
     quickCodes?: QuickCode[]
     productCategories?: string[]
+    paymentMethods?: { key: string; label: string }[]
   }): void
 }
 
@@ -351,6 +353,9 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
     },
 
     applyRemote(remote) {
+      // Payment methods aren't part of local Settings (Register owns them);
+      // they only feed the label lookup in domain/paymentMethods.
+      if (remote.paymentMethods !== undefined) setCustomPaymentMethods(remote.paymentMethods)
       state = {
         ...state,
         ...(remote.logoDataUrl !== undefined ? { logoDataUrl: remote.logoDataUrl } : {}),

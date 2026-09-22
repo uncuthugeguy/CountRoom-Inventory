@@ -7,6 +7,10 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
     />
     <meta name="theme-color" content="#211d19" />
+    <!-- Set light/dark theme before first paint, so a dark-mode user
+         never sees a flash of the light theme while React boots. Keep in
+         sync with src/ui/theme.ts. -->
+    <script>(function(){try{var t=localStorage.getItem('cr-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
     <meta
       name="description"
       content="CountRoom Inventory — barcode-driven inventory management that works offline on Mac and iPhone."

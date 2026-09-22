@@ -1,6 +1,7 @@
+import { paymentMethodLabel } from './paymentMethods'
 import { isLowStock } from './inventory'
 import { returnImpact } from './returns'
-import { PAID_BY_LABELS, PAYMENT_METHOD_LABELS, RETURN_ACTION_LABELS } from './types'
+import { PAID_BY_LABELS, RETURN_ACTION_LABELS } from './types'
 import type { Product, ReturnCase, Sale, StockMovement } from './types'
 
 const NEEDS_QUOTING = /[",\r\n]/
@@ -80,7 +81,7 @@ export function salesToCsv(sales: Sale[]): string {
   const columns: CsvColumn<Sale>[] = [
     { label: 'Timestamp', value: (s) => s.createdAt },
     { label: 'Channel', value: (s) => s.channel },
-    { label: 'Payment Method', value: (s) => PAYMENT_METHOD_LABELS[s.paymentMethod] },
+    { label: 'Payment Method', value: (s) => paymentMethodLabel(s.paymentMethod) },
     { label: 'Items', value: (s) => s.lines.map((l) => `${l.quantity}x ${l.sku}`).join('; ') },
     { label: 'Subtotal', value: (s) => s.subtotal.toFixed(2) },
     { label: 'Cost', value: (s) => s.totalCost.toFixed(2) },
@@ -111,7 +112,7 @@ export function returnsToCsv(cases: ReturnCase[]): string {
       value: (r) => r.replacementLines.map((l) => `${l.quantity}x ${l.sku}`).join('; '),
     },
     { label: 'Refund Amount', value: (r) => r.refundAmount.toFixed(2) },
-    { label: 'Refund Method', value: (r) => (r.refundMethod ? PAYMENT_METHOD_LABELS[r.refundMethod] : '') },
+    { label: 'Refund Method', value: (r) => paymentMethodLabel(r.refundMethod) },
     { label: 'Goodwill Type', value: (r) => r.goodwillType },
     { label: 'Goodwill Value', value: (r) => r.goodwillValue.toFixed(2) },
     { label: 'Write-off Loss', value: (r) => returnImpact(r).writeOffLoss.toFixed(2) },

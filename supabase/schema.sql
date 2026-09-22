@@ -892,13 +892,16 @@ create table if not exists public.returns (
   notes text not null default '',
   actions text[] not null default '{}',
   refund_amount double precision not null default 0 check (refund_amount >= 0),
-  refund_method text check (refund_method in ('cash', 'card', 'other')),
+  -- Free text: payment methods are customisable per account (Register
+  -- sends its own method keys), so no fixed cash/card/other list.
+  refund_method text,
   goodwill_type text not null default '',
   goodwill_value double precision not null default 0 check (goodwill_value >= 0),
   created_at timestamptz not null default now()
 );
 
 alter table public.returns add column if not exists created_by uuid references auth.users(id);
+alter table public.returns drop constraint if exists returns_refund_method_check;
 
 -- No default and nullable, same as sales.updated_at — a return that's never
 -- been edited should show no updated_at at all (matching the client's

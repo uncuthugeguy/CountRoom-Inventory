@@ -1278,7 +1278,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     async getAccountSettings(): Promise<AccountSettingsSync | null> {
       const { data, error } = await db
         .from('account_settings')
-        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes, product_categories')
+        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes, product_categories, payment_methods')
         .maybeSingle()
       if (error) throw new Error(error.message)
       if (!data) return null
@@ -1290,6 +1290,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         label_presets: LabelPreset[] | null
         quick_codes: QuickCode[] | null
         product_categories: string[] | null
+        payment_methods: { key: string; label: string }[] | null
       }
       return {
         ...(row.logo_data_url ? { logoDataUrl: row.logo_data_url } : {}),
@@ -1298,6 +1299,7 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
         ...(row.label_presets ? { labelPresets: row.label_presets } : {}),
         ...(row.quick_codes ? { quickCodes: row.quick_codes } : {}),
         ...(row.product_categories ? { productCategories: row.product_categories } : {}),
+        ...(row.payment_methods ? { paymentMethods: row.payment_methods } : {}),
       }
     },
 

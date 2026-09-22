@@ -1,3 +1,4 @@
+import { paymentMethodLabel, paymentMethodOptions } from '../../domain/paymentMethods'
 import { useId, useMemo, useState } from 'react'
 import type { Role } from '../../data/repository'
 import { searchProducts } from '../../domain/inventory'
@@ -29,8 +30,6 @@ import {
   type ReturnCaseDraft,
 } from '../../domain/returns'
 import {
-  PAYMENT_METHODS,
-  PAYMENT_METHOD_LABELS,
   RETURN_ACTIONS,
   RETURN_ACTION_LABELS,
   STOCK_DISPOSITIONS,
@@ -130,7 +129,7 @@ function ReturnDetailDialog({
 
       {rc.refundAmount > 0 && (
         <p>
-          Refund: {formatCurrency(rc.refundAmount)} ({rc.refundMethod ? PAYMENT_METHOD_LABELS[rc.refundMethod] : 'Unspecified'})
+          Refund: {formatCurrency(rc.refundAmount)} ({rc.refundMethod ? paymentMethodLabel(rc.refundMethod) : 'Unspecified'})
         </p>
       )}
       {rc.goodwillValue > 0 && (
@@ -606,7 +605,7 @@ export function ReturnsScreen({
             <div className="field">
               <span>Refund method</span>
               <div className="channel-picker">
-                {PAYMENT_METHODS.map((method) => (
+                {paymentMethodOptions(draft.refundMethod).map((method) => (
                   <button
                     key={method}
                     type="button"
@@ -614,7 +613,7 @@ export function ReturnsScreen({
                     aria-pressed={draft.refundMethod === method}
                     onClick={() => setDraft((current) => ({ ...current, refundMethod: method }))}
                   >
-                    {PAYMENT_METHOD_LABELS[method]}
+                    {paymentMethodLabel(method)}
                   </button>
                 ))}
               </div>

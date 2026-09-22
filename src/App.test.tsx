@@ -5,7 +5,8 @@ import { App } from './App'
 import { createLocalRepository } from './data/localRepository'
 import { DUPLICATE_SKU, type AccountDeletionPreview, type InventoryRepository, type TeamMember } from './data/repository'
 import { memoryStorage } from './test/memoryStorage'
-import type { ActivityLogEntry, Product } from './domain/types'
+import { addToCart, buildSaleInput, setCartQuantity } from './domain/sales'
+import type { ActivityLogEntry, PaymentMethod, Product } from './domain/types'
 
 /**
  * A repository double that simulates the exact failure mode reported by
@@ -142,6 +143,29 @@ const go = async (user: ReturnType<typeof userEvent.setup>, tab: RegExp) => {
 }
 
 /**
+ * Records a sale directly through the repository — the equivalent of
+ * ringing one up in Checkout, now that checkout has moved to the
+ * standalone CountRoom Register app and Inventory no longer has a UI for
+ * it. Tests that only need a completed sale to exist (rather than testing
+ * a checkout flow that no longer exists) seed one this way.
+ */
+async function seedSale(
+  repository: InventoryRepository,
+  barcode: string,
+  quantity: number,
+  channel: string,
+  paymentMethod: PaymentMethod = 'cash',
+) {
+  const products = await repository.listProducts()
+  const product = products.find((p) => p.barcode === barcode)
+  if (!product) throw new Error(`seedSale: no product with barcode ${barcode}`)
+  const cart = setCartQuantity(addToCart([], product), product.id, quantity)
+  const result = await repository.recordSale(buildSaleInput(cart, channel, paymentMethod))
+  if (!result.ok) throw new Error(`seedSale: ${result.error}`)
+  return result.value
+}
+
+/**
  * Replays a HID wedge scan: a burst of keystrokes ending in Enter, with a fixed
  * timestamp so the burst is never mistaken for slow human typing.
  */
@@ -199,19 +223,10 @@ describe('dashboard', () => {
   })
 
   it('surfaces a product that just sold as a top profit maker, not as dead stock', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     // M6 Flat Washer: cost 0.01, price 0.05 → 0.04 profit.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await waitFor(() => expect(screen.queryByTestId('cart-row')).toBeNull())
-
-    await go(user, /dashboard/i)
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    await renderApp(repository)
 
     const topPerformers = screen.getByTestId('top-performers-list')
     expect(topPerformers).toHaveTextContent('M6 Flat Washer')
@@ -599,16 +614,9 @@ describe('activity log', () => {
   })
 
   it('records editing a past sale and shows it on the Activity tab', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
@@ -853,17 +861,10 @@ describe('deleting your own account', () => {
 
 describe('editing a past sale', () => {
   it('lets a manager change quantities on a completed sale, reflecting in stock and the sale record', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     // M6 Flat Washer: quantity 64, price 0.05.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
@@ -892,17 +893,10 @@ describe('editing a past sale', () => {
   })
 
   it('refuses to save an edit that oversells the current stock', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     // Battery Pack 18V 4Ah: quantity 2, price 34.99.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '4006381333948')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '40')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    await seedSale(repository, '4006381333948', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
@@ -920,17 +914,10 @@ describe('editing a past sale', () => {
   })
 
   it('keeps an in-progress sale edit when switching to another tab and back', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     // M6 Flat Washer: quantity 64, price 0.05.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
@@ -966,17 +953,10 @@ describe('editing a past sale', () => {
   })
 
   it('picks up an unsaved sale edit if the dialog is reopened before saving', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     // M6 Flat Washer: quantity 64, price 0.05.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
@@ -1009,30 +989,16 @@ describe('editing a past sale', () => {
 
 describe('recalling a sale by scanning its receipt', () => {
   it('pops the matching receipt open on History, regardless of the current tab or date filter', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
-
-    // The printed receipt's scannable code encodes the sale's own id —
-    // read it the same way a wedge scanner reading the printed code would
-    // hand it back, rather than reaching into repository internals.
-    const scanCode = screen.getByRole('img', { name: /scannable code/i, hidden: true })
-    const saleId = scanCode.getAttribute('data-scan-value')
-    expect(saleId).toBeTruthy()
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
+    const sale = await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     // History defaults to Stock movements, not Sales — scanning should get
     // there on its own rather than requiring a manual toggle first.
     await go(user, /history/i)
     expect(screen.queryByTestId('sale-row')).toBeNull()
 
-    wedgeScan(saleId!)
+    wedgeScan(sale.id)
 
     const receipt = await screen.findByRole('dialog')
     expect(receipt).toHaveTextContent('eBay')
@@ -1213,305 +1179,6 @@ describe('scanning', () => {
   })
 })
 
-describe('checkout', () => {
-  it('adds an item, completes a sale, decrements stock and records profit', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: quantity 64, cost 0.01, price 0.05.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-
-    const row = await screen.findByTestId('cart-row')
-    expect(row).toHaveTextContent('M6 Flat Washer')
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Subtotal: £0.05')
-
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-
-    await waitFor(() => expect(screen.queryByTestId('cart-row')).toBeNull())
-    expect(await screen.findByTestId('last-sale')).toHaveTextContent('eBay')
-    expect(screen.getByTestId('last-sale')).toHaveTextContent(/cash received £1.00.*change £0.95/i)
-    expect(screen.getByRole('button', { name: /print receipt/i })).toBeInTheDocument()
-
-    await go(user, /products/i)
-    const productRow = screen
-      .getAllByTestId('product-row')
-      .find((r) => r.textContent?.includes('M6 Flat Washer'))
-    expect(productRow).toHaveTextContent('63')
-
-    await go(user, /history/i)
-    await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    expect(screen.getByTestId('pl-revenue')).toHaveTextContent('0.05')
-    expect(screen.getByTestId('pl-profit')).toHaveTextContent('0.04')
-    expect(screen.getByTestId('sale-row')).toHaveTextContent('eBay')
-
-    const productBreakdown = screen.getByTestId('product-breakdown-row')
-    expect(productBreakdown).toHaveTextContent('M6 Flat Washer')
-    expect(productBreakdown).toHaveTextContent('1 sold')
-    expect(productBreakdown).toHaveTextContent('revenue £0.05')
-    expect(productBreakdown).toHaveTextContent('profit £0.04')
-  })
-
-  it('nets marketplace fees out of profit, deducting delivery only when the seller paid it', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: cost 0.01, price 0.05 → cart profit 0.04 before fees.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    // Exact match, not a substring regex — the "Who paid the buyer
-    // protection fee?" toggle buttons below also have "buyer protection
-    // fee" in their accessible name, so a loose match would be ambiguous.
-    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
-    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
-    await user.type(screen.getByLabelText(/advertising cost/i), '0.25')
-    await user.type(screen.getByLabelText(/delivery cost/i), '2')
-    // Buyer paid for delivery themselves, so it should NOT come off profit —
-    // only the buyer protection fee, VAT and advertising cost should.
-    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
-
-    // 0.04 - (1 + 0.5 + 0.25) = -1.71; delivery excluded since the buyer paid it.
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: £-1.71')
-
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-
-    const lastSale = await screen.findByTestId('last-sale')
-    expect(lastSale).toHaveTextContent('profit £-1.71')
-    const feesLine = screen.getByTestId('last-sale-fees')
-    expect(feesLine).toHaveTextContent('Buyer protection £1.00 (Me paid)')
-    expect(feesLine).toHaveTextContent('Delivery £2.00 (Buyer paid)')
-    expect(feesLine).toHaveTextContent('VAT £0.50')
-    expect(feesLine).toHaveTextContent('Advertising £0.25')
-
-    // The marketplace fees reset for the next sale rather than carrying over.
-    expect(screen.getByLabelText('Buyer protection fee')).toHaveValue(null)
-
-    // The printed receipt (portalled off-screen, only shown by @media print)
-    // carries the same fee breakdown as the on-screen "Last sale" panel —
-    // it used to only show the line items and total, leaving VAT and every
-    // other fee off the printed copy entirely.
-    const printReceipt = screen.getByTestId('print-receipt')
-    expect(printReceipt).toHaveTextContent('Buyer protection: £1.00 (Me paid)')
-    expect(printReceipt).toHaveTextContent('Delivery: £2.00 (Buyer paid)')
-    expect(printReceipt).toHaveTextContent('VAT: £0.50')
-    expect(printReceipt).toHaveTextContent('Advertising: £0.25')
-    expect(printReceipt).toHaveTextContent('Profit: £-1.71')
-    // And a scannable code for finding this exact sale again later.
-    expect(within(printReceipt).getByRole('img', { name: /scannable code/i, hidden: true })).toBeInTheDocument()
-
-    // Portalled straight onto <body>, not nested inside .app — this is what
-    // lets @media print hide the whole app with `display: none` instead of
-    // the old visibility trick that printed several blank pages.
-    expect(printReceipt.closest('.app')).toBeNull()
-    expect(printReceipt.parentElement).toBe(document.body)
-  })
-
-  it('excludes the buyer protection fee from profit when the buyer paid it', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: cost 0.01, price 0.05 → cart profit 0.04 before fees.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
-    await user.click(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i }))
-
-    // The buyer protection fee is excluded since the buyer paid it — profit
-    // stays at the plain cart profit of 0.04.
-    expect(screen.getByTestId('cart-totals')).toHaveTextContent('Est. profit: £0.04')
-
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-
-    const lastSale = await screen.findByTestId('last-sale')
-    expect(lastSale).toHaveTextContent('profit £0.04')
-    expect(screen.getByTestId('last-sale-fees')).toHaveTextContent('Buyer protection £1.00 (Buyer paid)')
-  })
-
-  it('checks the itemised fees against an entered order total, flagging a mismatch with the exact gap', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: cost 0.01, price 0.05 → subtotal 0.05 for one.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
-    await user.type(screen.getByLabelText(/delivery cost/i), '2')
-    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
-    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
-
-    // Itemised: 0.05 + 1 + 2 + 0.5 = 3.55 — enter that as the order total.
-    // (Delivery only counts here because the buyer paid it — otherwise it
-    // never showed up on the buyer's own order total.)
-    await user.type(screen.getByLabelText(/order total/i), '3.55')
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (£3.55).')
-
-    // Now change it to something that doesn't add up, as if a fee had been
-    // forgotten — the gap should be called out exactly.
-    await user.clear(screen.getByLabelText(/order total/i))
-    await user.type(screen.getByLabelText(/order total/i), '5')
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent(
-      "You've itemised £3.55, but entered an order total of £5.00 — you're £1.45 short. Check you haven't missed a fee.",
-    )
-  })
-
-  it('excludes delivery cost from the itemised check when the seller paid it', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: cost 0.01, price 0.05 → subtotal 0.05 for one.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
-    await user.click(screen.getByRole('button', { name: /buyer paid the buyer protection fee/i }))
-    await user.type(screen.getByLabelText(/delivery cost/i), '2')
-    // Left as the default — seller paid for delivery (e.g. a free-postage
-    // listing) — so it never appeared on the buyer's own order total.
-
-    // Itemised for reconciliation purposes: 0.05 + 1 (delivery excluded) =
-    // 1.05, which is what the buyer's real order total should equal.
-    await user.type(screen.getByLabelText(/order total/i), '1.05')
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent('Matches your order total (£1.05).')
-  })
-
-  it('flags the item-price-already-includes-a-fee mistake with an actionable message', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer, edited to (mistakenly) hold a marketplace's full order
-    // total rather than the item's own price — the exact real-world slip
-    // this message exists to catch.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    const cartRow = await screen.findByTestId('cart-row')
-
-    const itemPrice = within(cartRow).getByLabelText(/item price for m6 flat washer/i)
-    fireEvent.change(itemPrice, { target: { value: '3' } })
-
-    await user.type(screen.getByLabelText('Buyer protection fee'), '1')
-    await user.type(screen.getByLabelText(/delivery cost/i), '2')
-    await user.click(screen.getByRole('button', { name: /buyer paid for delivery/i }))
-    await user.type(screen.getByLabelText(/^vat$/i), '0.5')
-    // Itemised: 3 + 1 + 2 + 0.5 = 6.5, but the real order total was only 5 —
-    // the fees are already baked into the (too-high) item price above.
-    // (Delivery counts here because the buyer paid it.)
-    await user.type(screen.getByLabelText(/order total/i), '5')
-
-    expect(screen.getByTestId('order-total-check')).toHaveTextContent(
-      "You've itemised £6.50, but entered an order total of £5.00 — that's £1.50 more than the order total. " +
-        "Check the item price above isn't already including a fee you've also entered below.",
-    )
-  })
-
-  it('routes a wedge scan to the cart instead of the scan screen while on checkout', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    wedgeScan('5012345678917')
-
-    expect(await screen.findByTestId('cart-row')).toHaveTextContent('M6 Flat Washer')
-    expect(screen.queryByTestId('scan-match')).toBeNull()
-    expect(screen.getByRole('button', { name: /^checkout$/i })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
-  })
-
-  it('refuses to check out without choosing a channel', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/choose where this was sold/i)
-  })
-
-  it('refuses to oversell from the cart', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // Battery Pack 18V 4Ah: quantity 2.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '4006381333948')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    const row = await screen.findByTestId('cart-row')
-
-    await user.clear(within(row).getByLabelText(/quantity for/i))
-    await user.type(within(row).getByLabelText(/quantity for/i), '9')
-
-    expect(row).toHaveTextContent(/only 2 in stock/i)
-
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    expect(await screen.findByText(/fix the stock issues/i)).toBeInTheDocument()
-  })
-
-  it('shows change due as cash is entered, and flags a short amount', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    // M6 Flat Washer: price 0.05.
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-
-    expect(screen.getByTestId('change-due')).toHaveTextContent('—')
-
-    await user.type(screen.getByLabelText(/cash received/i), '0.02')
-    expect(screen.getByTestId('change-due')).toHaveTextContent(/short £0.03/i)
-
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/less than the total/i)
-
-    await user.clear(screen.getByLabelText(/cash received/i))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    expect(screen.getByTestId('change-due')).toHaveTextContent('0.95')
-  })
-
-  it('requires cash received before completing a cash sale', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/enter the cash received/i)
-  })
-
-  it('adds a custom sale channel from the checkout screen and offers it on the Settings screen', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/add a new channel/i), 'Car Boot Sale')
-    await user.click(screen.getByRole('button', { name: /add channel/i }))
-
-    expect(await screen.findByRole('button', { name: 'Car Boot Sale' })).toBeInTheDocument()
-
-    await go(user, /settings/i)
-    await user.click(screen.getByRole('button', { name: /^catalogue$/i }))
-    expect(screen.getByDisplayValue('Car Boot Sale')).toBeInTheDocument()
-  })
-})
-
 describe('login email', () => {
   it('lets a manager request a login email change and shows the confirmation-link prompt', async () => {
     const base = createLocalRepository({ storage: memoryStorage(), seed: true })
@@ -1648,16 +1315,9 @@ describe('returns', () => {
   })
 
   it('links a case to an existing till sale', async () => {
-    const { user } = await renderApp()
-    await go(user, /checkout/i)
-
-    await user.type(screen.getByLabelText(/enter a barcode or sku/i), '5012345678917')
-    await user.click(screen.getByRole('button', { name: /add to sale/i }))
-    await screen.findByTestId('cart-row')
-    await user.click(screen.getByRole('button', { name: 'eBay' }))
-    await user.type(screen.getByLabelText(/cash received/i), '1')
-    await user.click(screen.getByRole('button', { name: /complete sale/i }))
-    await screen.findByTestId('last-sale')
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
+    await seedSale(repository, '5012345678917', 1, 'eBay')
+    const { user } = await renderApp(repository)
 
     await go(user, /returns/i)
     const saleSelect = screen.getByLabelText(/original sale/i)
