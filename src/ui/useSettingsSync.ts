@@ -3,7 +3,7 @@ import type { Inventory } from './useInventory'
 import type { SettingsApi } from './useSettings'
 
 /**
- * Keeps the label logo, label template, saved label presets, sale channels
+ * Keeps the label logo, barcode label layout, quick codes, sale channels
  * and product categories in sync with the account in Supabase mode, so
  * they're the same on every device/browser signed into the same account
  * rather than stuck on whichever one happened to set them up. Local
@@ -56,16 +56,14 @@ export function useSettingsSync(inventory: Inventory, settings: SettingsApi): vo
     }
     const current: {
       logoDataUrl?: string
-      labelTemplate?: SettingsApi['labelTemplate']
+      barcodeLabelLayout?: SettingsApi['barcodeLabelLayout']
       saleChannels: string[]
-      labelPresets: SettingsApi['labelPresets']
       quickCodes: SettingsApi['quickCodes']
       productCategories: string[]
     } = {
       ...(settings.logoDataUrl !== undefined ? { logoDataUrl: settings.logoDataUrl } : {}),
-      ...(settings.labelTemplate !== undefined ? { labelTemplate: settings.labelTemplate } : {}),
+      ...(settings.barcodeLabelLayout !== undefined ? { barcodeLabelLayout: settings.barcodeLabelLayout } : {}),
       saleChannels: settings.saleChannels,
-      labelPresets: settings.labelPresets,
       quickCodes: settings.quickCodes,
       productCategories: settings.productCategories,
     }
@@ -77,9 +75,8 @@ export function useSettingsSync(inventory: Inventory, settings: SettingsApi): vo
   }, [
     inventory.backend,
     settings.logoDataUrl,
-    settings.labelTemplate,
+    settings.barcodeLabelLayout,
     settings.saleChannels,
-    settings.labelPresets,
     settings.quickCodes,
     settings.productCategories,
   ])

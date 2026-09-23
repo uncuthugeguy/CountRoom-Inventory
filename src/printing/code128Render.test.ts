@@ -31,7 +31,7 @@ describe('encodeCode128', () => {
 
   it('round-trips every-day quick-code values through zxing\'s own Code 128 decoder', () => {
     const values = [
-      'ZEBRA-RESTORE',
+      'PRINTER-RESTORE',
       'A',
       '0',
       '0123456789',
@@ -54,7 +54,7 @@ describe('encodeCode128', () => {
   })
 
   it('always starts and ends on a dark (bar) module, per the Code 128 spec', () => {
-    const bars = encodeCode128('ZEBRA-RESTORE')!
+    const bars = encodeCode128('PRINTER-RESTORE')!
     expect(bars.isDark(0)).toBe(true)
     expect(bars.isDark(bars.width - 1)).toBe(true)
   })

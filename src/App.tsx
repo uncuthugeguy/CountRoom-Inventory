@@ -27,10 +27,11 @@ import { MfaEnrollScreen } from './ui/components/MfaEnrollScreen'
 import { MovementDialog } from './ui/components/MovementDialog'
 import { Nav, type Tab } from './ui/components/Nav'
 import { ProductFormDialog } from './ui/components/ProductFormDialog'
-import { printProductLabel } from './printing/printLabel'
+import { printProductLabel } from './printing/labelJobs'
 import { DashboardScreen } from './ui/screens/DashboardScreen'
 import { HistoryScreen, SaleEditDialog } from './ui/screens/HistoryScreen'
 import { ProductsScreen } from './ui/screens/ProductsScreen'
+import { LabelsScreen } from './ui/screens/LabelsScreen'
 import { QuickCodesScreen } from './ui/screens/QuickCodesScreen'
 import { ReportsScreen } from './ui/screens/ReportsScreen'
 import { SuppliersScreen } from './ui/screens/SuppliersScreen'
@@ -71,6 +72,7 @@ const TITLES: Record<Tab, string> = {
   dashboard: 'Dashboard',
   products: 'Products',
   scan: 'Scan',
+  labels: 'Labels',
   returns: 'Returns',
   stocktake: 'Stocktake',
   history: 'History',
@@ -361,7 +363,7 @@ function AuthenticatedApp({
     setDialog({ kind: 'movement', product, type })
 
   const printLabel = async (product: Product) => {
-    setToast(`Sending ${product.name} label to the printer…`)
+    setToast(`Printing ${product.name} label…`)
     const result = await printProductLabel(product, settings)
     setToast(result.ok ? `${product.name} label sent to the printer.` : `Print failed: ${result.error}`)
   }
@@ -516,6 +518,8 @@ function AuthenticatedApp({
             startCamera={startCamera}
           />
         )}
+
+        {tab === 'labels' && <LabelsScreen settings={settings} products={inventory.products} />}
 
         {tab === 'returns' && (
           <ReturnsScreen

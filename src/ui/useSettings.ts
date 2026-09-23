@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { createSettingsStore } from '../data/settingsStorage'
 import type { Settings } from '../data/settingsStorage'
 import type { QuickCode, QuickCodeDraft } from '../domain/quickCodes'
-import type { LabelPreset, LabelTemplate, PolonoPrintRotation, PrinterKind } from '../printing/labelTemplate'
+import type { BarcodeLabelLayout } from '../printing/barcodeLabelLayout'
+import type { LabelPrinterSettings } from '../printing/labelPrinterSettings'
 
 export interface SettingsApi extends Settings {
   setLogo(dataUrl: string): void
@@ -10,16 +11,9 @@ export interface SettingsApi extends Settings {
   addChannel(name: string): void
   renameChannel(oldName: string, newName: string): void
   removeChannel(name: string): void
-  setPrinterKind(kind: PrinterKind): void
-  setPolonoPrintRotation(rotation: PolonoPrintRotation): void
-  setLabelTemplate(template: LabelTemplate): void
-  resetLabelTemplate(): void
-  setPolonoLabelTemplate(template: LabelTemplate): void
-  resetPolonoLabelTemplate(): void
-  saveLabelPreset(name: string, template: LabelTemplate): void
-  applyLabelPreset(id: string): void
-  renameLabelPreset(id: string, newName: string): void
-  deleteLabelPreset(id: string): void
+  setBarcodeLabelLayout(layout: BarcodeLabelLayout): void
+  resetBarcodeLabelLayout(): void
+  setLabelPrinter(printer: LabelPrinterSettings): void
   addQuickCode(draft: QuickCodeDraft): string
   updateQuickCode(id: string, patch: Partial<QuickCodeDraft>): void
   deleteQuickCode(id: string): void
@@ -28,9 +22,8 @@ export interface SettingsApi extends Settings {
   removeProductCategory(name: string): void
   applyRemote(remote: {
     logoDataUrl?: string
-    labelTemplate?: LabelTemplate
+    barcodeLabelLayout?: BarcodeLabelLayout
     saleChannels?: string[]
-    labelPresets?: LabelPreset[]
     quickCodes?: QuickCode[]
     productCategories?: string[]
     paymentMethods?: { key: string; label: string }[]
@@ -64,44 +57,16 @@ export function useSettings(storage?: Storage): SettingsApi {
       store.removeChannel(name)
       setSettings(store.get())
     },
-    setPrinterKind: (kind: PrinterKind) => {
-      store.setPrinterKind(kind)
+    setBarcodeLabelLayout: (layout: BarcodeLabelLayout) => {
+      store.setBarcodeLabelLayout(layout)
       setSettings(store.get())
     },
-    setPolonoPrintRotation: (rotation: PolonoPrintRotation) => {
-      store.setPolonoPrintRotation(rotation)
+    resetBarcodeLabelLayout: () => {
+      store.resetBarcodeLabelLayout()
       setSettings(store.get())
     },
-    setLabelTemplate: (template: LabelTemplate) => {
-      store.setLabelTemplate(template)
-      setSettings(store.get())
-    },
-    resetLabelTemplate: () => {
-      store.resetLabelTemplate()
-      setSettings(store.get())
-    },
-    setPolonoLabelTemplate: (template: LabelTemplate) => {
-      store.setPolonoLabelTemplate(template)
-      setSettings(store.get())
-    },
-    resetPolonoLabelTemplate: () => {
-      store.resetPolonoLabelTemplate()
-      setSettings(store.get())
-    },
-    saveLabelPreset: (name: string, template: LabelTemplate) => {
-      store.saveLabelPreset(name, template)
-      setSettings(store.get())
-    },
-    applyLabelPreset: (id: string) => {
-      store.applyLabelPreset(id)
-      setSettings(store.get())
-    },
-    renameLabelPreset: (id: string, newName: string) => {
-      store.renameLabelPreset(id, newName)
-      setSettings(store.get())
-    },
-    deleteLabelPreset: (id: string) => {
-      store.deleteLabelPreset(id)
+    setLabelPrinter: (printer: LabelPrinterSettings) => {
+      store.setLabelPrinter(printer)
       setSettings(store.get())
     },
     addQuickCode: (draft: QuickCodeDraft) => {

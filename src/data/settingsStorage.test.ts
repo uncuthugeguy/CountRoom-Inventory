@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createSettingsStore, DEFAULT_SALE_CHANNELS, SETTINGS_STORAGE_KEY } from './settingsStorage'
-import { DEFAULT_LABEL_TEMPLATE, DEFAULT_POLONO_LABEL_TEMPLATE } from '../printing/labelTemplate'
+import { DEFAULT_BARCODE_LABEL_LAYOUT } from '../printing/barcodeLabelLayout'
+import { DEFAULT_LABEL_PRINTER_SETTINGS } from '../printing/labelPrinterSettings'
 import { memoryStorage } from '../test/memoryStorage'
 
 let storage: Storage
@@ -10,12 +11,10 @@ beforeEach(() => {
 })
 
 describe('createSettingsStore', () => {
-  it('starts with no logo, the default sale channels, and the Zebra as the selected printer', () => {
+  it('starts with no logo, the default sale channels and default printer settings', () => {
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
-      printerKind: 'zebra',
-      polonoPrintRotation: 'off',
-      labelPresets: [],
+      labelPrinter: DEFAULT_LABEL_PRINTER_SETTINGS,
       quickCodes: [],
       productCategories: [],
     })
@@ -43,9 +42,7 @@ describe('createSettingsStore', () => {
     storage.setItem(SETTINGS_STORAGE_KEY, 'not json{{')
     expect(createSettingsStore(storage).get()).toEqual({
       saleChannels: DEFAULT_SALE_CHANNELS,
-      printerKind: 'zebra',
-      polonoPrintRotation: 'off',
-      labelPresets: [],
+      labelPrinter: DEFAULT_LABEL_PRINTER_SETTINGS,
       quickCodes: [],
       productCategories: [],
     })
@@ -138,163 +135,64 @@ describe('product categories', () => {
   })
 })
 
-describe('printer selection', () => {
-  it('defaults to the Zebra', () => {
-    const store = createSettingsStore(storage)
-    expect(store.get().printerKind).toBe('zebra')
+describe('barcode label layout', () => {
+  it('has no override until one is set, so callers fall back to the default layout', () => {
+    expect(createSettingsStore(storage).get().barcodeLabelLayout).toBeUndefined()
   })
 
-  it('switches to the Polono and persists the choice across a reload', () => {
+  it('saves a layout, clamping boxes onto the label, and persists it', () => {
     const store = createSettingsStore(storage)
-    store.setPrinterKind('polono')
-    expect(store.get().printerKind).toBe('polono')
-
-    const reopened = createSettingsStore(storage)
-    expect(reopened.get().printerKind).toBe('polono')
+    store.setBarcodeLabelLayout({ ...DEFAULT_BARCODE_LABEL_LAYOUT, name: { ...DEFAULT_BARCODE_LABEL_LAYOUT.name, x: 9999 } })
+    const saved = createSettingsStore(storage).get().barcodeLabelLayout
+    expect(saved?.version).toBe(2)
+    expect(saved!.name.x + saved!.name.w).toBeLessThanOrEqual(406)
   })
 
-  it('ignores an invalid stored value and falls back to the Zebra rather than crashing', () => {
+  it('resets back to no override', () => {
+    const store = createSettingsStore(storage)
+    store.setBarcodeLabelLayout(DEFAULT_BARCODE_LABEL_LAYOUT)
+    store.resetBarcodeLabelLayout()
+    expect(store.get().barcodeLabelLayout).toBeUndefined()
+  })
+
+  it('drops old Zebra-era label settings from storage instead of crashing on them', () => {
     storage.setItem(
       SETTINGS_STORAGE_KEY,
-      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, printerKind: 'inkjet', labelPresets: [], quickCodes: [] }),
+      JSON.stringify({ printerKind: 'zebra', labelTemplate: { widthDots: 609 }, polonoPrintRotation: 'cw', labelPresets: [] }),
     )
-    expect(createSettingsStore(storage).get().printerKind).toBe('zebra')
+    const settings = createSettingsStore(storage).get()
+    expect(settings).not.toHaveProperty('printerKind')
+    expect(settings).not.toHaveProperty('labelTemplate')
+    expect(settings.barcodeLabelLayout).toBeUndefined()
+  })
+
+  it('ignores an old-format template arriving from the account sync', () => {
+    const store = createSettingsStore(storage)
+    store.applyRemote({ barcodeLabelLayout: { widthDots: 609 } as never })
+    expect(store.get().barcodeLabelLayout).toBeUndefined()
+  })
+
+  it('accepts a new-format layout from the account sync', () => {
+    const store = createSettingsStore(storage)
+    store.applyRemote({ barcodeLabelLayout: DEFAULT_BARCODE_LABEL_LAYOUT })
+    expect(store.get().barcodeLabelLayout).toEqual(DEFAULT_BARCODE_LABEL_LAYOUT)
   })
 })
 
-describe('Polono print rotation', () => {
-  it('defaults to off', () => {
+describe('label printer settings', () => {
+  it('stores the printer name and per-size calibration, clamping offsets', () => {
     const store = createSettingsStore(storage)
-    expect(store.get().polonoPrintRotation).toBe('off')
-  })
-
-  it('sets and persists a rotation direction across a reload', () => {
-    const store = createSettingsStore(storage)
-    store.setPolonoPrintRotation('cw')
-    expect(store.get().polonoPrintRotation).toBe('cw')
-
-    const reopened = createSettingsStore(storage)
-    expect(reopened.get().polonoPrintRotation).toBe('cw')
-  })
-
-  it('ignores an invalid stored value and falls back to off rather than crashing', () => {
-    storage.setItem(
-      SETTINGS_STORAGE_KEY,
-      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, polonoPrintRotation: 'sideways', labelPresets: [], quickCodes: [] }),
-    )
-    expect(createSettingsStore(storage).get().polonoPrintRotation).toBe('off')
-  })
-})
-
-describe('Polono label template', () => {
-  it('has no override until one is set, so callers fall back to DEFAULT_POLONO_LABEL_TEMPLATE', () => {
-    const store = createSettingsStore(storage)
-    expect(store.get().polonoLabelTemplate).toBeUndefined()
-  })
-
-  it('is stored separately from the Zebra template — setting one leaves the other untouched', () => {
-    const store = createSettingsStore(storage)
-    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 500 })
-    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
-
-    expect(store.get().labelTemplate?.widthDots).toBe(500)
-    expect(store.get().polonoLabelTemplate?.widthDots).toBe(350)
-  })
-
-  it('clamps an out-of-range Polono template using the Polono defaults, not the Zebra ones', () => {
-    const store = createSettingsStore(storage)
-    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, dpi: 99999, nameFont: -5 })
-
-    const saved = store.get().polonoLabelTemplate
-    expect(saved?.dpi).toBeLessThanOrEqual(600)
-    expect(saved?.nameFont).toBeGreaterThanOrEqual(0)
-    // Untouched fields keep the Polono default's own values, not the Zebra's.
-    expect(saved?.widthDots).toBe(DEFAULT_POLONO_LABEL_TEMPLATE.widthDots)
-  })
-
-  it('resets the Polono override without touching the Zebra template', () => {
-    const store = createSettingsStore(storage)
-    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 500 })
-    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
-
-    store.resetPolonoLabelTemplate()
-
-    expect(store.get().polonoLabelTemplate).toBeUndefined()
-    expect(store.get().labelTemplate?.widthDots).toBe(500)
-  })
-
-  it('persists across a reload', () => {
-    const store = createSettingsStore(storage)
-    store.setPolonoLabelTemplate({ ...DEFAULT_POLONO_LABEL_TEMPLATE, widthDots: 350 })
-
-    const reopened = createSettingsStore(storage)
-    expect(reopened.get().polonoLabelTemplate?.widthDots).toBe(350)
-  })
-})
-
-describe('label presets', () => {
-  it('saves the given template as a new named preset without touching the live template', () => {
-    const store = createSettingsStore(storage)
-    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 400 })
-    store.saveLabelPreset('Shipping label', { ...DEFAULT_LABEL_TEMPLATE, widthDots: 999 })
-
-    expect(store.get().labelPresets).toHaveLength(1)
-    expect(store.get().labelPresets[0]).toMatchObject({ name: 'Shipping label' })
-    expect(store.get().labelPresets[0].template.widthDots).toBe(999)
-    expect(store.get().labelTemplate?.widthDots).toBe(400) // unchanged by saving
-  })
-
-  it('overwrites an existing preset with the same name, case-insensitively, instead of duplicating it', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('Shipping label', { ...DEFAULT_LABEL_TEMPLATE, widthDots: 100 })
-    store.saveLabelPreset('SHIPPING LABEL', { ...DEFAULT_LABEL_TEMPLATE, widthDots: 200 })
-
-    expect(store.get().labelPresets).toHaveLength(1)
-    expect(store.get().labelPresets[0].template.widthDots).toBe(200)
-  })
-
-  it('loads a preset over the live template', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('RV', { ...DEFAULT_LABEL_TEMPLATE, widthDots: 777 })
-    const id = store.get().labelPresets[0].id
-
-    store.setLabelTemplate({ ...DEFAULT_LABEL_TEMPLATE, widthDots: 1 })
-    store.applyLabelPreset(id)
-
-    expect(store.get().labelTemplate?.widthDots).toBe(777)
-  })
-
-  it('renames a preset', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('RV', DEFAULT_LABEL_TEMPLATE)
-    const id = store.get().labelPresets[0].id
-
-    store.renameLabelPreset(id, 'Caravan')
-    expect(store.get().labelPresets[0].name).toBe('Caravan')
-  })
-
-  it('deletes a preset', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('RV', DEFAULT_LABEL_TEMPLATE)
-    const id = store.get().labelPresets[0].id
-
-    store.deleteLabelPreset(id)
-    expect(store.get().labelPresets).toEqual([])
-  })
-
-  it('ignores a blank preset name', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('   ', DEFAULT_LABEL_TEMPLATE)
-    expect(store.get().labelPresets).toEqual([])
-  })
-
-  it('persists presets across a reload', () => {
-    const store = createSettingsStore(storage)
-    store.saveLabelPreset('RV', DEFAULT_LABEL_TEMPLATE)
-
-    const reopened = createSettingsStore(storage)
-    expect(reopened.get().labelPresets).toHaveLength(1)
-    expect(reopened.get().labelPresets[0].name).toBe('RV')
+    store.setLabelPrinter({
+      printerName: 'POLONO PL60',
+      calibration: {
+        '2x1': { offsetX: 5, offsetY: -3, rotation: 180 },
+        '4x6': { offsetX: 5000, offsetY: 0, rotation: 45 as never },
+      },
+    })
+    const printer = createSettingsStore(storage).get().labelPrinter
+    expect(printer.printerName).toBe('POLONO PL60')
+    expect(printer.calibration['2x1']).toEqual({ offsetX: 5, offsetY: -3, rotation: 180 })
+    expect(printer.calibration['4x6']).toEqual({ offsetX: 100, offsetY: 0, rotation: 0 })
   })
 })
 
@@ -337,7 +235,7 @@ describe('quick codes', () => {
   it('drops a saved code that is missing required fields instead of crashing on read', () => {
     storage.setItem(
       SETTINGS_STORAGE_KEY,
-      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, labelPresets: [], quickCodes: [{ id: '1' }, { id: '2', name: 'Ok', value: 'V' }] }),
+      JSON.stringify({ saleChannels: DEFAULT_SALE_CHANNELS, quickCodes: [{ id: '1' }, { id: '2', name: 'Ok', value: 'V' }] }),
     )
     const store = createSettingsStore(storage)
     expect(store.get().quickCodes).toEqual([{ id: '2', name: 'Ok', value: 'V', category: 'Other', format: 'qr' }])

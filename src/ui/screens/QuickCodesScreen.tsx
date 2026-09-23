@@ -97,7 +97,7 @@ function QuickCodeForm({
           <option value="code128">Code 128 barcode</option>
         </select>
         <span className="hint">
-          Most printer manuals and Wi-Fi cards use QR. Older Zebra config codes are usually printed as Code 128
+          Most printer manuals and Wi-Fi cards use QR. Older printer config codes are usually printed as Code 128
           instead — pick that if the QR version won't scan back in.
         </span>
       </div>

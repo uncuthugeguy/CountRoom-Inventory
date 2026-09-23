@@ -117,6 +117,15 @@ export function CodesIcon(props: IconProps) {
   )
 }
 
+export function LabelsIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M3 5a2 2 0 0 1 2-2h7l9 9-9 9-9-9z" />
+      <circle cx="8" cy="8" r="1.5" />
+    </svg>
+  )
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <svg {...base} {...props} aria-hidden="true">

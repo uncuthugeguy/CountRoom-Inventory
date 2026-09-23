@@ -41,7 +41,7 @@ import type {
 } from '../domain/types'
 import { EMPTY_PROFILE_DRAFT } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
-import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
+import { isBarcodeLabelLayout, sanitiseBarcodeLabelLayout } from '../printing/barcodeLabelLayout'
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
@@ -1278,25 +1278,25 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     async getAccountSettings(): Promise<AccountSettingsSync | null> {
       const { data, error } = await db
         .from('account_settings')
-        .select('logo_data_url, label_template, sale_channels, label_presets, quick_codes, product_categories, payment_methods')
+        .select('logo_data_url, label_template, sale_channels, quick_codes, product_categories, payment_methods')
         .maybeSingle()
       if (error) throw new Error(error.message)
       if (!data) return null
 
       const row = data as {
         logo_data_url: string | null
-        label_template: LabelTemplate | null
+        label_template: unknown
         sale_channels: string[] | null
-        label_presets: LabelPreset[] | null
         quick_codes: QuickCode[] | null
         product_categories: string[] | null
         payment_methods: { key: string; label: string }[] | null
       }
       return {
         ...(row.logo_data_url ? { logoDataUrl: row.logo_data_url } : {}),
-        ...(row.label_template ? { labelTemplate: row.label_template } : {}),
+        ...(isBarcodeLabelLayout(row.label_template)
+          ? { barcodeLabelLayout: sanitiseBarcodeLabelLayout(row.label_template) }
+          : {}),
         ...(row.sale_channels ? { saleChannels: row.sale_channels } : {}),
-        ...(row.label_presets ? { labelPresets: row.label_presets } : {}),
         ...(row.quick_codes ? { quickCodes: row.quick_codes } : {}),
         ...(row.product_categories ? { productCategories: row.product_categories } : {}),
         ...(row.payment_methods ? { paymentMethods: row.payment_methods } : {}),
@@ -1308,9 +1308,8 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
 
       const payload: Record<string, unknown> = { account_id: accountId, updated_at: new Date().toISOString() }
       if (patch.logoDataUrl !== undefined) payload.logo_data_url = patch.logoDataUrl
-      if (patch.labelTemplate !== undefined) payload.label_template = patch.labelTemplate
+      if (patch.barcodeLabelLayout !== undefined) payload.label_template = patch.barcodeLabelLayout
       if (patch.saleChannels !== undefined) payload.sale_channels = patch.saleChannels
-      if (patch.labelPresets !== undefined) payload.label_presets = patch.labelPresets
       if (patch.quickCodes !== undefined) payload.quick_codes = patch.quickCodes
       if (patch.productCategories !== undefined) payload.product_categories = patch.productCategories
 

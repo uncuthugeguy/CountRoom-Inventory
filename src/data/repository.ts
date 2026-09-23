@@ -18,7 +18,7 @@ import type {
   StockMovement,
 } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
-import type { LabelPreset, LabelTemplate } from '../printing/labelTemplate'
+import type { BarcodeLabelLayout } from '../printing/barcodeLabelLayout'
 import type {
   Supplier,
   SupplierDraft,
@@ -30,7 +30,7 @@ import type {
 } from '../domain/suppliers'
 
 /**
- * The label logo, label template, saved label presets, sale channels and
+ * The label logo, 2 × 1 barcode label layout, sale channels and
  * quick-reference codes — shared account-wide (not per-person, unlike
  * Profile), so whoever last saved a change is what everyone on the account
  * sees next time they open the app. Any field left out of a
@@ -38,9 +38,10 @@ import type {
  */
 export interface AccountSettingsSync {
   logoDataUrl?: string
-  labelTemplate?: LabelTemplate
+  /** Stored in the `label_template` column. Only a version-2 layout is
+   * accepted on read — the old Zebra-era template there is ignored. */
+  barcodeLabelLayout?: BarcodeLabelLayout
   saleChannels?: string[]
-  labelPresets?: LabelPreset[]
   quickCodes?: QuickCode[]
   /** Manager-curated product category list — see `Settings.productCategories`. */
   productCategories?: string[]

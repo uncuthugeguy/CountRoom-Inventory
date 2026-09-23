@@ -1,12 +1,10 @@
-import { useEffect, useId, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { AccountDeletionPreview, TeamMember } from '../../data/repository'
 import { knownCategories } from '../../domain/products'
 import type { ProfileChangeRequest, ProfileDraft } from '../../domain/types'
 import type { Inventory } from '../useInventory'
 import type { SettingsApi } from '../useSettings'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { LabelTemplateEditor } from '../components/LabelTemplateEditor'
-import { resizeLogoForStorage } from '../logoResize'
 import { ThemeToggle } from '../components/ThemeToggle'
 
 export interface SettingsScreenProps {
@@ -17,13 +15,6 @@ export interface SettingsScreenProps {
    *  same split of responsibility as `AuthenticatedApp`'s own `onSignOut`. */
   onAccountDeleted?: () => void
 }
-
-/** `localStorage` throws a DOMException whose message varies by browser but
- * always mentions the quota — recognised here so a resize that still didn't
- * fit gets an explanation instead of a raw browser error string. */
-const isQuotaError = (cause: unknown): boolean =>
-  cause instanceof DOMException &&
-  (cause.name === 'QuotaExceededError' || /quota/i.test(cause.message))
 
 const commitOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
   if (event.key === 'Enter') event.currentTarget.blur()
@@ -691,18 +682,15 @@ function DeleteAccountPanel({
   )
 }
 
-type SettingsTab = 'profile' | 'team' | 'catalogue' | 'labels'
+type SettingsTab = 'profile' | 'team' | 'catalogue'
 
 const SETTINGS_TABS: { key: SettingsTab; label: string; managerOnly?: boolean }[] = [
   { key: 'profile', label: 'Profile' },
   { key: 'team', label: 'Team', managerOnly: true },
   { key: 'catalogue', label: 'Catalogue' },
-  { key: 'labels', label: 'Labels' },
 ]
 
 export function SettingsScreen({ settings, inventory, onAccountDeleted }: SettingsScreenProps) {
-  const logoId = useId()
-  const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<SettingsTab>('profile')
   const isManager = inventory.role === 'manager'
 
@@ -712,31 +700,6 @@ export function SettingsScreen({ settings, inventory, onAccountDeleted }: Settin
   useEffect(() => {
     if (!isManager && tab === 'team') setTab('profile')
   }, [isManager, tab])
-
-  const onFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
-    if (!file.type.startsWith('image/')) {
-      setError('Choose an image file (PNG, JPG or SVG).')
-      return
-    }
-
-    try {
-      const dataUrl = await resizeLogoForStorage(file)
-      settings.setLogo(dataUrl)
-      setError(null)
-    } catch (cause) {
-      if (isQuotaError(cause)) {
-        setError(
-          "That image is still too large to store even after resizing — try a simpler image, or crop it down before uploading.",
-        )
-        return
-      }
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
 
   return (
     <div className="screen">
@@ -779,49 +742,6 @@ export function SettingsScreen({ settings, inventory, onAccountDeleted }: Settin
         <>
           {isManager && <CategoriesPanel settings={settings} products={inventory.products} />}
           <SaleChannelsPanel settings={settings} />
-        </>
-      )}
-
-      {tab === 'labels' && (
-        <>
-          <section className="panel">
-            <h2>Label logo</h2>
-            <p className="muted">
-              Uploaded once here, then printed on every product label alongside the name, SKU
-              barcode and variation.
-            </p>
-
-            {settings.logoDataUrl && (
-              <div className="logo-preview">
-                <img src={settings.logoDataUrl} alt="Uploaded logo" />
-              </div>
-            )}
-
-            <div className="field">
-              <label htmlFor={logoId}>{settings.logoDataUrl ? 'Replace logo' : 'Upload a logo'}</label>
-              <input id={logoId} type="file" accept="image/*" onChange={onFileChange} />
-            </div>
-
-            {error && (
-              <p className="alert" role="alert">
-                {error}
-              </p>
-            )}
-
-            {settings.logoDataUrl && (
-              <div className="dialog-actions">
-                <button
-                  type="button"
-                  className="button button-ghost"
-                  onClick={() => settings.clearLogo()}
-                >
-                  Remove logo
-                </button>
-              </div>
-            )}
-          </section>
-
-          <LabelTemplateEditor settings={settings} />
         </>
       )}
     </div>

@@ -1,15 +1,11 @@
 import { setCustomPaymentMethods } from '../domain/paymentMethods'
 import { sanitiseQuickCodes, type QuickCode, type QuickCodeDraft } from '../domain/quickCodes'
+import { isBarcodeLabelLayout, sanitiseBarcodeLabelLayout, type BarcodeLabelLayout } from '../printing/barcodeLabelLayout'
 import {
-  sanitiseLabelTemplate,
-  sanitisePolonoLabelTemplate,
-  sanitisePolonoPrintRotation,
-  DEFAULT_POLONO_PRINT_ROTATION,
-  type LabelPreset,
-  type LabelTemplate,
-  type PolonoPrintRotation,
-  type PrinterKind,
-} from '../printing/labelTemplate'
+  DEFAULT_LABEL_PRINTER_SETTINGS,
+  sanitiseLabelPrinterSettings,
+  type LabelPrinterSettings,
+} from '../printing/labelPrinterSettings'
 
 const newId = (prefix = 'preset'): string =>
   typeof crypto?.randomUUID === 'function'
@@ -34,34 +30,12 @@ export interface Settings {
   logoDataUrl?: string
   /** Where a sale can be attributed to — user-managed, offered as quick picks when recording or editing a sale. */
   saleChannels: string[]
-  /**
-   * Which printer `printProductLabel` sends to — defaults to `'zebra'` so
-   * existing setups keep working exactly as before. Deliberately NOT part of
-   * the account-wide sync (`AccountSettingsSync`/`applyRemote` below) the
-   * way `labelTemplate`/`logoDataUrl` are: it describes which physical
-   * printer is wired to *this* device, not shared business branding, so a
-   * different machine signing into the same account shouldn't inherit it.
-   */
-  printerKind: PrinterKind
-  /** Sizing and placement for labels printed to the Zebra. Falls back to `DEFAULT_LABEL_TEMPLATE` when unset. */
-  labelTemplate?: LabelTemplate
-  /** Sizing and placement for labels printed to the Polono — a separate
-   * template from `labelTemplate` since the two printers are physically
-   * different sizes/resolutions. Falls back to `DEFAULT_POLONO_LABEL_TEMPLATE`
-   * when unset. Local-only, same reasoning as `printerKind` above. */
-  polonoLabelTemplate?: LabelTemplate
-  /** How the Polono's browser print path orients the label on the printed
-   * page — see `PolonoPrintRotation` in `labelTemplate.ts`. Defaults to
-   * `'off'` (today's existing behaviour, unchanged) until tested and set
-   * otherwise via the Label template screen's Orientation panel.
-   * Device-local for the same reason as `printerKind` — it depends on this
-   * machine's browser/OS/driver combination, not on the business account. */
-  polonoPrintRotation: PolonoPrintRotation
-  /** Named, saved label layouts — e.g. "Shipping label", "RV" — that can be
-   * loaded back over `labelTemplate` at any time. Saving one doesn't change
-   * what currently prints; only loading one does. Zebra-only for now — see
-   * `LabelPresetsPanel` in `LabelTemplateEditor.tsx`. */
-  labelPresets: LabelPreset[]
+  /** The 2 × 1 in barcode label layout. Synced to the account so every
+   * device prints the same label. Falls back to `DEFAULT_BARCODE_LABEL_LAYOUT`. */
+  barcodeLabelLayout?: BarcodeLabelLayout
+  /** Which Polono this device prints to and how it's lined up — device-local,
+   * never synced, since it depends on this machine's printer driver. */
+  labelPrinter: LabelPrinterSettings
   /** Saved reference codes (printer maintenance commands, Wi-Fi joins,
    * supplier links, etc.) shown on screen for scanning instead of a paper
    * manual — see `domain/quickCodes.ts`. */
@@ -80,22 +54,10 @@ export interface Settings {
 
 const empty = (): Settings => ({
   saleChannels: [...DEFAULT_SALE_CHANNELS],
-  printerKind: 'zebra',
-  polonoPrintRotation: DEFAULT_POLONO_PRINT_ROTATION,
-  labelPresets: [],
+  labelPrinter: sanitiseLabelPrinterSettings(DEFAULT_LABEL_PRINTER_SETTINGS),
   quickCodes: [],
   productCategories: [],
 })
-
-const sanitisePrinterKind = (value: unknown): PrinterKind => (value === 'polono' ? 'polono' : 'zebra')
-
-const sanitisePresets = (value: unknown): LabelPreset[] => {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter((p): p is Partial<LabelPreset> => !!p && typeof p === 'object')
-    .filter((p) => typeof p.id === 'string' && typeof p.name === 'string' && p.template)
-    .map((p) => ({ id: p.id as string, name: p.name as string, template: sanitiseLabelTemplate(p.template) }))
-}
 
 function read(storage: Storage): Settings {
   const raw = storage.getItem(SETTINGS_STORAGE_KEY)
@@ -107,17 +69,12 @@ function read(storage: Storage): Settings {
       Array.isArray(parsed.saleChannels) && parsed.saleChannels.length > 0
         ? parsed.saleChannels.filter((value): value is string => typeof value === 'string')
         : [...DEFAULT_SALE_CHANNELS]
-    const printerKind = sanitisePrinterKind(parsed.printerKind)
-    const polonoPrintRotation = sanitisePolonoPrintRotation(parsed.polonoPrintRotation)
-    const labelTemplate =
-      parsed.labelTemplate && typeof parsed.labelTemplate === 'object'
-        ? sanitiseLabelTemplate(parsed.labelTemplate)
-        : undefined
-    const polonoLabelTemplate =
-      parsed.polonoLabelTemplate && typeof parsed.polonoLabelTemplate === 'object'
-        ? sanitisePolonoLabelTemplate(parsed.polonoLabelTemplate)
-        : undefined
-    const labelPresets = sanitisePresets(parsed.labelPresets)
+    // Older saves may still carry the Zebra-era `labelTemplate`,
+    // `polonoLabelTemplate`, `printerKind` etc. — they're simply dropped.
+    const barcodeLabelLayout = isBarcodeLabelLayout(parsed.barcodeLabelLayout)
+      ? sanitiseBarcodeLabelLayout(parsed.barcodeLabelLayout)
+      : undefined
+    const labelPrinter = sanitiseLabelPrinterSettings(parsed.labelPrinter)
     const quickCodes = sanitiseQuickCodes(parsed.quickCodes)
     const productCategories = Array.isArray(parsed.productCategories)
       ? parsed.productCategories.filter((value): value is string => typeof value === 'string')
@@ -125,11 +82,8 @@ function read(storage: Storage): Settings {
     return {
       ...(logoDataUrl ? { logoDataUrl } : {}),
       saleChannels,
-      printerKind,
-      polonoPrintRotation,
-      ...(labelTemplate ? { labelTemplate } : {}),
-      ...(polonoLabelTemplate ? { polonoLabelTemplate } : {}),
-      labelPresets,
+      ...(barcodeLabelLayout ? { barcodeLabelLayout } : {}),
+      labelPrinter,
       quickCodes,
       productCategories,
     }
@@ -145,22 +99,9 @@ export interface SettingsStore {
   addChannel(name: string): void
   renameChannel(oldName: string, newName: string): void
   removeChannel(name: string): void
-  setPrinterKind(kind: PrinterKind): void
-  setPolonoPrintRotation(rotation: PolonoPrintRotation): void
-  setLabelTemplate(template: LabelTemplate): void
-  resetLabelTemplate(): void
-  setPolonoLabelTemplate(template: LabelTemplate): void
-  resetPolonoLabelTemplate(): void
-  /**
-   * Saves the label template passed in as a named preset — a new one if no
-   * existing preset has that name (case-insensitively), or overwriting the
-   * matching one if one does. Does not change what's currently live/editing.
-   */
-  saveLabelPreset(name: string, template: LabelTemplate): void
-  /** Copies a saved preset's layout over the live/editing template. */
-  applyLabelPreset(id: string): void
-  renameLabelPreset(id: string, newName: string): void
-  deleteLabelPreset(id: string): void
+  setBarcodeLabelLayout(layout: BarcodeLabelLayout): void
+  resetBarcodeLabelLayout(): void
+  setLabelPrinter(printer: LabelPrinterSettings): void
   /** Adds a new saved reference code. Returns the id so the caller (the "add
    * code" form) can do something with it right away if needed. */
   addQuickCode(draft: QuickCodeDraft): string
@@ -176,14 +117,12 @@ export interface SettingsStore {
    * source (the account's synced settings in Supabase mode) in one write,
    * rather than three separate setter calls each triggering their own
    * persist/render — see `useSettingsSync`. Deliberately has no
-   * `printerKind`/`polonoLabelTemplate` fields — those are device-local, not
-   * part of the account's synced settings; see the `Settings` doc comments.
+   * `labelPrinter` field — that's device-local; see the `Settings` doc comments.
    */
   applyRemote(remote: {
     logoDataUrl?: string
-    labelTemplate?: LabelTemplate
+    barcodeLabelLayout?: BarcodeLabelLayout
     saleChannels?: string[]
-    labelPresets?: LabelPreset[]
     quickCodes?: QuickCode[]
     productCategories?: string[]
     paymentMethods?: { key: string; label: string }[]
@@ -236,70 +175,19 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
       persist()
     },
 
-    setPrinterKind(kind: PrinterKind) {
-      state = { ...state, printerKind: sanitisePrinterKind(kind) }
+    setBarcodeLabelLayout(layout: BarcodeLabelLayout) {
+      state = { ...state, barcodeLabelLayout: sanitiseBarcodeLabelLayout(layout) }
       persist()
     },
 
-    setPolonoPrintRotation(rotation: PolonoPrintRotation) {
-      state = { ...state, polonoPrintRotation: sanitisePolonoPrintRotation(rotation) }
-      persist()
-    },
-
-    setLabelTemplate(template: LabelTemplate) {
-      state = { ...state, labelTemplate: sanitiseLabelTemplate(template) }
-      persist()
-    },
-
-    resetLabelTemplate() {
-      // Only drops the override — the logo and channels are unrelated and must survive.
-      const { labelTemplate: _drop, ...rest } = state
+    resetBarcodeLabelLayout() {
+      const { barcodeLabelLayout: _drop, ...rest } = state
       state = rest
       persist()
     },
 
-    setPolonoLabelTemplate(template: LabelTemplate) {
-      state = { ...state, polonoLabelTemplate: sanitisePolonoLabelTemplate(template) }
-      persist()
-    },
-
-    resetPolonoLabelTemplate() {
-      const { polonoLabelTemplate: _drop, ...rest } = state
-      state = rest
-      persist()
-    },
-
-    saveLabelPreset(name: string, template: LabelTemplate) {
-      const trimmed = name.trim()
-      if (!trimmed) return
-      const sanitised = sanitiseLabelTemplate(template)
-      const existing = state.labelPresets.find((p) => p.name.toLowerCase() === trimmed.toLowerCase())
-      const labelPresets = existing
-        ? state.labelPresets.map((p) => (p.id === existing.id ? { ...p, template: sanitised } : p))
-        : [...state.labelPresets, { id: newId(), name: trimmed, template: sanitised }]
-      state = { ...state, labelPresets }
-      persist()
-    },
-
-    applyLabelPreset(id: string) {
-      const preset = state.labelPresets.find((p) => p.id === id)
-      if (!preset) return
-      state = { ...state, labelTemplate: sanitiseLabelTemplate(preset.template) }
-      persist()
-    },
-
-    renameLabelPreset(id: string, newName: string) {
-      const trimmed = newName.trim()
-      if (!trimmed) return
-      state = {
-        ...state,
-        labelPresets: state.labelPresets.map((p) => (p.id === id ? { ...p, name: trimmed } : p)),
-      }
-      persist()
-    },
-
-    deleteLabelPreset(id: string) {
-      state = { ...state, labelPresets: state.labelPresets.filter((p) => p.id !== id) }
+    setLabelPrinter(printer: LabelPrinterSettings) {
+      state = { ...state, labelPrinter: sanitiseLabelPrinterSettings(printer) }
       persist()
     },
 
@@ -360,8 +248,9 @@ export function createSettingsStore(storage: Storage = localStorage): SettingsSt
         ...state,
         ...(remote.logoDataUrl !== undefined ? { logoDataUrl: remote.logoDataUrl } : {}),
         ...(remote.saleChannels !== undefined ? { saleChannels: [...remote.saleChannels] } : {}),
-        ...(remote.labelTemplate !== undefined ? { labelTemplate: sanitiseLabelTemplate(remote.labelTemplate) } : {}),
-        ...(remote.labelPresets !== undefined ? { labelPresets: sanitisePresets(remote.labelPresets) } : {}),
+        ...(isBarcodeLabelLayout(remote.barcodeLabelLayout)
+          ? { barcodeLabelLayout: sanitiseBarcodeLabelLayout(remote.barcodeLabelLayout) }
+          : {}),
         ...(remote.quickCodes !== undefined ? { quickCodes: sanitiseQuickCodes(remote.quickCodes) } : {}),
         ...(remote.productCategories !== undefined
           ? {
