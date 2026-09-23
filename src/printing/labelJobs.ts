@@ -2,10 +2,17 @@ import type { Settings } from '../data/settingsStorage'
 import type { Product, Result } from '../domain/types'
 import { DEFAULT_BARCODE_LABEL_LAYOUT, type BarcodeLabelLayout } from './barcodeLabelLayout'
 import { planBarcodeLabel, type LabelContent, type LabelWarning } from './barcodeLabelPlan'
-import { LABEL_MEDIA, type LabelSize } from './labelMedia'
+import { LABEL_MEDIA, POLONO_DPI, type LabelSize } from './labelMedia'
 import { printLabelPage } from './labelPrint'
-import { DEFAULT_LABEL_PRINTER_SETTINGS } from './labelPrinterSettings'
-import { applyCalibration, canvasMeasure, loadImage, paintAlignmentTest, paintLabelPlan } from './labelRaster'
+import { DEFAULT_LABEL_PRINTER_SETTINGS, headWidthDots } from './labelPrinterSettings'
+import {
+  applyCalibration,
+  canvasMeasure,
+  loadImage,
+  paintAlignmentTest,
+  paintLabelPlan,
+  paintRulerTest,
+} from './labelRaster'
 
 /**
  * The few things the rest of the app calls to print. Each one renders the
@@ -46,7 +53,7 @@ async function printCanvas(
   copies: number,
 ): Promise<Result<true>> {
   const printer = printerFor(settings)
-  const page = applyCalibration(canvas, LABEL_MEDIA[size], printer.calibration[size])
+  const page = applyCalibration(canvas, printer.calibration[size], headWidthDots(printer))
   return printLabelPage(page, { copies, ...(printer.printerName ? { printerName: printer.printerName } : {}) })
 }
 
@@ -84,6 +91,24 @@ export async function printShippingLabel(canvas: HTMLCanvasElement, settings: Se
 export async function printAlignmentTest(size: LabelSize, settings: Settings): Promise<Result<true>> {
   try {
     return await printCanvas(paintAlignmentTest(LABEL_MEDIA[size]), size, settings, 1)
+  } catch (cause) {
+    return fail(cause)
+  }
+}
+
+/**
+ * Prints a millimetre ruler across the whole printhead on the loaded label
+ * (no calibration applied — this is what measures it).
+ */
+export async function printRulerTest(size: LabelSize, settings: Settings): Promise<Result<true>> {
+  try {
+    const printer = printerFor(settings)
+    const width = headWidthDots(printer)
+    const canvas = paintRulerTest(width, LABEL_MEDIA[size].heightDots)
+    return await printLabelPage(
+      { canvas, widthIn: width / POLONO_DPI, heightIn: LABEL_MEDIA[size].heightIn },
+      printer.printerName ? { printerName: printer.printerName } : {},
+    )
   } catch (cause) {
     return fail(cause)
   }

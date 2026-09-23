@@ -1,13 +1,19 @@
 import { useEffect, useId, useState } from 'react'
-import { printAlignmentTest } from '../../printing/labelJobs'
+import { printAlignmentTest, printRulerTest } from '../../printing/labelJobs'
 import { LABEL_MEDIA, LABEL_SIZES, dotsToMm, mmToDots, type LabelSize } from '../../printing/labelMedia'
 import { desktopPrinting, type LabelPrinterInfo } from '../../printing/labelPrint'
-import { DEFAULT_LABEL_PRINTER_SETTINGS, MAX_OFFSET_DOTS } from '../../printing/labelPrinterSettings'
-import type { LabelRotation, PrinterCalibration } from '../../printing/labelRaster'
+import {
+  DEFAULT_LABEL_PRINTER_SETTINGS,
+  HEAD_WIDTH_CHOICES,
+  MAX_OFFSET_DOTS,
+  headWidthDots,
+} from '../../printing/labelPrinterSettings'
+import { labelLeftOnPage, type LabelRotation, type PrinterCalibration } from '../../printing/labelRaster'
 import type { SettingsApi } from '../useSettings'
 
 const looksLikePolono = (p: LabelPrinterInfo) => /polono|pl[- ]?\d{2,3}/i.test(`${p.name} ${p.displayName}`)
 const round2 = (n: number) => Math.round(n * 100) / 100
+const roundHalf = (n: number) => Math.round(n * 2) / 2
 
 /**
  * Per-device printer settings: which printer (desktop app), and a nudge /
@@ -41,6 +47,14 @@ export function PrinterSetupPanel({ settings }: { settings: SettingsApi }) {
       ...printer,
       calibration: { ...printer.calibration, [size]: { ...printer.calibration[size], ...patch } },
     })
+
+  const ruler = async (size: LabelSize) => {
+    setStatus(`Printing a ruler on the ${LABEL_MEDIA[size].label}…`)
+    const result = await printRulerTest(size, settings)
+    setStatus(result.ok ? 'Ruler sent to the printer.' : `Print failed: ${result.error}`)
+  }
+
+  const headDots = headWidthDots(printer)
 
   const test = async (size: LabelSize) => {
     setStatus(`Printing ${LABEL_MEDIA[size].label} alignment test…`)
@@ -86,32 +100,71 @@ export function PrinterSetupPanel({ settings }: { settings: SettingsApi }) {
           </p>
           <ol className="muted">
             <li>Printer: your Polono</li>
-            <li>Paper size: the label you're printing (2 × 1 in or 4 × 6 in)</li>
+            <li>
+              Paper size: as wide as the printhead — 4 × 1 in for barcode labels, 4 × 6 in for shipping labels (add
+              a custom size in the dialog if it's missing)
+            </li>
             <li>Margins: None — Scale: 100% (not “Fit to page”)</li>
           </ol>
           <p className="muted">
-            Your browser remembers these. The CountRoom desktop app can print with no dialog at all.
+            Your browser remembers these. The CountRoom desktop app is more reliable — it sends the exact size with no dialog at all.
           </p>
         </div>
       )}
 
+      <div className="field">
+        <label htmlFor={`${id}-head`}>Printhead width</label>
+        <select
+          id={`${id}-head`}
+          value={printer.headWidthIn}
+          onChange={(e) => settings.setLabelPrinter({ ...printer, headWidthIn: Number(e.target.value) })}
+        >
+          {HEAD_WIDTH_CHOICES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <span className="hint">
+          Every label is sent to the printer this wide, with the label drawn where the roll actually sits — so a
+          2 in roll in a 4 in printer doesn't get cut in half.
+        </span>
+      </div>
+
       <div className="calibration-grid">
         {LABEL_SIZES.map((size) => {
           const cal = printer.calibration[size]
+          const media = LABEL_MEDIA[size]
+          const sideways = cal.rotation === 90 || cal.rotation === 270
+          const labelW = sideways ? media.heightDots : media.widthDots
+          const effectiveLeft = labelLeftOnPage(Math.max(headDots, labelW), labelW, cal.leftDots)
           return (
             <fieldset key={size} className="calibration-card">
-              <legend>{LABEL_MEDIA[size].label}</legend>
+              <legend>{media.label}</legend>
+              <ol className="muted calibration-steps">
+                <li>Load this label roll and press <strong>Print ruler</strong>.</li>
+                <li>
+                  Read the ruler at the label's <strong>left edge</strong> — e.g. if the edge is 2 mm before the
+                  “20”, that's 18.
+                </li>
+                <li>Type it below, then print the alignment test to check.</li>
+              </ol>
               <div className="label-inspector-grid">
                 <div className="field">
-                  <label htmlFor={`${id}-${size}-x`}>Shift right (mm)</label>
+                  <label htmlFor={`${id}-${size}-left`}>Label left edge (mm)</label>
                   <input
-                    id={`${id}-${size}-x`}
+                    id={`${id}-${size}-left`}
                     type="number"
-                    step={0.25}
-                    min={round2(-dotsToMm(MAX_OFFSET_DOTS))}
-                    max={round2(dotsToMm(MAX_OFFSET_DOTS))}
-                    value={round2(dotsToMm(cal.offsetX))}
-                    onChange={(e) => setCalibration(size, { offsetX: mmToDots(Number(e.target.value) || 0) })}
+                    inputMode="decimal"
+                    step={0.5}
+                    min={0}
+                    value={cal.leftDots === null ? '' : roundHalf(dotsToMm(cal.leftDots))}
+                    placeholder={`Centred (${roundHalf(dotsToMm(effectiveLeft))})`}
+                    onChange={(e) =>
+                      setCalibration(size, {
+                        leftDots: e.target.value === '' ? null : mmToDots(Math.max(0, Number(e.target.value) || 0)),
+                      })
+                    }
                   />
                 </div>
                 <div className="field">
@@ -140,16 +193,26 @@ export function PrinterSetupPanel({ settings }: { settings: SettingsApi }) {
                   </select>
                 </div>
               </div>
-              <button type="button" className="button" onClick={() => void test(size)}>
-                Print alignment test
-              </button>
+              <div className="checkbox-field-row">
+                <button type="button" className="button button-primary" onClick={() => void ruler(size)}>
+                  Print ruler
+                </button>
+                <button type="button" className="button" onClick={() => void test(size)}>
+                  Print alignment test
+                </button>
+                {cal.leftDots !== null && (
+                  <button type="button" className="button button-ghost" onClick={() => setCalibration(size, { leftDots: null })}>
+                    Back to centred
+                  </button>
+                )}
+              </div>
             </fieldset>
           )
         })}
       </div>
       <p className="hint">
-        The alignment test prints a box 1 mm inside the label edges. If it's off-centre, shift it; if it comes out
-        sideways or upside-down, rotate it. Leave everything at 0 if it already lines up.
+        The alignment test prints a box 1 mm inside the label edges. If it's still a little off, adjust the left
+        edge by that many mm. If it comes out sideways or upside-down, rotate it.
       </p>
       {status && (
         <p className="muted" role="status">

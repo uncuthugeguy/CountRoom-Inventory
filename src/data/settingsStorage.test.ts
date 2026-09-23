@@ -184,15 +184,27 @@ describe('label printer settings', () => {
     const store = createSettingsStore(storage)
     store.setLabelPrinter({
       printerName: 'POLONO PL60',
+      headWidthIn: 4.25,
       calibration: {
-        '2x1': { offsetX: 5, offsetY: -3, rotation: 180 },
-        '4x6': { offsetX: 5000, offsetY: 0, rotation: 45 as never },
+        '2x1': { leftDots: 150, offsetY: -3, rotation: 180 },
+        '4x6': { leftDots: -20, offsetY: 5000, rotation: 45 as never },
       },
     })
     const printer = createSettingsStore(storage).get().labelPrinter
     expect(printer.printerName).toBe('POLONO PL60')
-    expect(printer.calibration['2x1']).toEqual({ offsetX: 5, offsetY: -3, rotation: 180 })
-    expect(printer.calibration['4x6']).toEqual({ offsetX: 100, offsetY: 0, rotation: 0 })
+    expect(printer.headWidthIn).toBe(4.25)
+    expect(printer.calibration['2x1']).toEqual({ leftDots: 150, offsetY: -3, rotation: 180 })
+    expect(printer.calibration['4x6']).toEqual({ leftDots: 0, offsetY: 100, rotation: 0 })
+  })
+
+  it('drops the old left/right shift and defaults to a 4 in head with the label centred', () => {
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ labelPrinter: { calibration: { '2x1': { offsetX: 40, offsetY: 2, rotation: 0 } } } }),
+    )
+    const printer = createSettingsStore(storage).get().labelPrinter
+    expect(printer.headWidthIn).toBe(4)
+    expect(printer.calibration['2x1']).toEqual({ leftDots: null, offsetY: 2, rotation: 0 })
   })
 })
 

@@ -1,5 +1,5 @@
 import { labelFont, type LabelPlan, type MeasureText } from './barcodeLabelPlan'
-import type { LabelMedia } from './labelMedia'
+import { POLONO_DPI, dotsToMm, type LabelMedia } from './labelMedia'
 
 /**
  * Canvas side of label printing: paints a plan onto a bitmap that is exactly
@@ -14,16 +14,27 @@ import type { LabelMedia } from './labelMedia'
 
 export type LabelRotation = 0 | 90 | 180 | 270
 
+/**
+ * Where the label physically sits under the printhead, for one label size.
+ *
+ * Why this exists: the Polono's printhead is ~4 in wide, and the driver
+ * lines a narrower page up with the *left* end of the head — but a 2 in
+ * roll sits further in, wherever the paper guides put it. Sending a 2 in
+ * page therefore printed the left of the label onto thin air and left the
+ * right half of the real label blank. So the page sent to the printer is
+ * always the full head width, with the label drawn at the position the
+ * roll actually sits (measured once with the ruler test).
+ */
 export interface PrinterCalibration {
-  /** Shift everything right (+) or left (−), in dots. */
-  offsetX: number
+  /** Label's left edge, in dots from the printhead's left edge. `null` = centred on the head. */
+  leftDots: number | null
   /** Shift everything down (+) or up (−), in dots. */
   offsetY: number
   /** Turn the printed image — for drivers that feed the label sideways or upside-down. */
   rotation: LabelRotation
 }
 
-export const DEFAULT_CALIBRATION: PrinterCalibration = { offsetX: 0, offsetY: 0, rotation: 0 }
+export const DEFAULT_CALIBRATION: PrinterCalibration = { leftDots: null, offsetY: 0, rotation: 0 }
 
 export function createCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
@@ -151,31 +162,90 @@ export interface PrintPage {
   heightIn: number
 }
 
-/**
- * Applies this device's printer calibration (nudge + rotation) to a
- * finished label and returns it with the physical page size to print at.
- * Rotating by 90/270 swaps the page's width and height.
- */
-export function applyCalibration(label: HTMLCanvasElement, media: LabelMedia, cal: PrinterCalibration): PrintPage {
-  const W = media.widthDots
-  const H = media.heightDots
-  const sideways = cal.rotation === 90 || cal.rotation === 270
+/** Rotates a finished label by a multiple of 90°. */
+export function rotateCanvas(label: HTMLCanvasElement, rotation: LabelRotation): HTMLCanvasElement {
+  if (rotation === 0) return label
+  const W = label.width
+  const H = label.height
+  const sideways = rotation === 90 || rotation === 270
   const out = createCanvas(sideways ? H : W, sideways ? W : H)
   const ctx = context2d(out)
-  ctx.fillStyle = '#fff'
-  ctx.fillRect(0, 0, out.width, out.height)
   ctx.imageSmoothingEnabled = false
-  ctx.save()
-  if (cal.rotation === 90) ctx.setTransform(0, 1, -1, 0, H, 0)
-  else if (cal.rotation === 180) ctx.setTransform(-1, 0, 0, -1, W, H)
-  else if (cal.rotation === 270) ctx.setTransform(0, -1, 1, 0, 0, W)
-  ctx.drawImage(label, Math.round(cal.offsetX), Math.round(cal.offsetY))
-  ctx.restore()
-  return {
-    canvas: out,
-    widthIn: sideways ? media.heightIn : media.widthIn,
-    heightIn: sideways ? media.widthIn : media.heightIn,
+  if (rotation === 90) ctx.setTransform(0, 1, -1, 0, H, 0)
+  else if (rotation === 180) ctx.setTransform(-1, 0, 0, -1, W, H)
+  else ctx.setTransform(0, -1, 1, 0, 0, W)
+  ctx.drawImage(label, 0, 0)
+  return out
+}
+
+/** Where the label's left edge lands on a page `pageW` dots wide. */
+export function labelLeftOnPage(pageW: number, labelW: number, leftDots: number | null): number {
+  const room = Math.max(0, pageW - labelW)
+  if (leftDots === null) return Math.round(room / 2)
+  return Math.min(room, Math.max(0, Math.round(leftDots)))
+}
+
+/**
+ * Places a finished label on a page the full width of the printhead, at the
+ * position the roll sits, applying this device's rotation and vertical nudge.
+ */
+export function applyCalibration(
+  label: HTMLCanvasElement,
+  cal: PrinterCalibration,
+  headWidthDots: number,
+): PrintPage {
+  const turned = rotateCanvas(label, cal.rotation)
+  const pageW = Math.max(headWidthDots, turned.width)
+  const pageH = turned.height
+  const out = createCanvas(pageW, pageH)
+  const ctx = context2d(out)
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, pageW, pageH)
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(turned, labelLeftOnPage(pageW, turned.width, cal.leftDots), Math.round(cal.offsetY))
+  return { canvas: out, widthIn: pageW / POLONO_DPI, heightIn: pageH / POLONO_DPI }
+}
+
+/**
+ * A millimetre ruler across the whole printhead, printed on whatever label
+ * is loaded. The number at the label's left edge is where the roll sits —
+ * type it into Printer setup and every label lands exactly on the paper.
+ */
+export function paintRulerTest(headWidthDots: number, heightDots: number): HTMLCanvasElement {
+  const canvas = createCanvas(headWidthDots, heightDots)
+  const ctx = context2d(canvas)
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, headWidthDots, heightDots)
+  ctx.fillStyle = '#000'
+  const top = 10
+  ctx.fillRect(0, top, headWidthDots, 2)
+  const mmCount = Math.floor(dotsToMm(headWidthDots))
+  const numberPx = Math.max(16, Math.min(28, Math.round(heightDots / 8)))
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
+  for (let mm = 0; mm <= mmCount; mm++) {
+    const x = Math.round((mm / 25.4) * POLONO_DPI)
+    const len = mm % 10 === 0 ? 46 : mm % 5 === 0 ? 30 : 16
+    ctx.fillRect(Math.min(x, headWidthDots - 2), top, 2, len)
+    if (mm % 5 === 0 && mm > 0) {
+      ctx.font = labelFont(mm % 10 === 0 ? numberPx : Math.round(numberPx * 0.75), mm % 10 === 0)
+      ctx.fillText(String(mm), x, top + len + 4)
+    }
   }
+  // A second, bolder scale lower down, numbered every 10 mm, in case the top
+  // of the label is hard to read.
+  const y2 = Math.round(heightDots * 0.62)
+  ctx.fillRect(0, y2, headWidthDots, 2)
+  ctx.font = labelFont(numberPx, true)
+  for (let mm = 0; mm <= mmCount; mm += 2) {
+    const x = Math.round((mm / 25.4) * POLONO_DPI)
+    ctx.fillRect(Math.min(x, headWidthDots - 2), y2, 2, mm % 10 === 0 ? 30 : 12)
+    if (mm % 10 === 0 && mm > 0 && y2 + 34 + numberPx <= heightDots) ctx.fillText(String(mm), x, y2 + 34)
+  }
+  const img = ctx.getImageData(0, 0, headWidthDots, heightDots)
+  thresholdPixels(img.data)
+  ctx.putImageData(img, 0, 0)
+  return canvas
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
