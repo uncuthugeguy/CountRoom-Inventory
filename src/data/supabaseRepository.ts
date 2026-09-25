@@ -505,6 +505,42 @@ const uniqueViolationMessage = (error: {
  * assuming the value's magnitude — a `null` here means "hidden from you",
  * not "zero".
  */
+/** Rows per request when paging through a whole table. Matches Supabase's
+ * default API max-rows cap, so a page is never silently cut short. */
+const PAGE_SIZE = 1000
+
+/** Reads every row a query matches, a page at a time. Sales, returns and
+ * stock movements used to stop at the newest 500, so any report range
+ * reaching further back than that quietly left sales out. `build` must
+ * apply a stable order so pages don't overlap or skip. */
+export async function fetchAllPages<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build(from, from + PAGE_SIZE - 1)
+    if (error) throw new Error(error.message)
+    const page = (data ?? []) as T[]
+    rows.push(...page)
+    if (page.length < PAGE_SIZE) return rows
+  }
+}
+
+/** Runs an `.in(column, ids)` lookup in batches — thousands of ids in one
+ * request overflow the URL length limit — and pages within each batch. */
+export async function fetchByIds<T>(
+  ids: string[],
+  build: (chunk: string[], from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+  chunkSize = 200,
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    rows.push(...(await fetchAllPages<T>((from, to) => build(chunk, from, to))))
+  }
+  return rows
+}
+
 export async function createSupabaseRepository(url: string, anonKey: string): Promise<InventoryRepository> {
   const db: SupabaseClient = getSupabaseClient(url, anonKey)
 
@@ -610,13 +646,15 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     },
 
     async listMovements() {
-      const { data, error } = await db
-        .from('stock_movements')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500)
-      if (error) throw new Error(error.message)
-      return (data as MovementRow[]).map(toMovement)
+      const rows = await fetchAllPages<MovementRow>((from, to) =>
+        db
+          .from('stock_movements')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
+      return rows.map(toMovement)
     },
 
     async createProduct(draft): Promise<Result<Product>> {
@@ -784,23 +822,24 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     },
 
     async listSales() {
-      const { data: saleRows, error } = await db
-        .from('sales_view')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500)
-      if (error) throw new Error(error.message)
-      const sales = saleRows as SaleRow[]
+      const sales = await fetchAllPages<SaleRow>((from, to) =>
+        db
+          .from('sales_view')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
       if (sales.length === 0) return []
 
-      const { data: itemRows, error: itemsError } = await db
-        .from('sale_items_view')
-        .select('*')
-        .in('sale_id', sales.map((s) => s.id))
-      if (itemsError) throw new Error(itemsError.message)
+      const itemRows = await fetchByIds<SaleItemRow>(
+        sales.map((s) => s.id),
+        (chunk, from, to) =>
+          db.from('sale_items_view').select('*').in('sale_id', chunk).order('id', { ascending: true }).range(from, to),
+      )
 
       const bySale = new Map<string, SaleLine[]>()
-      for (const row of itemRows as SaleItemRow[]) {
+      for (const row of itemRows) {
         const line = toSaleLine(row)
         const list = bySale.get(line.saleId) ?? []
         list.push(line)
@@ -922,23 +961,25 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     },
 
     async listReturns() {
-      const { data: returnRows, error } = await db
-        .from('returns')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500)
-      if (error) throw new Error(error.message)
-      const returns = returnRows as ReturnRow[]
+      const returns = await fetchAllPages<ReturnRow>((from, to) =>
+        db
+          .from('returns')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
       if (returns.length === 0) return []
 
       const returnIds = returns.map((r) => r.id)
-      const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
-        await Promise.all([
-          db.from('return_lines_view').select('*').in('return_id', returnIds),
-          db.from('replacement_lines_view').select('*').in('return_id', returnIds),
-        ])
-      if (linesError) throw new Error(linesError.message)
-      if (replacementError) throw new Error(replacementError.message)
+      const [lineRows, replacementRows] = await Promise.all([
+        fetchByIds<ReturnLineRow>(returnIds, (chunk, from, to) =>
+          db.from('return_lines_view').select('*').in('return_id', chunk).order('id', { ascending: true }).range(from, to),
+        ),
+        fetchByIds<ReplacementLineRow>(returnIds, (chunk, from, to) =>
+          db.from('replacement_lines_view').select('*').in('return_id', chunk).order('id', { ascending: true }).range(from, to),
+        ),
+      ])
 
       const linesByReturn = new Map<string, ReturnLine[]>()
       for (const row of lineRows as ReturnLineRow[]) {
