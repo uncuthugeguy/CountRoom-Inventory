@@ -230,7 +230,7 @@ const returnCase = (overrides: Partial<ReturnCase> & { id: string }): ReturnCase
 })
 
 describe('returnImpact', () => {
-  it('sums refund, goodwill, write-off loss and replacement cost', () => {
+  it('nets refund, goodwill and replacement cost against restocked stock (write-offs already expensed at sale)', () => {
     const rc = returnCase({
       id: 'r1',
       refundAmount: 10,
@@ -247,8 +247,9 @@ describe('returnImpact', () => {
       refundTotal: 10,
       goodwillTotal: 5,
       writeOffLoss: 4,
+      restockedValue: 1.5,
       replacementCost: 1,
-      totalCost: 20,
+      totalCost: 14.5,
     })
   })
 })
@@ -278,8 +279,9 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       refundTotal: 10,
       goodwillTotal: 5,
       writeOffLoss: 0,
+      restockedValue: 4,
       replacementCost: 0,
-      totalCost: 15,
+      totalCost: 11,
       itemsRestocked: 2,
       itemsWrittenOff: 0,
     })
@@ -291,6 +293,7 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       refundTotal: 0,
       goodwillTotal: 0,
       writeOffLoss: 0,
+      restockedValue: 0,
       replacementCost: 0,
       totalCost: 0,
       itemsRestocked: 0,

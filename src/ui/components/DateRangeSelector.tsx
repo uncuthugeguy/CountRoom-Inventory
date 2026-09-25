@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { DateRange } from '../../domain/reports'
+import { localDateKey, type DateRange } from '../../domain/reports'
 
 interface DateRangeSelectorProps {
   value: DateRange
@@ -8,12 +8,13 @@ interface DateRangeSelectorProps {
 
 type PredefinedRange = 'today' | 'week' | 'month' | '3months' | 'year' | 'all' | 'custom'
 
-/** Calculate date ranges for common periods */
-function getPredefinedRange(type: PredefinedRange): DateRange | null {
+/** Calculate date ranges for common periods — local calendar days, both
+ * ends inclusive. */
+export function getPredefinedRange(type: PredefinedRange): DateRange | null {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  const end = today.toISOString().split('T')[0]
+  const end = localDateKey(today)
   let start: string
 
   switch (type) {
@@ -22,31 +23,32 @@ function getPredefinedRange(type: PredefinedRange): DateRange | null {
       break
     case 'week': {
       const weekAgo = new Date(today)
-      weekAgo.setDate(weekAgo.getDate() - 7)
-      start = weekAgo.toISOString().split('T')[0]
+      // Today plus the 6 days before it = 7 days, matching the label.
+      weekAgo.setDate(weekAgo.getDate() - 6)
+      start = localDateKey(weekAgo)
       break
     }
     case 'month': {
       const monthAgo = new Date(today)
       monthAgo.setMonth(monthAgo.getMonth() - 1)
-      start = monthAgo.toISOString().split('T')[0]
+      start = localDateKey(monthAgo)
       break
     }
     case '3months': {
       const threeMonthsAgo = new Date(today)
       threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-      start = threeMonthsAgo.toISOString().split('T')[0]
+      start = localDateKey(threeMonthsAgo)
       break
     }
     case 'year': {
       const yearAgo = new Date(today)
       yearAgo.setFullYear(yearAgo.getFullYear() - 1)
-      start = yearAgo.toISOString().split('T')[0]
+      start = localDateKey(yearAgo)
       break
     }
     case 'all':
       // Arbitrarily start from 10 years ago
-      start = new Date(today.getFullYear() - 10, 0, 1).toISOString().split('T')[0]
+      start = localDateKey(new Date(today.getFullYear() - 10, 0, 1))
       break
     case 'custom':
       return null

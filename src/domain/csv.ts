@@ -116,7 +116,7 @@ export function returnsToCsv(cases: ReturnCase[]): string {
     { label: 'Goodwill Type', value: (r) => r.goodwillType },
     { label: 'Goodwill Value', value: (r) => r.goodwillValue.toFixed(2) },
     { label: 'Write-off Loss', value: (r) => returnImpact(r).writeOffLoss.toFixed(2) },
-    { label: 'Total Cost', value: (r) => returnImpact(r).totalCost.toFixed(2) },
+    { label: 'Net Cost to Profit', value: (r) => returnImpact(r).totalCost.toFixed(2) },
     { label: 'Reason', value: (r) => r.reason },
     { label: 'Notes', value: (r) => r.notes },
   ]

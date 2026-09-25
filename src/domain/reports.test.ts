@@ -6,6 +6,10 @@ import {
   generateMovementReport,
   saleInDateRange,
   movementInDateRange,
+  localDateKey,
+  saleDay,
+  saleRevenue,
+  saleFeesDeducted,
 } from './reports'
 import type { Sale, Product, StockMovement } from './types'
 
@@ -61,23 +65,23 @@ describe('Reporting', () => {
         subtotal: 100,
         totalCost: 50,
         profit: 50,
-        createdAt: '2026-01-15T10:00:00Z',
+        createdAt: '2026-01-15T10:00:00',
         lines: [],
       }
       const endSale: Sale = {
         ...startSale,
         id: '2',
-        createdAt: '2026-01-20T23:59:59Z',
+        createdAt: '2026-01-20T23:59:59',
       }
       const beforeSale: Sale = {
         ...startSale,
         id: '3',
-        createdAt: '2026-01-14T23:59:59Z',
+        createdAt: '2026-01-14T23:59:59',
       }
       const afterSale: Sale = {
         ...startSale,
         id: '4',
-        createdAt: '2026-01-21T00:00:00Z',
+        createdAt: '2026-01-21T00:00:00',
       }
 
       expect(saleInDateRange(startSale, range)).toBe(true)
@@ -95,11 +99,11 @@ describe('Reporting', () => {
         delta: 10,
         previousQuantity: 0,
         newQuantity: 10,
-        createdAt: '2026-01-17T10:00:00Z',
+        createdAt: '2026-01-17T10:00:00',
       }
       expect(movementInDateRange(movement, range)).toBe(true)
 
-      const before = { ...movement, createdAt: '2026-01-14T10:00:00Z' }
+      const before = { ...movement, createdAt: '2026-01-14T10:00:00' }
       expect(movementInDateRange(before, range)).toBe(false)
     })
   })
@@ -680,6 +684,68 @@ describe('Reporting', () => {
       const deleted = report.topProducts.find((tp) => tp.productId === 'deleted-product')
       expect(deleted?.name).toBe('Deleted product')
       expect(deleted?.sku).toBe('—')
+    })
+  })
+
+  describe('calculation fixes (Sept 2026 audit)', () => {
+    const line = (overrides: Partial<Sale['lines'][number]> = {}): Sale['lines'][number] => ({
+      id: 'l', saleId: 's', productId: 'p', sku: 'SKU', name: 'Item',
+      quantity: 1, unitPrice: 23.53, unitCost: 3.37, lineTotal: 23.53, lineProfit: 20.16, ...overrides,
+    })
+
+    it('localDateKey uses the local calendar day, not the UTC one', () => {
+      // 00:30 local on 24 Sept — toISOString() would give the 23rd in BST.
+      expect(localDateKey(new Date(2026, 8, 24, 0, 30))).toBe('2026-09-24')
+      expect(localDateKey(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
+    })
+
+    it('puts a Register-backdated sale on its chosen day', () => {
+      const base = { createdAt: new Date(2026, 8, 23, 12).toISOString() }
+      expect(saleDay({ ...base, backdated: true, saleDate: '2026-08-03' })).toBe('2026-08-03')
+      expect(saleDay({ ...base, backdated: false, saleDate: '2026-08-03' })).toBe('2026-09-23')
+      expect(saleDay(base)).toBe('2026-09-23')
+    })
+
+    it('counts a Register sale at its VAT-inclusive price, not its ex-VAT subtotal', () => {
+      // Shape of a real Register row: subtotal stored ex-VAT (23.53 / 1.2),
+      // vat = output VAT, eBay's own VAT (0.57) already inside profit.
+      const registerSale: Sale = {
+        id: 's', channel: 'eBay', paymentMethod: 'card', subtotal: 19.61, vat: 3.92,
+        totalCost: 3.37, profit: 19.59, createdAt: new Date(2026, 8, 23, 12).toISOString(),
+        lines: [line()],
+      }
+      expect(saleRevenue(registerSale)).toBeCloseTo(23.53, 2)
+      // Fees = revenue − cost − profit = eBay VAT only, NOT Register's output VAT.
+      expect(saleFeesDeducted(registerSale)).toBeCloseTo(0.57, 2)
+
+      const report = generateSalesReport([registerSale], { dateRange: { start: '2026-09-23', end: '2026-09-23' } })
+      expect(report.overall.totalRevenue).toBeCloseTo(23.53, 2)
+      expect(report.overall.totalProfit).toBeCloseTo(19.59, 2)
+      expect(report.overall.feesDeducted).toBeCloseTo(0.57, 2)
+      expect(report.overall.profitMargin).toBeCloseTo((19.59 / 23.53) * 100, 2)
+    })
+
+    it('derives the same fees as checkout_sale() for an Inventory sale', () => {
+      // Real Inventory row: 76.25 sale, 5.28 cost, 8.56 ads, 0.49 eBay VAT,
+      // buyer-paid fees → profit 61.92.
+      const inventorySale: Sale = {
+        id: 'i', channel: 'eBay', paymentMethod: 'card', subtotal: 76.25, totalCost: 5.28, profit: 61.92,
+        vat: 0.49, advertisingCost: 8.56, buyerProtectionFee: 3.75, buyerProtectionFeePaidBy: 'buyer',
+        deliveryCost: 2.45, deliveryPaidBy: 'buyer', createdAt: new Date(2026, 7, 15, 12).toISOString(),
+        lines: [line({ unitPrice: 76.25, unitCost: 5.28, lineTotal: 76.25, lineProfit: 70.97 })],
+      }
+      expect(saleFeesDeducted(inventorySale)).toBeCloseTo(calculateSellerPaidFees(inventorySale), 2)
+    })
+
+    it('does not reorder the top-products list when building bottom products', () => {
+      const mk = (id: string, profit: number): Sale => ({
+        id, channel: 'eBay', paymentMethod: 'card', subtotal: 10, totalCost: 10 - profit, profit,
+        createdAt: new Date(2026, 8, 23, 12).toISOString(),
+        lines: [line({ productId: id, sku: id, name: id, lineTotal: 10, lineProfit: profit })],
+      })
+      const report = generateSalesReport([mk('a', 1), mk('b', 5), mk('c', 3)], { dateRange: { start: '2026-09-23', end: '2026-09-23' } })
+      expect(report.topProducts.map((p) => p.sku)).toEqual(['b', 'c', 'a'])
+      expect(report.bottomProducts.map((p) => p.sku)).toEqual(['a', 'c', 'b'])
     })
   })
 })

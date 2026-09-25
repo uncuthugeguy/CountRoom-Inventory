@@ -255,10 +255,17 @@ export function validateReturnCaseInput(input: ReturnCaseInput): Result<true> {
 export interface ReturnImpact {
   refundTotal: number
   goodwillTotal: number
+  /** Cost value of returned stock that didn't come back sellable — shown
+   * for information; NOT added to totalCost (see below). */
   writeOffLoss: number
+  /** Cost value of returned stock put back on the shelf. */
+  restockedValue: number
   replacementCost: number
-  /** What this case cost the business overall — refunds and goodwill paid
-   * out, plus the cost value of stock that didn't come back sellable. */
+  /** What this case took off profit: refunds + goodwill + replacements sent
+   * − stock recovered. A returned item's cost was already deducted from the
+   * original sale's profit when it sold, so a written-off item costs
+   * nothing extra here (counting it again double-counted it), and a
+   * restocked one gives that cost back. */
   totalCost: number
 }
 
@@ -268,14 +275,18 @@ export function returnImpact(
   const writeOffLoss = rc.returnLines
     .filter((line) => line.disposition === 'writeoff')
     .reduce((sum, line) => sum + line.unitCost * line.quantity, 0)
+  const restockedValue = rc.returnLines
+    .filter((line) => line.disposition === 'restock')
+    .reduce((sum, line) => sum + line.unitCost * line.quantity, 0)
   const replacementCost = rc.replacementLines.reduce((sum, line) => sum + line.unitCost * line.quantity, 0)
 
   return {
     refundTotal: rc.refundAmount,
     goodwillTotal: rc.goodwillValue,
     writeOffLoss,
+    restockedValue,
     replacementCost,
-    totalCost: rc.refundAmount + rc.goodwillValue + writeOffLoss + replacementCost,
+    totalCost: rc.refundAmount + rc.goodwillValue + replacementCost - restockedValue,
   }
 }
 
@@ -284,6 +295,7 @@ export interface ReturnsSummary {
   refundTotal: number
   goodwillTotal: number
   writeOffLoss: number
+  restockedValue: number
   replacementCost: number
   totalCost: number
   itemsRestocked: number
@@ -295,6 +307,7 @@ const EMPTY_SUMMARY: ReturnsSummary = {
   refundTotal: 0,
   goodwillTotal: 0,
   writeOffLoss: 0,
+  restockedValue: 0,
   replacementCost: 0,
   totalCost: 0,
   itemsRestocked: 0,
@@ -309,6 +322,7 @@ export function summariseReturns(cases: ReturnCase[]): ReturnsSummary {
       refundTotal: totals.refundTotal + impact.refundTotal,
       goodwillTotal: totals.goodwillTotal + impact.goodwillTotal,
       writeOffLoss: totals.writeOffLoss + impact.writeOffLoss,
+      restockedValue: totals.restockedValue + impact.restockedValue,
       replacementCost: totals.replacementCost + impact.replacementCost,
       totalCost: totals.totalCost + impact.totalCost,
       itemsRestocked:

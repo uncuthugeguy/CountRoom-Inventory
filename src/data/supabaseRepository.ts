@@ -116,6 +116,10 @@ interface SaleRow {
   vat?: number | null
   advertising_cost?: number | null
   order_total?: number | null
+  // Added to sales_view alongside Register's backdating — absent until
+  // that migration is applied, which reads as "not backdated".
+  sale_date?: string | null
+  backdated?: boolean | null
 }
 
 interface SaleItemRow {
@@ -303,6 +307,8 @@ const toSale = (row: SaleRow, lines: SaleLine[]): Sale => ({
   vat: row.vat ?? undefined,
   advertisingCost: row.advertising_cost ?? undefined,
   orderTotal: row.order_total ?? undefined,
+  saleDate: row.sale_date ?? undefined,
+  backdated: row.backdated ?? undefined,
   lines,
 })
 

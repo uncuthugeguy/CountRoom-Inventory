@@ -1,4 +1,5 @@
 import type { Product, Sale } from './types'
+import { localDateKey } from './reports'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
@@ -10,8 +11,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
  * defaults to the real clock but is a parameter so callers/tests can pin it.
  */
 export function rollingDateRange(days: number, now: Date = new Date()): { start: string; end: string } {
-  const end = now.toISOString().split('T')[0]
-  const start = new Date(now.getTime() - days * MS_PER_DAY).toISOString().split('T')[0]
+  // Local calendar days (see localDateKey) — the UTC day was a day behind
+  // for the first hour after midnight during BST.
+  const end = localDateKey(now)
+  const start = localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - days))
   return { start, end }
 }
 

@@ -5,7 +5,7 @@ import type { Product, Sale, StockMovement } from '../../domain/types'
 import { SalesReportView } from '../components/SalesReportView'
 import { InventoryReportView } from '../components/InventoryReportView'
 import { MovementReportView } from '../components/MovementReportView'
-import { DateRangeSelector } from '../components/DateRangeSelector'
+import { DateRangeSelector, getPredefinedRange } from '../components/DateRangeSelector'
 
 type ReportType = 'sales' | 'inventory' | 'movements'
 
@@ -17,17 +17,9 @@ export interface ReportsScreenProps {
 
 export function ReportsScreen({ products, sales, movements }: ReportsScreenProps) {
   const [reportType, setReportType] = useState<ReportType>('sales')
-  const [dateRange, setDateRange] = useState<DateRange>(() => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const end = today.toISOString().split('T')[0]
-
-    const monthAgo = new Date(today)
-    monthAgo.setMonth(monthAgo.getMonth() - 1)
-    const start = monthAgo.toISOString().split('T')[0]
-
-    return { start, end }
-  })
+  // Same "Last month" range the selector's own preset produces, so the
+  // default highlights that chip (and, like it, includes today).
+  const [dateRange, setDateRange] = useState<DateRange>(() => getPredefinedRange('month')!)
 
   const salesReport = useMemo(
     () => generateSalesReport(sales, { dateRange }),

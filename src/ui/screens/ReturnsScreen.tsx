@@ -137,7 +137,7 @@ function ReturnDetailDialog({
           Goodwill: {formatCurrency(rc.goodwillValue)} ({rc.goodwillType || 'unspecified'})
         </p>
       )}
-      {isManager && <p className="muted">Total cost to business: {formatCurrency(impact.totalCost)}</p>}
+      {isManager && <p className="muted">Net cost to profit (after restocked stock): {formatCurrency(impact.totalCost)}</p>}
 
       <div className="dialog-actions">
         {isManager && (
@@ -787,7 +787,7 @@ export function ReturnsScreen({
           {isManager && (
             <div className="stat" data-testid="returns-total-cost">
               <span className="stat-value">{formatCurrency(summary.totalCost)}</span>
-              <span className="stat-label">Total cost</span>
+              <span className="stat-label">Net cost to profit</span>
             </div>
           )}
         </section>

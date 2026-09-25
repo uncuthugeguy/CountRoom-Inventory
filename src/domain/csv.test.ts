@@ -216,10 +216,10 @@ describe('returnsToCsv', () => {
   it('exports the case columns with items and financial impact resolved', () => {
     const lines = returnsToCsv([returnCase]).split('\r\n')
     expect(lines[0]).toBe(
-      'Timestamp,Channel,Customer,Actions,Returned Items,Replacement Items,Refund Amount,Refund Method,Goodwill Type,Goodwill Value,Write-off Loss,Total Cost,Reason,Notes',
+      'Timestamp,Channel,Customer,Actions,Returned Items,Replacement Items,Refund Amount,Refund Method,Goodwill Type,Goodwill Value,Write-off Loss,Net Cost to Profit,Reason,Notes',
     )
     expect(lines[1]).toBe(
-      '2026-02-02T10:00:00.000Z,eBay,jane@example.com,Refund; Return,2x BLT-M6 (writeoff),,12.50,Card,,0.00,4.00,16.50,Faulty,',
+      '2026-02-02T10:00:00.000Z,eBay,jane@example.com,Refund; Return,2x BLT-M6 (writeoff),,12.50,Card,,0.00,4.00,12.50,Faulty,',
     )
   })
 

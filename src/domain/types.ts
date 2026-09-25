@@ -227,6 +227,10 @@ export interface Sale extends SaleFeesFields {
   createdAt: string
   /** Set once this sale has been edited after the fact — absent otherwise. */
   updatedAt?: string
+  /** The day a sale was logged against (YYYY-MM-DD). Only differs from
+   * createdAt's own day for a sale CountRoom Register backdated. */
+  saleDate?: string
+  backdated?: boolean
   lines: SaleLine[]
 }
 

@@ -130,19 +130,57 @@ export interface MovementReport {
 // CALCULATION HELPERS
 // ============================================================================
 
+/** A moment's calendar day (YYYY-MM-DD) in the device's own timezone.
+ * Slicing `toISOString()` gives the UTC day instead, which during British
+ * Summer Time puts anything between midnight and 1am on the previous day —
+ * and made every preset range end yesterday. */
+export function localDateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** The day a sale counts towards: the manager-chosen day for a sale
+ * CountRoom Register backdated, otherwise the local day it was made. */
+export function saleDay(sale: Pick<Sale, 'createdAt' | 'saleDate' | 'backdated'>): string {
+  if (sale.backdated && sale.saleDate) return sale.saleDate
+  return localDateKey(new Date(sale.createdAt))
+}
+
 /** Checks if a sale falls within the date range. */
 export function saleInDateRange(sale: Sale, range: DateRange): boolean {
-  const saleDate = sale.createdAt.split('T')[0]
-  return saleDate >= range.start && saleDate <= range.end
+  const day = saleDay(sale)
+  return day >= range.start && day <= range.end
 }
 
 /** Checks if a movement falls within the date range. */
 export function movementInDateRange(movement: StockMovement, range: DateRange): boolean {
-  const movDate = movement.createdAt.split('T')[0]
+  const movDate = localDateKey(new Date(movement.createdAt))
   return movDate >= range.start && movDate <= range.end
 }
 
-/** Calculates total fees deducted from a sale (seller-paid only). */
+/** What the buyer paid for the goods in a sale — the sum of its line
+ * totals. Deliberately not `subtotal`: CountRoom Register writes into the
+ * same table but stores subtotal ex-VAT, while this app stores it
+ * VAT-inclusive, so subtotal under-reported every Register sale by a
+ * sixth. Line totals mean the same thing from both apps. */
+export function saleRevenue(sale: Sale): number {
+  if (sale.lines.length === 0) return sale.subtotal
+  return sale.lines.reduce((sum, l) => sum + l.lineTotal, 0)
+}
+
+/** Everything between gross profit and the recorded profit — seller-paid
+ * marketplace fees, eBay's VAT, advertising. Derived from the recorded
+ * figures rather than re-added from fee columns, because the `vat` column
+ * means eBay's VAT on fees here but output VAT on a Register sale (whose
+ * eBay VAT lives in a separate column this app doesn't read). */
+export function saleFeesDeducted(sale: Sale): number {
+  return saleRevenue(sale) - (sale.totalCost ?? 0) - (sale.profit ?? 0)
+}
+
+/** Calculates total fees deducted from a sale (seller-paid only), from this
+ * app's own fee fields — matches checkout_sale()'s profit deduction. */
 export function calculateSellerPaidFees(fees: SaleFeesFields): number {
   let total = fees.vat ?? 0
   total += fees.advertisingCost ?? 0
@@ -184,10 +222,10 @@ export function generateSalesReport(sales: Sale[], filters: ReportFilters): Sale
   }
 
   // Overall metrics
-  const totalRevenue = filtered.reduce((sum, s) => sum + s.subtotal, 0)
-  const totalCost = filtered.reduce((sum, s) => sum + s.totalCost, 0)
-  const totalProfit = filtered.reduce((sum, s) => sum + s.profit, 0)
-  const feesDeducted = filtered.reduce((sum, s) => sum + calculateSellerPaidFees(s), 0)
+  const totalRevenue = filtered.reduce((sum, s) => sum + saleRevenue(s), 0)
+  const totalCost = filtered.reduce((sum, s) => sum + (s.totalCost ?? 0), 0)
+  const totalProfit = filtered.reduce((sum, s) => sum + (s.profit ?? 0), 0)
+  const feesDeducted = filtered.reduce((sum, s) => sum + saleFeesDeducted(s), 0)
   const itemsUnitsSold = filtered.reduce((sum, s) => sum + s.lines.reduce((lineSum, l) => lineSum + l.quantity, 0), 0)
 
   const overall: SalesMetrics = {
@@ -212,10 +250,10 @@ export function generateSalesReport(sales: Sale[], filters: ReportFilters): Sale
       return map
     }, new Map<string, Sale[]>()),
   ).map(([channel, channelSales]): ChannelMetrics => {
-    const channelRevenue = channelSales.reduce((sum, s) => sum + s.subtotal, 0)
-    const channelCost = channelSales.reduce((sum, s) => sum + s.totalCost, 0)
-    const channelProfit = channelSales.reduce((sum, s) => sum + s.profit, 0)
-    const channelFees = channelSales.reduce((sum, s) => sum + calculateSellerPaidFees(s), 0)
+    const channelRevenue = channelSales.reduce((sum, s) => sum + saleRevenue(s), 0)
+    const channelCost = channelSales.reduce((sum, s) => sum + (s.totalCost ?? 0), 0)
+    const channelProfit = channelSales.reduce((sum, s) => sum + (s.profit ?? 0), 0)
+    const channelFees = channelSales.reduce((sum, s) => sum + saleFeesDeducted(s), 0)
     const channelUnits = channelSales.reduce((sum, s) => sum + s.lines.reduce((lineSum, l) => lineSum + l.quantity, 0), 0)
 
     return {
@@ -262,12 +300,8 @@ export function generateSalesReport(sales: Sale[], filters: ReportFilters): Sale
   }
 
   const products = Array.from(productMetrics.values())
-  const topProducts = products
-    .sort((a, b) => b.profit - a.profit)
-    .slice(0, 5)
-  const bottomProducts = products
-    .sort((a, b) => a.profit - b.profit)
-    .slice(0, 5)
+  const topProducts = [...products].sort((a, b) => b.profit - a.profit).slice(0, 5)
+  const bottomProducts = [...products].sort((a, b) => a.profit - b.profit).slice(0, 5)
 
   return {
     period: filters.dateRange,
