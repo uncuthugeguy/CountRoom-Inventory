@@ -120,6 +120,8 @@ interface SaleRow {
   // that migration is applied, which reads as "not backdated".
   sale_date?: string | null
   backdated?: boolean | null
+  // Added to sales_view 2026-09-27 (supabase/sales_view_order_number_migration.sql).
+  order_number?: string | null
 }
 
 interface SaleItemRow {
@@ -147,6 +149,8 @@ interface ReturnRow {
   refund_method: PaymentMethod | null
   goodwill_type: string
   goodwill_value: number
+  // Added 2026-09-27 (supabase/return_postage_cost_migration.sql).
+  return_postage_cost?: number | null
   created_at: string
   updated_at?: string | null
 }
@@ -309,6 +313,7 @@ const toSale = (row: SaleRow, lines: SaleLine[]): Sale => ({
   orderTotal: row.order_total ?? undefined,
   saleDate: row.sale_date ?? undefined,
   backdated: row.backdated ?? undefined,
+  orderNumber: row.order_number ?? undefined,
   lines,
 })
 
@@ -360,6 +365,7 @@ const toReturnCase = (
   refundMethod: row.refund_method,
   goodwillType: row.goodwill_type,
   goodwillValue: row.goodwill_value,
+  returnPostageCost: row.return_postage_cost ?? 0,
   returnLines,
   replacementLines,
   createdAt: row.created_at,
@@ -1024,6 +1030,18 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (error) return { ok: false, error: error.message }
 
       const returnRow = data as ReturnRow
+      // process_return/edit_return predate the return postage field, so it's
+      // set in a second call (see set_return_postage_cost in
+      // supabase/return_postage_cost_migration.sql).
+      const postage = input.returnPostageCost ?? 0
+      if (postage !== (returnRow.return_postage_cost ?? 0)) {
+        const { error: postageError } = await db.rpc('set_return_postage_cost', {
+          p_return_id: returnRow.id,
+          p_cost: postage,
+        })
+        if (postageError) return { ok: false, error: postageError.message }
+        returnRow.return_postage_cost = postage
+      }
       const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
         await Promise.all([
           db.from('return_lines_view').select('*').eq('return_id', returnRow.id),
@@ -1087,6 +1105,18 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       if (error) return { ok: false, error: error.message }
 
       const returnRow = data as ReturnRow
+      // process_return/edit_return predate the return postage field, so it's
+      // set in a second call (see set_return_postage_cost in
+      // supabase/return_postage_cost_migration.sql).
+      const postage = input.returnPostageCost ?? 0
+      if (postage !== (returnRow.return_postage_cost ?? 0)) {
+        const { error: postageError } = await db.rpc('set_return_postage_cost', {
+          p_return_id: returnRow.id,
+          p_cost: postage,
+        })
+        if (postageError) return { ok: false, error: postageError.message }
+        returnRow.return_postage_cost = postage
+      }
       const [{ data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
         await Promise.all([
           db.from('return_lines_view').select('*').eq('return_id', returnRow.id),

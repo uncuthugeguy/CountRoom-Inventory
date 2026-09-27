@@ -3,6 +3,7 @@ import { checkOrderTotal } from '../../domain/sales'
 import { PAID_BY_LABELS, type Sale } from '../../domain/types'
 import { formatCurrency, formatDateTime } from '../format'
 import { Dialog } from './Dialog'
+import { PrintPortal } from './PrintPortal'
 
 /**
  * Everything about one sale after it's been put through — what sold, at
@@ -60,6 +61,11 @@ export function SaleDetailDialog({
           {sale.backdated && sale.saleDate ? ` · logged against ${sale.saleDate}` : ''}
         </p>
         {sale.updatedAt && <p className="muted">Last edited {formatDateTime(sale.updatedAt)}</p>}
+        {sale.orderNumber && (
+          <p>
+            Order number <strong className="mono">{sale.orderNumber}</strong>
+          </p>
+        )}
         <p>
           Sold via <strong>{sale.channel || 'Unspecified'}</strong> · Paid by{' '}
           <strong>{paymentMethodLabel(sale.paymentMethod)}</strong>
@@ -122,6 +128,9 @@ export function SaleDetailDialog({
         )}
 
         <div className="dialog-actions">
+          <button type="button" className="button" onClick={() => window.print()}>
+            Print receipt
+          </button>
           {isManager && onEdit && (
             <button type="button" className="button" onClick={onEdit}>
               Edit sale
@@ -132,6 +141,69 @@ export function SaleDetailDialog({
           </button>
         </div>
       </div>
+      <PrintPortal>
+        <SaleReceipt sale={sale} />
+      </PrintPortal>
     </Dialog>
+  )
+}
+
+/**
+ * The customer-facing receipt printed by "Print receipt" — hidden on screen,
+ * shown only when printing (see `.receipt` in styles.css). No cost, fee
+ * split or profit on it: just what the buyer bought and paid.
+ */
+export function SaleReceipt({ sale }: { sale: Sale }) {
+  const buyerProtection = sale.buyerProtectionFee ?? 0
+  const delivery = sale.deliveryCost ?? 0
+  const buyerPaidDelivery = (sale.deliveryPaidBy ?? 'seller') === 'buyer' ? delivery : 0
+  const vat = sale.vat ?? 0
+  const total = sale.orderTotal ?? sale.subtotal + buyerProtection + buyerPaidDelivery + vat
+  return (
+    <div className="receipt" aria-hidden="true" data-testid="sale-receipt">
+      <h2>Receipt</h2>
+      <p>{formatDateTime(sale.createdAt)}</p>
+      {sale.orderNumber && <p>Order number: {sale.orderNumber}</p>}
+      <p>
+        {sale.channel || 'Sale'} · {paymentMethodLabel(sale.paymentMethod)}
+      </p>
+      <table className="receipt-lines">
+        <tbody>
+          {sale.lines.map((line) => (
+            <tr key={line.id}>
+              <td>
+                {line.quantity} × {line.name}
+                {line.quantity > 1 ? ` @ ${formatCurrency(line.unitPrice)}` : ''}
+              </td>
+              <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td>Subtotal</td>
+            <td className="receipt-amount">{formatCurrency(sale.subtotal)}</td>
+          </tr>
+          {buyerProtection > 0 && (
+            <tr>
+              <td>Buyer protection</td>
+              <td className="receipt-amount">{formatCurrency(buyerProtection)}</td>
+            </tr>
+          )}
+          {buyerPaidDelivery > 0 && (
+            <tr>
+              <td>Postage</td>
+              <td className="receipt-amount">{formatCurrency(buyerPaidDelivery)}</td>
+            </tr>
+          )}
+          {vat > 0 && (
+            <tr>
+              <td>VAT</td>
+              <td className="receipt-amount">{formatCurrency(vat)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="receipt-total">Total paid: {formatCurrency(total)}</p>
+      <p>Thank you for your order.</p>
+    </div>
   )
 }

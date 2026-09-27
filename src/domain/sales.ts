@@ -354,3 +354,24 @@ export function breakdownByProduct(sales: Sale[]): ProductBreakdownRow[] {
   }
   return [...rows.values()].sort((a, b) => b.unitsSold - a.unitsSold)
 }
+
+/**
+ * Finds sales matching a search — by transaction/order number (dashes and
+ * spaces ignored, so "2515190" finds "25-15190-68717"), the sale's own id,
+ * an item name or SKU, the channel, or an amount ("11.53"). Case-insensitive.
+ * A blank query returns every sale. Searches every sale passed in — callers
+ * pass all sales, not just a date range, so an old transaction still turns up.
+ */
+export function searchSales(sales: Sale[], query: string): Sale[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return sales
+  const compact = (value: string) => value.toLowerCase().replace(/[\s-]/g, '')
+  const qCompact = compact(q)
+  return sales.filter((sale) => {
+    if (qCompact && sale.orderNumber && compact(sale.orderNumber).includes(qCompact)) return true
+    if (sale.id.toLowerCase().startsWith(q)) return true
+    if ((sale.channel ?? '').toLowerCase().includes(q)) return true
+    if (sale.subtotal.toFixed(2) === q || (sale.orderTotal != null && sale.orderTotal.toFixed(2) === q)) return true
+    return sale.lines.some((line) => line.name.toLowerCase().includes(q) || line.sku.toLowerCase().includes(q))
+  })
+}

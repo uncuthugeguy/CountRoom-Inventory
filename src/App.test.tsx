@@ -651,8 +651,16 @@ describe('activity log', () => {
     expect(detail).toHaveTextContent('Price each')
     expect(detail).toHaveTextContent('Cost each')
     expect(screen.getByTestId('sale-detail-profit-total')).toHaveTextContent(sale.profit.toFixed(2))
+    expect(screen.getByTestId('sale-receipt')).toHaveTextContent(`2 × ${sale.lines[0].name}`)
     await user.click(within(detail).getByRole('button', { name: /^close$/i }))
     expect(screen.queryByTestId('sale-detail')).toBeNull()
+
+    // Search finds it across all dates by item name; a miss says so.
+    await user.type(screen.getByLabelText(/search sales/i), sale.lines[0].name.slice(0, 5))
+    expect(screen.getByText(/1 sale found/i)).toBeInTheDocument()
+    await user.clear(screen.getByLabelText(/search sales/i))
+    await user.type(screen.getByLabelText(/search sales/i), 'zzz-no-such-order')
+    expect(screen.getByText(/no sales match/i)).toBeInTheDocument()
   })
 
   it('records editing a past return case and shows it on the Activity tab', async () => {
@@ -1263,6 +1271,30 @@ describe('returns', () => {
     expect(screen.getByTestId('returns-case-count')).toHaveTextContent('1')
     expect(screen.getByTestId('returns-refund-total')).toHaveTextContent('2.50')
     expect(screen.getByTestId('return-case-row')).toHaveTextContent('eBay')
+  })
+
+  it('records a return postage label cost and prints a refund receipt', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await user.click(screen.getByRole('button', { name: 'Refund' }))
+    await user.type(screen.getByLabelText(/refund amount/i), '10')
+    await user.type(screen.getByLabelText(/return postage label cost/i), '3.20')
+    await user.type(screen.getByLabelText(/^customer$/i), 'jane_buyer')
+    await user.click(screen.getByRole('button', { name: /save case/i }))
+
+    expect(await screen.findByTestId('last-return')).toHaveTextContent('3.20')
+    await user.click(screen.getByRole('button', { name: /view \/ print receipt/i }))
+    expect(screen.getByTestId('return-postage')).toHaveTextContent('3.20')
+    const receipt = screen.getByTestId('refund-receipt')
+    expect(receipt).toHaveTextContent('Refund receipt')
+    expect(receipt).toHaveTextContent('jane_buyer')
+    expect(receipt).toHaveTextContent('10.00')
+    expect(receipt).not.toHaveTextContent('3.20') // internal cost stays off the customer's receipt
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {})
+    await user.click(screen.getByRole('button', { name: /print refund receipt/i }))
+    expect(print).toHaveBeenCalled()
+    print.mockRestore()
   })
 
   it('writes off a returned item with no stock change and tracks the loss', async () => {

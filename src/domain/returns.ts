@@ -158,6 +158,8 @@ export interface ReturnCaseDraft {
   refundMethod: PaymentMethod
   goodwillType: string
   goodwillValue: number | null
+  /** Return postage label cost — independent of which actions are ticked. */
+  returnPostageCost?: number | null
 }
 
 /** Combines the two carts and the rest of the form into the payload the
@@ -182,6 +184,8 @@ export function buildReturnCaseInput(
     refundMethod: hasAction('refund') ? draft.refundMethod : undefined,
     goodwillType: hasAction('goodwill') ? draft.goodwillType.trim() || undefined : undefined,
     goodwillValue: hasAction('goodwill') && draft.goodwillValue !== null ? draft.goodwillValue : undefined,
+    returnPostageCost:
+      draft.returnPostageCost !== null && draft.returnPostageCost !== undefined ? draft.returnPostageCost : undefined,
     returnLines: returnCart.map((line) => ({
       productId: line.product.id,
       quantity: line.quantity,
@@ -207,7 +211,8 @@ function isCaseEmpty(input: ReturnCaseInput): boolean {
   const hasGoodwill =
     (typeof input.goodwillValue === 'number' && input.goodwillValue > 0) || !!input.goodwillType?.trim()
   const hasNote = !!(input.reason?.trim() || input.notes?.trim())
-  return !(hasAction || hasReturnLines || hasReplacementLines || hasRefund || hasGoodwill || hasNote)
+  const hasPostage = typeof input.returnPostageCost === 'number' && input.returnPostageCost > 0
+  return !(hasAction || hasReturnLines || hasReplacementLines || hasRefund || hasGoodwill || hasNote || hasPostage)
 }
 
 export function validateReturnLineInput(line: ReturnLineInput): string | null {
@@ -247,6 +252,13 @@ export function validateReturnCaseInput(input: ReturnCaseInput): Result<true> {
     return fail('Goodwill value must be zero or greater.')
   }
 
+  if (
+    input.returnPostageCost !== undefined &&
+    (!Number.isFinite(input.returnPostageCost) || input.returnPostageCost < 0)
+  ) {
+    return fail('Return postage cost must be zero or greater.')
+  }
+
   return ok(true)
 }
 
@@ -261,8 +273,10 @@ export interface ReturnImpact {
   /** Cost value of returned stock put back on the shelf. */
   restockedValue: number
   replacementCost: number
+  /** Return postage label you paid for. */
+  returnPostage: number
   /** What this case took off profit: refunds + goodwill + replacements sent
-   * − stock recovered. A returned item's cost was already deducted from the
+   * + return postage − stock recovered. A returned item's cost was already deducted from the
    * original sale's profit when it sold, so a written-off item costs
    * nothing extra here (counting it again double-counted it), and a
    * restocked one gives that cost back. */
@@ -270,8 +284,9 @@ export interface ReturnImpact {
 }
 
 export function returnImpact(
-  rc: Pick<ReturnCase, 'refundAmount' | 'goodwillValue' | 'returnLines' | 'replacementLines'>,
+  rc: Pick<ReturnCase, 'refundAmount' | 'goodwillValue' | 'returnLines' | 'replacementLines' | 'returnPostageCost'>,
 ): ReturnImpact {
+  const returnPostage = rc.returnPostageCost ?? 0
   const writeOffLoss = rc.returnLines
     .filter((line) => line.disposition === 'writeoff')
     .reduce((sum, line) => sum + line.unitCost * line.quantity, 0)
@@ -286,7 +301,8 @@ export function returnImpact(
     writeOffLoss,
     restockedValue,
     replacementCost,
-    totalCost: rc.refundAmount + rc.goodwillValue + replacementCost - restockedValue,
+    returnPostage,
+    totalCost: rc.refundAmount + rc.goodwillValue + replacementCost + returnPostage - restockedValue,
   }
 }
 
@@ -297,6 +313,7 @@ export interface ReturnsSummary {
   writeOffLoss: number
   restockedValue: number
   replacementCost: number
+  returnPostage: number
   totalCost: number
   itemsRestocked: number
   itemsWrittenOff: number
@@ -309,6 +326,7 @@ const EMPTY_SUMMARY: ReturnsSummary = {
   writeOffLoss: 0,
   restockedValue: 0,
   replacementCost: 0,
+  returnPostage: 0,
   totalCost: 0,
   itemsRestocked: 0,
   itemsWrittenOff: 0,
@@ -324,6 +342,7 @@ export function summariseReturns(cases: ReturnCase[]): ReturnsSummary {
       writeOffLoss: totals.writeOffLoss + impact.writeOffLoss,
       restockedValue: totals.restockedValue + impact.restockedValue,
       replacementCost: totals.replacementCost + impact.replacementCost,
+      returnPostage: totals.returnPostage + impact.returnPostage,
       totalCost: totals.totalCost + impact.totalCost,
       itemsRestocked:
         totals.itemsRestocked +

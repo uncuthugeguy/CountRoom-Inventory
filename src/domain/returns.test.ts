@@ -249,6 +249,7 @@ describe('returnImpact', () => {
       writeOffLoss: 4,
       restockedValue: 1.5,
       replacementCost: 1,
+      returnPostage: 0,
       totalCost: 14.5,
     })
   })
@@ -281,6 +282,7 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       writeOffLoss: 0,
       restockedValue: 4,
       replacementCost: 0,
+      returnPostage: 0,
       totalCost: 11,
       itemsRestocked: 2,
       itemsWrittenOff: 0,
@@ -295,6 +297,7 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       writeOffLoss: 0,
       restockedValue: 0,
       replacementCost: 0,
+      returnPostage: 0,
       totalCost: 0,
       itemsRestocked: 0,
       itemsWrittenOff: 0,
@@ -307,5 +310,18 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
 
   it('counts actions across cases, including those never used', () => {
     expect(breakdownByAction(cases)).toEqual({ refund: 1, return: 1, replacement: 0, goodwill: 1 })
+  })
+})
+
+describe('return postage', () => {
+  it('adds the return postage label cost to what the case took off profit', () => {
+    const rc = returnCase({ id: 'r9', refundAmount: 10, returnPostageCost: 3.2 })
+    const impact = returnImpact(rc)
+    expect(impact.returnPostage).toBe(3.2)
+    expect(impact.totalCost).toBeCloseTo(13.2)
+    expect(summariseReturns([rc]).returnPostage).toBe(3.2)
+  })
+  it('rejects a negative return postage cost', () => {
+    expect(validateReturnCaseInput({ actions: ['refund'], returnPostageCost: -1 }).ok).toBe(false)
   })
 })

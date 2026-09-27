@@ -231,6 +231,9 @@ export interface Sale extends SaleFeesFields {
    * createdAt's own day for a sale CountRoom Register backdated. */
   saleDate?: string
   backdated?: boolean
+  /** The marketplace's own order/transaction number (e.g. an eBay order
+   *  number like 25-15190-68717), as recorded by CountRoom Register. */
+  orderNumber?: string
   lines: SaleLine[]
 }
 
@@ -317,6 +320,9 @@ export interface ReturnCaseInput {
   /** Free text — "Voucher", "Store credit", "Discount code", etc. */
   goodwillType?: string
   goodwillValue?: number
+  /** What you paid for a return postage label, if you sent the buyer one —
+   *  comes off profit like a refund does. */
+  returnPostageCost?: number
   returnLines?: ReturnLineInput[]
   replacementLines?: ReplacementLineInput[]
 }
@@ -333,6 +339,9 @@ export interface ReturnCase {
   refundMethod: PaymentMethod | null
   goodwillType: string
   goodwillValue: number
+  /** Cost of a return postage label you paid for (0 when none). Optional so
+   *  records saved before this field existed still load. */
+  returnPostageCost?: number
   returnLines: ReturnLine[]
   replacementLines: ReplacementLine[]
   createdAt: string

@@ -44,6 +44,7 @@ import {
   type StockDisposition,
 } from '../../domain/types'
 import { Dialog } from '../components/Dialog'
+import { PrintPortal } from '../components/PrintPortal'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
 import { formatCurrency, formatDateTime, formatNumber } from '../format'
 
@@ -62,11 +63,14 @@ export interface ReturnsScreenProps {
  * same builder at the top of this screen. */
 function ReturnDetailDialog({
   rc,
+  sale,
   isManager,
   onClose,
   onEdit,
 }: {
   rc: ReturnCase
+  /** The original sale, when the case is linked to one — for its order number. */
+  sale?: Sale
   isManager: boolean
   onClose: () => void
   onEdit: () => void
@@ -137,9 +141,15 @@ function ReturnDetailDialog({
           Goodwill: {formatCurrency(rc.goodwillValue)} ({rc.goodwillType || 'unspecified'})
         </p>
       )}
+      {(rc.returnPostageCost ?? 0) > 0 && (
+        <p data-testid="return-postage">Return postage label: {formatCurrency(rc.returnPostageCost ?? 0)}</p>
+      )}
       {isManager && <p className="muted">Net cost to profit (after restocked stock): {formatCurrency(impact.totalCost)}</p>}
 
       <div className="dialog-actions">
+        <button type="button" className="button" onClick={() => window.print()}>
+          Print refund receipt
+        </button>
         {isManager && (
           <button type="button" className="button" onClick={onEdit}>
             Edit case
@@ -149,7 +159,78 @@ function ReturnDetailDialog({
           Close
         </button>
       </div>
+      <PrintPortal>
+        <RefundReceipt rc={rc} sale={sale} />
+      </PrintPortal>
     </Dialog>
+  )
+}
+
+/**
+ * The customer-facing refund receipt printed from a return case — hidden on
+ * screen, shown only when printing (`.receipt` in styles.css). Shows what
+ * came back, anything sent out as a replacement, and the refund/goodwill
+ * given. Nothing internal (costs, write-offs, return postage) goes on it.
+ */
+function RefundReceipt({ rc, sale }: { rc: ReturnCase; sale?: Sale }) {
+  return (
+    <div className="receipt" aria-hidden="true" data-testid="refund-receipt">
+      <h2>{rc.refundAmount > 0 ? 'Refund receipt' : 'Returns receipt'}</h2>
+      <p>{formatDateTime(rc.updatedAt ?? rc.createdAt)}</p>
+      {rc.customerRef && <p>Customer: {rc.customerRef}</p>}
+      {sale?.orderNumber && <p>Original order: {sale.orderNumber}</p>}
+      {!sale?.orderNumber && sale && <p>Original sale: {formatDateTime(sale.createdAt)}</p>}
+      {rc.channel && <p>{rc.channel}</p>}
+      {rc.returnLines.length > 0 && (
+        <>
+          <p>
+            <strong>Items returned</strong>
+          </p>
+          <table className="receipt-lines">
+            <tbody>
+              {rc.returnLines.map((line) => (
+                <tr key={line.id}>
+                  <td>
+                    {line.quantity} × {line.name}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      {rc.replacementLines.length > 0 && (
+        <>
+          <p>
+            <strong>Replacement sent</strong>
+          </p>
+          <table className="receipt-lines">
+            <tbody>
+              {rc.replacementLines.map((line) => (
+                <tr key={line.id}>
+                  <td>
+                    {line.quantity} × {line.name}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      {rc.reason && <p>Reason: {rc.reason}</p>}
+      {rc.goodwillValue > 0 && (
+        <p>
+          {rc.goodwillType || 'Goodwill'}: {formatCurrency(rc.goodwillValue)}
+        </p>
+      )}
+      {rc.refundAmount > 0 && (
+        <p className="receipt-total">
+          Refunded: {formatCurrency(rc.refundAmount)}
+          {rc.refundMethod ? ` to ${paymentMethodLabel(rc.refundMethod)}` : ''}
+        </p>
+      )}
+      <p>Thank you.</p>
+    </div>
   )
 }
 
@@ -184,6 +265,7 @@ const emptyDraft = (): {
   refundMethod: PaymentMethod
   goodwillType: string
   goodwillValue: string
+  returnPostageCost: string
 } => ({
   saleId: '',
   channel: '',
@@ -195,6 +277,7 @@ const emptyDraft = (): {
   refundMethod: 'cash',
   goodwillType: '',
   goodwillValue: '',
+  returnPostageCost: '',
 })
 
 export function ReturnsScreen({
@@ -214,6 +297,7 @@ export function ReturnsScreen({
   const refundAmountId = useId()
   const goodwillTypeId = useId()
   const goodwillValueId = useId()
+  const returnPostageId = useId()
   const returnSearchId = useId()
   const replacementSearchId = useId()
 
@@ -291,6 +375,7 @@ export function ReturnsScreen({
       refundMethod: rc.refundMethod ?? 'cash',
       goodwillType: rc.goodwillType,
       goodwillValue: rc.goodwillValue ? String(rc.goodwillValue) : '',
+      returnPostageCost: rc.returnPostageCost ? String(rc.returnPostageCost) : '',
     })
     setReturnQuery('')
     setReplacementQuery('')
@@ -318,6 +403,7 @@ export function ReturnsScreen({
       refundMethod: draft.refundMethod,
       goodwillType: draft.goodwillType,
       goodwillValue: draft.goodwillValue.trim() === '' ? null : Number(draft.goodwillValue),
+      returnPostageCost: draft.returnPostageCost.trim() === '' ? null : Number(draft.returnPostageCost),
     }
 
     const input = buildReturnCaseInput(returnCart, replacementCart, parsedDraft)
@@ -674,6 +760,19 @@ export function ReturnsScreen({
           </div>
         </div>
         <div className="field">
+          <label htmlFor={returnPostageId}>Return postage label cost (optional)</label>
+          <input
+            id={returnPostageId}
+            type="number"
+            min={0}
+            step={0.01}
+            inputMode="decimal"
+            value={draft.returnPostageCost}
+            placeholder="What you paid for the buyer's return label"
+            onChange={(e) => setDraft((current) => ({ ...current, returnPostageCost: e.target.value }))}
+          />
+        </div>
+        <div className="field">
           <label htmlFor={reasonId}>Reason</label>
           <input
             id={reasonId}
@@ -728,6 +827,14 @@ export function ReturnsScreen({
               Goodwill: {formatCurrency(lastCase.goodwillValue)} ({lastCase.goodwillType || 'unspecified'})
             </p>
           )}
+          {(lastCase.returnPostageCost ?? 0) > 0 && (
+            <p className="muted">Return postage: {formatCurrency(lastCase.returnPostageCost ?? 0)}</p>
+          )}
+          <div className="dialog-actions">
+            <button type="button" className="button" onClick={() => setViewingCase(lastCase)}>
+              View / print receipt
+            </button>
+          </div>
         </section>
       )}
 
@@ -859,6 +966,7 @@ export function ReturnsScreen({
       {viewingCase && (
         <ReturnDetailDialog
           rc={viewingCase}
+          sale={viewingCase.saleId ? sales.find((s) => s.id === viewingCase.saleId) : undefined}
           isManager={isManager}
           onClose={() => setViewingCase(null)}
           onEdit={() => startEdit(viewingCase)}

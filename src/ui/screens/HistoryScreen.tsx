@@ -21,6 +21,7 @@ import {
   salesSince,
   setCartPrice,
   setCartQuantity,
+  searchSales,
   summariseSales,
   type Cart,
   type SaleFeesDraft,
@@ -671,6 +672,44 @@ function SalesView({
   const byChannel = useMemo(() => breakdownByChannel(inRange), [inRange])
   const byPayment = useMemo(() => breakdownByPaymentMethod(inRange), [inRange])
   const byProduct = useMemo(() => breakdownByProduct(inRange), [inRange])
+  const [query, setQuery] = useState('')
+  const searching = query.trim() !== ''
+  const results = useMemo(() => (searching ? searchSales(sales, query) : []), [sales, query, searching])
+
+  const saleRows = (list: Sale[]) => (
+          <ul className="plain-list history-list">
+            {list.map((sale) => (
+              <li key={sale.id} className="history-row" data-testid="sale-row">
+                <div className="history-main">
+                  <span className="history-product">{sale.channel || 'Unspecified'}</span>
+                  {sale.orderNumber && <span className="mono muted">#{sale.orderNumber}</span>}
+                  <span className="badge">{paymentMethodLabel(sale.paymentMethod)}</span>
+                  {sale.updatedAt && <span className="badge">Edited</span>}
+                </div>
+                <div className="history-numbers">
+                  <span className="mono">{formatCurrency(sale.subtotal)}</span>
+                  {isManager && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
+                </div>
+                <div className="history-meta">
+                  <span className="muted">{formatDateTime(sale.createdAt)}</span>
+                  <span className="reason">
+                    {sale.lines.map((line) => `${line.quantity}x ${line.sku}`).join(', ')}
+                  </span>
+                </div>
+                <div className="dialog-actions">
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    onClick={() => setViewingSale(sale)}
+                  >
+                    View details
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+  )
+
 
   return (
     <>
@@ -701,6 +740,30 @@ function SalesView({
         )}
       </div>
 
+      <div className="field">
+        <label htmlFor="sales-search">Search sales</label>
+        <input
+          id="sales-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Order number, item, SKU or amount"
+        />
+      </div>
+
+      {searching ? (
+        results.length === 0 ? (
+          <p className="empty">No sales match "{query.trim()}".</p>
+        ) : (
+          <>
+            <p className="muted">
+              {results.length} sale{results.length === 1 ? '' : 's'} found (all dates)
+            </p>
+            {saleRows(results)}
+          </>
+        )
+      ) : (
+      <>
       <section className="stats" aria-label="Profit and loss summary">
         <div className="stat" data-testid="pl-revenue">
           <span className="stat-value">{formatCurrency(summary.revenue)}</span>
@@ -773,37 +836,10 @@ function SalesView({
             </ul>
           </section>
 
-          <ul className="plain-list history-list">
-            {inRange.map((sale) => (
-              <li key={sale.id} className="history-row" data-testid="sale-row">
-                <div className="history-main">
-                  <span className="history-product">{sale.channel || 'Unspecified'}</span>
-                  <span className="badge">{paymentMethodLabel(sale.paymentMethod)}</span>
-                  {sale.updatedAt && <span className="badge">Edited</span>}
-                </div>
-                <div className="history-numbers">
-                  <span className="mono">{formatCurrency(sale.subtotal)}</span>
-                  {isManager && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
-                </div>
-                <div className="history-meta">
-                  <span className="muted">{formatDateTime(sale.createdAt)}</span>
-                  <span className="reason">
-                    {sale.lines.map((line) => `${line.quantity}x ${line.sku}`).join(', ')}
-                  </span>
-                </div>
-                <div className="dialog-actions">
-                  <button
-                    type="button"
-                    className="button button-ghost"
-                    onClick={() => setViewingSale(sale)}
-                  >
-                    View details
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          {saleRows(inRange)}
         </>
+      )}
+      </>
       )}
 
       {viewingSale && (

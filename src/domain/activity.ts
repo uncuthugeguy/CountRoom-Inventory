@@ -116,6 +116,11 @@ export function describeReturnEdit(before: ReturnCase, after: ReturnCase): strin
   if (formatCurrency(before.goodwillValue) !== formatCurrency(after.goodwillValue)) {
     changes.push(`goodwill ${formatCurrency(before.goodwillValue)} → ${formatCurrency(after.goodwillValue)}`)
   }
+  if (formatCurrency(before.returnPostageCost ?? 0) !== formatCurrency(after.returnPostageCost ?? 0)) {
+    changes.push(
+      `return postage ${formatCurrency(before.returnPostageCost ?? 0)} → ${formatCurrency(after.returnPostageCost ?? 0)}`,
+    )
+  }
   const beforeLines = returnLinesSummary(before.returnLines)
   const afterLines = returnLinesSummary(after.returnLines)
   if (beforeLines !== afterLines) {

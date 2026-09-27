@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Product, Sale } from './types'
 import {
+  searchSales,
   addToCart,
   breakdownByChannel,
   breakdownByPaymentMethod,
@@ -500,5 +501,28 @@ describe('breakdownByProduct', () => {
 
   it('returns an empty list for no sales', () => {
     expect(breakdownByProduct([])).toEqual([])
+  })
+})
+
+describe('searchSales', () => {
+  const lines = (name: string, sku: string) => [
+    { id: 'l', saleId: 's', productId: 'p', sku, name, quantity: 1, unitPrice: 11.53, unitCost: 2, lineTotal: 11.53, lineProfit: 9.53 },
+  ]
+  const all = [
+    sale({ id: 'aaa111', orderNumber: '25-15190-68717', subtotal: 11.53, lines: lines('Braun ThermoScan 7', 'SKU-020') }),
+    sale({ id: 'bbb222', orderNumber: '06-15212-28798', subtotal: 40, channel: 'Vinted', lines: lines('HY300 Projector', 'SKU-021') }),
+  ]
+  it('finds a sale by order number, with or without dashes', () => {
+    expect(searchSales(all, '25-15190-68717').map((s) => s.id)).toEqual(['aaa111'])
+    expect(searchSales(all, '2515190').map((s) => s.id)).toEqual(['aaa111'])
+  })
+  it('finds a sale by item name, SKU, channel or amount', () => {
+    expect(searchSales(all, 'thermo').map((s) => s.id)).toEqual(['aaa111'])
+    expect(searchSales(all, 'sku-021').map((s) => s.id)).toEqual(['bbb222'])
+    expect(searchSales(all, 'vinted').map((s) => s.id)).toEqual(['bbb222'])
+    expect(searchSales(all, '11.53').map((s) => s.id)).toEqual(['aaa111'])
+  })
+  it('returns everything for a blank search', () => {
+    expect(searchSales(all, '  ')).toHaveLength(2)
   })
 })
