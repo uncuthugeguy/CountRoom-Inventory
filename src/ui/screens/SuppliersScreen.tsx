@@ -1048,6 +1048,102 @@ function UnboxLotDialog({
 }
 
 /**
+ * Read-only, invoice-style view of a saved purchase order — the same
+ * figures the "New purchase order" form shows while typing it in (hammer,
+ * VAT and subtotal per line, true cost per item, then the invoice totals),
+ * rebuilt from what was stored. A line's hammer price is its stored
+ * `lineTotal`; delivery, premium and total VAT come from the PO header.
+ */
+function PurchaseOrderDetail({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+  const totals = calculatePoInvoiceTotals({
+    lines: po.lines.map((line) => ({
+      hammerPrice: line.lineTotal,
+      vatAmount: line.vatAmount ?? 0,
+      quantity: line.quantity,
+    })),
+    deliveryCost: po.deliveryCost,
+    buyersPremium: po.buyersPremium,
+    totalVat: po.vatAmount,
+  })
+  const row = (label: string, value: number, strong = false) => (
+    <tr>
+      <td>{strong ? <strong>{label}</strong> : label}</td>
+      <td className="receipt-amount">{strong ? <strong>{formatCurrency(value)}</strong> : formatCurrency(value)}</td>
+    </tr>
+  )
+
+  return (
+    <div className="form" data-testid="po-detail">
+      <div className="toolbar-actions" style={{ flexWrap: 'wrap' }}>
+        <span className={STATUS_BADGE_CLASS[po.status]}>{STATUS_LABELS[po.status]}</span>
+        <span className="muted">{po.supplierName}</span>
+      </div>
+      <p className="muted">
+        {po.orderDate ? `Ordered ${po.orderDate}` : 'No order date'}
+        {po.expectedDeliveryDate ? ` · Expected ${po.expectedDeliveryDate}` : ''}
+        {po.receivedDate ? ` · Received ${po.receivedDate}` : ''}
+      </p>
+
+      <table className="receipt-lines">
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left' }}>Item</th>
+            <th className="receipt-amount">Hammer</th>
+            <th className="receipt-amount">VAT</th>
+            <th className="receipt-amount">Subtotal</th>
+            <th className="receipt-amount">True cost each</th>
+          </tr>
+        </thead>
+        <tbody>
+          {po.lines.map((line) => {
+            const vat = line.vatAmount ?? 0
+            return (
+              <tr key={line.id}>
+                <td>
+                  {line.quantity} × {line.name}
+                  {line.sku ? ` (${line.sku})` : ''}
+                  {line.isLot && (
+                    <>
+                      {' '}
+                      <span className="badge">Lot</span>
+                    </>
+                  )}
+                </td>
+                <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
+                <td className="receipt-amount">{formatCurrency(vat)}</td>
+                <td className="receipt-amount">{formatCurrency(roundCurrency(line.lineTotal + vat))}</td>
+                <td className="receipt-amount">
+                  {formatCurrency(poLineTrueCostPerItem(line.lineTotal, vat, line.quantity, totals.overheadPerItem))}
+                  {line.isLot ? ' (lot)' : ''}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+
+      <table className="receipt-lines" style={{ maxWidth: '24rem' }}>
+        <tbody>
+          {row('Net hammer price', totals.netHammer)}
+          {row('Delivery fee', po.deliveryCost)}
+          {row("Net buyer's premium", po.buyersPremium)}
+          {row('Total VAT', po.vatAmount)}
+          {row('Grand total', po.grandTotal || totals.grandTotal, true)}
+        </tbody>
+      </table>
+
+      {po.notes && <p className="muted">Notes: {po.notes}</p>}
+
+      <div className="dialog-actions">
+        <button type="button" className="button button-primary" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
  * A "new item" line on a PO is something Mason will buy again, not a
  * one-off — so before the PO is saved, each one becomes a real catalogue
  * product (next SKU in sequence, 0 in stock, cost = that line's per-item
@@ -1103,6 +1199,7 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
   const [creatingPo, setCreatingPo] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [unboxing, setUnboxing] = useState<{ po: PurchaseOrder; line: PurchaseOrderLine } | null>(null)
+  const [viewingPo, setViewingPo] = useState<PurchaseOrder | null>(null)
 
   const refreshSuppliers = async () => setSuppliers(await inventory.listSuppliers())
   const refreshPurchaseOrders = async () => setPurchaseOrders(await inventory.listPurchaseOrders())
@@ -1240,6 +1337,14 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
                   })}
                 </ul>
                 <div className="toolbar-actions">
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    aria-label={`View ${po.poNumber || 'purchase order'}`}
+                    onClick={() => setViewingPo(po)}
+                  >
+                    View
+                  </button>
                   {po.status === 'draft' && (
                     <button
                       type="button"
@@ -1390,6 +1495,12 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
               return result
             }}
           />
+        </Dialog>
+      )}
+
+      {viewingPo && (
+        <Dialog title={viewingPo.poNumber || 'Purchase order'} onClose={() => setViewingPo(null)}>
+          <PurchaseOrderDetail po={viewingPo} onClose={() => setViewingPo(null)} />
         </Dialog>
       )}
 

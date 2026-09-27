@@ -1467,6 +1467,15 @@ describe('suppliers and purchase orders', () => {
     const poList = await screen.findByTestId('purchase-order-list')
     expect(poList).toHaveTextContent('108.00')
 
+    // The saved PO can be opened and read back invoice-style.
+    await user.click(within(poList).getByRole('button', { name: /^view /i }))
+    const detail = await screen.findByTestId('po-detail')
+    expect(detail).toHaveTextContent('Braun ThermoScan 7')
+    expect(detail).toHaveTextContent('60.00') // hammer
+    expect(detail).toHaveTextContent('18.00') // true cost each
+    expect(detail).toHaveTextContent('108.00') // grand total
+    await user.click(within(detail).getByRole('button', { name: /^close$/i }))
+
     await go(user, /products/i)
     const row = screen.getAllByTestId('product-row').find((r) => r.textContent?.includes('Braun ThermoScan 7'))
     expect(row).toBeDefined()
