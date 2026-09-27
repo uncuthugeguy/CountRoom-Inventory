@@ -261,9 +261,14 @@ export type StockDisposition = 'restock' | 'writeoff'
 
 export const STOCK_DISPOSITIONS: StockDisposition[] = ['restock', 'writeoff']
 
-export const STOCK_DISPOSITION_LABELS: Record<StockDisposition, string> = {
+/** 'inspect' is written only by CountRoom Register: the item is back but
+ * held out of stock until someone inspects it there and restocks or writes
+ * it off. Inventory never offers it (it isn't in STOCK_DISPOSITIONS), it
+ * just needs a label so such a line displays properly here. */
+export const STOCK_DISPOSITION_LABELS: Record<StockDisposition | 'inspect', string> = {
   restock: 'Back into stock',
   writeoff: 'Written off',
+  inspect: 'Awaiting inspection (in Register)',
 }
 
 /** One physical item coming back from a customer — the item itself for a
