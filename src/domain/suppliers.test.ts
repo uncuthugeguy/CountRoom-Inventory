@@ -271,3 +271,21 @@ describe('true cost per item', () => {
     expect(thermo * 6 + kettle * 2).toBe(totals.grandTotal)
   })
 })
+
+describe('real John Pye invoice #576758734', () => {
+  it('matches the invoice grand total of £142.18 and gives £23.70 per thermometer', () => {
+    // Lots 242 and 238: 3x Braun ThermoScan 7 each, £43.00 hammer + £8.60 VAT.
+    const totals = calculatePoInvoiceTotals({
+      lines: [
+        { hammerPrice: 43, vatAmount: 8.6, quantity: 3 },
+        { hammerPrice: 43, vatAmount: 8.6, quantity: 3 },
+      ],
+      deliveryCost: 10.98,
+      buyersPremium: 21.5,
+      totalVat: 23.7, // includes VAT on premium (4.30) and delivery (2.20)
+    })
+    expect(totals.netHammer).toBe(86)
+    expect(totals.grandTotal).toBe(142.18)
+    expect(poLineTrueCostPerItem(43, 8.6, 3, totals.overheadPerItem)).toBe(23.7)
+  })
+})

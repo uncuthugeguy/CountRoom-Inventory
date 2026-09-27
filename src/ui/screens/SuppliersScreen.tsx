@@ -772,7 +772,7 @@ function NewPurchaseOrderForm({
         {totalRow('Total VAT on hammer & premium', totals.totalVat)}
         {totals.premiumVat > 0 && (
           <span className="muted" style={{ fontSize: '.85em' }}>
-            (of which VAT on premium: {formatCurrency(totals.premiumVat)})
+            (of which VAT on premium &amp; delivery: {formatCurrency(totals.premiumVat)})
           </span>
         )}
         {totals.totalVat < totals.hammerVat && (
@@ -783,7 +783,7 @@ function NewPurchaseOrderForm({
         {totalRow('Grand total', totals.grandTotal, true, 'po-grand-total')}
         {totals.totalItems > 0 && totals.overheadPerItem > 0 && (
           <span className="muted" style={{ fontSize: '.85em' }} data-testid="po-overhead-per-item">
-            {`Delivery, premium and VAT on premium split evenly: ${formatCurrency(roundCurrency(totals.overheadPerItem))} added to each of the ${totals.totalItems} item${totals.totalItems === 1 ? '' : 's'}.`}
+            {`Delivery, premium and their VAT split evenly: ${formatCurrency(roundCurrency(totals.overheadPerItem))} added to each of the ${totals.totalItems} item${totals.totalItems === 1 ? '' : 's'}.`}
           </span>
         )}
       </div>
