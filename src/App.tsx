@@ -77,7 +77,7 @@ const TITLES: Record<Tab, string> = {
   stocktake: 'Stocktake',
   history: 'History',
   reports: 'Reports',
-  suppliers: 'Suppliers',
+  suppliers: 'Purchase Orders',
   codes: 'Quick codes',
   settings: 'Settings',
 }

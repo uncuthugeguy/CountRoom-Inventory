@@ -1372,7 +1372,7 @@ describe('returns', () => {
 describe('suppliers and purchase orders', () => {
   it('adds a supplier, drafts a PO, walks it through to received, and adds the ordered stock', async () => {
     const { user } = await renderApp()
-    await go(user, /suppliers/i)
+    await go(user, /purchase orders/i)
 
     // Add a supplier.
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
@@ -1434,7 +1434,7 @@ describe('suppliers and purchase orders', () => {
 
   it('a new item on a PO is saved into products, and the invoice totals add up', async () => {
     const { user } = await renderApp()
-    await go(user, /suppliers/i)
+    await go(user, /purchase orders/i)
 
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
     await user.type(screen.getByLabelText(/supplier name/i), 'John Pye Auctions')
@@ -1474,7 +1474,7 @@ describe('suppliers and purchase orders', () => {
 
   it('deleting a supplier removes it from the list', async () => {
     const { user } = await renderApp()
-    await go(user, /suppliers/i)
+    await go(user, /purchase orders/i)
 
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
     await user.type(screen.getByLabelText(/supplier name/i), 'Temp Supplier')
@@ -1489,7 +1489,7 @@ describe('suppliers and purchase orders', () => {
 
   it('remembers an in-progress supplier draft if the dialog is closed without saving', async () => {
     const { user } = await renderApp()
-    await go(user, /suppliers/i)
+    await go(user, /purchase orders/i)
 
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
     await user.type(screen.getByLabelText(/supplier name/i), 'Draft Supplier Co')
@@ -1513,7 +1513,7 @@ describe('suppliers and purchase orders', () => {
 
   it('remembers an in-progress purchase order draft if the dialog is closed without saving', async () => {
     const { user } = await renderApp()
-    await go(user, /suppliers/i)
+    await go(user, /purchase orders/i)
 
     await user.click(screen.getByRole('button', { name: /add a supplier/i }))
     await user.type(screen.getByLabelText(/supplier name/i), 'Acme Fasteners Ltd')
@@ -1552,6 +1552,6 @@ describe('suppliers and purchase orders', () => {
     )
     await screen.findByTestId('stat-products')
 
-    expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /suppliers/i })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /purchase orders/i })).not.toBeInTheDocument()
   })
 })
