@@ -211,6 +211,69 @@ export function calculatePOGrandTotal(totals: {
   return roundCurrency(totals.subtotal + totals.deliveryCost + totals.buyersPremium + totals.vatAmount)
 }
 
+/**
+ * Invoice-style totals for a purchase order, laid out the way an auction
+ * invoice (John Pye etc.) prints them: each line has its own hammer price
+ * and VAT; the order then shows net hammer, delivery, net buyer's premium,
+ * total VAT on hammer + premium, and the grand total.
+ *
+ * `totalVat` is the invoice's own "VAT on hammer & premium" figure. When it's
+ * left blank (undefined) it falls back to just the per-line hammer VAT, so
+ * the grand total still adds up while you're part-way through typing.
+ */
+export interface PoInvoiceTotalsInput {
+  lines: Array<{ hammerPrice: number; vatAmount: number }>
+  deliveryCost: number
+  buyersPremium: number
+  totalVat?: number
+}
+
+export interface PoInvoiceTotals {
+  /** Sum of every line's hammer price (ex VAT). */
+  netHammer: number
+  /** Sum of every line's own VAT. */
+  hammerVat: number
+  /** Hammer + VAT on hammer, before delivery/premium. */
+  subtotal: number
+  deliveryCost: number
+  buyersPremium: number
+  /** VAT on hammer and premium combined. */
+  totalVat: number
+  /** What's left of `totalVat` once the hammer VAT is taken off — i.e. the
+   *  VAT that must have been charged on the premium (never negative). */
+  premiumVat: number
+  grandTotal: number
+}
+
+export function calculatePoInvoiceTotals(input: PoInvoiceTotalsInput): PoInvoiceTotals {
+  const netHammer = roundCurrency(input.lines.reduce((sum, line) => sum + line.hammerPrice, 0))
+  const hammerVat = roundCurrency(input.lines.reduce((sum, line) => sum + line.vatAmount, 0))
+  const totalVat = roundCurrency(input.totalVat ?? hammerVat)
+  return {
+    netHammer,
+    hammerVat,
+    subtotal: roundCurrency(netHammer + hammerVat),
+    deliveryCost: roundCurrency(input.deliveryCost),
+    buyersPremium: roundCurrency(input.buyersPremium),
+    totalVat,
+    premiumVat: roundCurrency(Math.max(0, totalVat - hammerVat)),
+    grandTotal: calculatePOGrandTotal({
+      subtotal: netHammer,
+      deliveryCost: input.deliveryCost,
+      buyersPremium: input.buyersPremium,
+      vatAmount: totalVat,
+    }),
+  }
+}
+
+/** Per-item cost of one invoice line: (hammer + that line's VAT) ÷ quantity,
+ *  to the penny. VAT is included because the business isn't VAT-registered,
+ *  so VAT paid is a real, unreclaimable cost of the stock. */
+export function poLineCostPerItem(hammerPrice: number, vatAmount: number, quantity: number): number {
+  if (!(quantity > 0)) return 0
+  return roundCurrency((hammerPrice + vatAmount) / quantity)
+}
+
 const PO_NUMBER_PATTERN = /^PO-(\d+)$/i
 
 /** Finds the next PO number in the `PO-NNNN` sequence, same idea as

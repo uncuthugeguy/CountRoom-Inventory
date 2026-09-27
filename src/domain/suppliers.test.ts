@@ -3,8 +3,7 @@ import {
   poLineTotal,
   calculatePOSubtotal,
   findBestSupplier,
-  productsNeedingReorder,
-} from './suppliers'
+  productsNeedingReorder, calculatePoInvoiceTotals, poLineCostPerItem } from './suppliers'
 import type { PurchaseOrderLine, Supplier, SupplierProduct, PurchaseOrder, PurchaseOrderStatus } from './suppliers'
 
 describe('Supplier Domain', () => {
@@ -213,5 +212,39 @@ describe('Supplier Domain', () => {
       expect(result).toHaveLength(1)
       expect(result[0].id).toBe('p2')
     })
+  })
+})
+
+describe('calculatePoInvoiceTotals', () => {
+  it('adds up an auction invoice: hammer + VAT per line, then delivery, premium and total VAT', () => {
+    // e.g. 6x Braun ThermoScan 7 at £60 hammer (£12 VAT) plus a £10 lot (£2 VAT).
+    const totals = calculatePoInvoiceTotals({
+      lines: [
+        { hammerPrice: 60, vatAmount: 12 },
+        { hammerPrice: 10, vatAmount: 2 },
+      ],
+      deliveryCost: 15,
+      buyersPremium: 17.5,
+      totalVat: 17.5, // 14 on hammer + 3.50 on premium
+    })
+    expect(totals.netHammer).toBe(70)
+    expect(totals.hammerVat).toBe(14)
+    expect(totals.subtotal).toBe(84)
+    expect(totals.premiumVat).toBe(3.5)
+    expect(totals.grandTotal).toBe(120) // 70 + 15 + 17.50 + 17.50
+  })
+
+  it('falls back to the line VAT when total VAT is left blank', () => {
+    const totals = calculatePoInvoiceTotals({ lines: [{ hammerPrice: 60, vatAmount: 12 }], deliveryCost: 0, buyersPremium: 0 })
+    expect(totals.totalVat).toBe(12)
+    expect(totals.grandTotal).toBe(72)
+  })
+})
+
+describe('poLineCostPerItem', () => {
+  it('splits hammer + VAT across the quantity, to the penny', () => {
+    expect(poLineCostPerItem(60, 12, 6)).toBe(12)
+    expect(poLineCostPerItem(10, 0, 3)).toBe(3.33)
+    expect(poLineCostPerItem(10, 2, 0)).toBe(0)
   })
 })

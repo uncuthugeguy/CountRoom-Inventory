@@ -3,13 +3,14 @@ import type { Inventory } from '../useInventory'
 import type { Product, Result } from '../../domain/types'
 import type {
   PurchaseOrder,
+  PurchaseOrderInput,
   PurchaseOrderLine,
   PurchaseOrderStatus,
   Supplier,
   SupplierDraft,
   UnboxedLineItemInput,
 } from '../../domain/suppliers'
-import { calculatePOGrandTotal, nextPoNumber } from '../../domain/suppliers'
+import { calculatePoInvoiceTotals, nextPoNumber, poLineCostPerItem, roundCurrency } from '../../domain/suppliers'
 import { nextSku } from '../../domain/products'
 import {
   clearSupplierDraft,
@@ -54,7 +55,7 @@ const EMPTY_PO_LINE: PurchaseOrderDraftLine = {
   customName: '',
   isLot: false,
   quantity: '1',
-  unitCost: '',
+  hammerPrice: '',
   vatAmount: '',
 }
 
@@ -306,8 +307,10 @@ const emptyPoDraft = (defaultSupplierId: string, poNumber: string): PurchaseOrde
   vatAmount: '',
 })
 
+/** Parses a money field; blank or junk → 0, never negative. */
+const money = (value: string) => Math.max(0, Number(value) || 0)
 
-interface NewPurchaseOrderInput {
+export interface NewPurchaseOrderInput {
   supplierId: string
   poNumber: string
   orderDate: string
@@ -320,6 +323,9 @@ interface NewPurchaseOrderInput {
     quantity: number
     unitCost: number
     vatAmount?: number
+    /** Per-item cost incl. that line's VAT — used as the catalogue cost when
+     *  a custom item is saved as a new product. */
+    costPerItem: number
   }>
   deliveryCost: number
   buyersPremium: number
@@ -331,13 +337,14 @@ interface NewPurchaseOrderInput {
  * There's only ever one "new PO" draft slot (no edit-PO form to disambiguate
  * against), so it isn't keyed to anything — see purchaseOrderDraftStorage.ts.
  *
- * Modelled on an auction-house invoice (John Pye Auctions' layout was the
- * concrete example): each line is either an existing catalogue product, a
- * one-off custom-named item not catalogued yet, or a mixed "lot" whose
- * actual contents aren't known until it's unboxed (see the "Unbox" flow on
- * a received PO, further down this file) — plus header-level delivery,
- * buyer's premium and VAT, since those apply to the order as a whole rather
- * than to one line.
+ * Laid out like an auction-house invoice (John Pye Auctions is the concrete
+ * example): each line has its own hammer price and VAT, with a line
+ * subtotal and per-item cost worked out; underneath, the invoice totals —
+ * net hammer, delivery, net buyer's premium, total VAT on hammer & premium,
+ * grand total. A line is either an existing catalogue product, a custom item
+ * (saved into the catalogue as a new product when the PO is created, so it
+ * can be picked next time), or a mixed "lot" whose contents aren't known
+ * until it's unboxed (see the "Unbox" flow on a received PO, further down).
  */
 function NewPurchaseOrderForm({
   idPrefix,
@@ -389,18 +396,14 @@ function NewPurchaseOrderForm({
   const removeLine = (index: number) => setLines((current) => current.filter((_, i) => i !== index))
 
   const usableLines = lines.filter((line) => {
-    const hasSource = line.productId !== '' || line.customName.trim() !== ''
+    const hasSource = line.kind === 'product' ? line.productId !== '' : line.customName.trim() !== ''
     return hasSource && Number(line.quantity) > 0
   })
-  const subtotal = usableLines.reduce((sum, line) => sum + Number(line.quantity) * (Number(line.unitCost) || 0), 0)
-  const deliveryCostNum = Math.max(0, Number(deliveryCost) || 0)
-  const buyersPremiumNum = Math.max(0, Number(buyersPremium) || 0)
-  const vatAmountNum = Math.max(0, Number(vatAmount) || 0)
-  const grandTotal = calculatePOGrandTotal({
-    subtotal,
-    deliveryCost: deliveryCostNum,
-    buyersPremium: buyersPremiumNum,
-    vatAmount: vatAmountNum,
+  const totals = calculatePoInvoiceTotals({
+    lines: usableLines.map((line) => ({ hammerPrice: money(line.hammerPrice), vatAmount: money(line.vatAmount) })),
+    deliveryCost: money(deliveryCost),
+    buyersPremium: money(buyersPremium),
+    totalVat: vatAmount.trim() === '' ? undefined : money(vatAmount),
   })
   const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? ''
 
@@ -445,15 +448,19 @@ function NewPurchaseOrderForm({
       notes: notes.trim(),
       lines: usableLines.map((line) => {
         const quantity = Math.max(1, Math.round(Number(line.quantity)))
-        const unitCost = Math.max(0, Number(line.unitCost) || 0)
-        const lineVat = line.vatAmount.trim() === '' ? undefined : Math.max(0, Number(line.vatAmount) || 0)
-        return line.productId
-          ? { productId: line.productId, quantity, unitCost, vatAmount: lineVat }
-          : { customName: line.customName.trim(), isLot: line.isLot, quantity, unitCost, vatAmount: lineVat }
+        const hammer = money(line.hammerPrice)
+        // The repository stores cost per unit (line total = qty × unit), so
+        // the invoice's line hammer price is split back down per unit here.
+        const unitCost = hammer / quantity
+        const lineVat = line.vatAmount.trim() === '' ? undefined : money(line.vatAmount)
+        const costPerItem = poLineCostPerItem(hammer, lineVat ?? 0, quantity)
+        return line.kind === 'product'
+          ? { productId: line.productId, quantity, unitCost, vatAmount: lineVat, costPerItem }
+          : { customName: line.customName.trim(), isLot: line.kind === 'lot', quantity, unitCost, vatAmount: lineVat, costPerItem }
       }),
-      deliveryCost: deliveryCostNum,
-      buyersPremium: buyersPremiumNum,
-      vatAmount: vatAmountNum,
+      deliveryCost: totals.deliveryCost,
+      buyersPremium: totals.buyersPremium,
+      vatAmount: totals.totalVat,
     })
   }
 
@@ -474,11 +481,22 @@ function NewPurchaseOrderForm({
 
   if (confirming) {
     const itemCount = confirming.lines.length
+    const newProducts = confirming.lines.filter(
+      (line) =>
+        !line.productId &&
+        !line.isLot &&
+        !products.some((p) => p.name.trim().toLowerCase() === (line.customName ?? '').trim().toLowerCase()),
+    )
     return (
       <div className="form">
         <p className="dialog-message">
-          {`Create ${confirming.poNumber || 'this purchase order'} for ${supplierName || 'this supplier'} — ${itemCount} item${itemCount === 1 ? '' : 's'}, grand total ${formatCurrency(grandTotal)}?`}
+          {`Create ${confirming.poNumber || 'this purchase order'} for ${supplierName || 'this supplier'} — ${itemCount} line${itemCount === 1 ? '' : 's'}, grand total ${formatCurrency(totals.grandTotal)}?`}
         </p>
+        {newProducts.length > 0 && (
+          <p className="muted">
+            {`${newProducts.length === 1 ? 'This new item' : `These ${newProducts.length} new items`} will be added to your products (0 in stock until the PO is received): ${newProducts.map((l) => l.customName).join(', ')}.`}
+          </p>
+        )}
 
         {error && (
           <p className="alert" role="alert">
@@ -503,6 +521,13 @@ function NewPurchaseOrderForm({
       </div>
     )
   }
+
+  const totalRow = (label: string, value: number, strong = false, testId?: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }} data-testid={testId}>
+      <span className={strong ? undefined : 'muted'}>{strong ? <strong>{label}</strong> : label}</span>
+      <span className="mono">{strong ? <strong>{formatCurrency(value)}</strong> : formatCurrency(value)}</span>
+    </div>
+  )
 
   return (
     <form className="form" onSubmit={submit}>
@@ -557,85 +582,131 @@ function NewPurchaseOrderForm({
         <legend>Items ordered</legend>
         {lines.map((line, index) => {
           const kind = line.kind
+          const qty = Math.max(0, Math.round(Number(line.quantity)) || 0)
+          const hammer = money(line.hammerPrice)
+          const lineVat = money(line.vatAmount)
+          const lineId = `${idPrefix}-line-${index}`
           return (
-            <div key={index} className="toolbar-actions" style={{ marginBottom: '.5rem', flexWrap: 'wrap' }}>
-              <select
-                aria-label="Line type"
-                value={kind}
-                onChange={(e) => setLineKind(index, e.target.value as PurchaseOrderDraftLineKind)}
-                style={{ width: '9rem' }}
-              >
-                <option value="product">Existing product</option>
-                <option value="custom">Custom item</option>
-                <option value="lot">Mixed lot (unbox later)</option>
-              </select>
+            <div
+              key={index}
+              data-testid="po-line"
+              style={{ borderBottom: '1px solid var(--border, rgba(127,127,127,.25))', paddingBottom: '.75rem', marginBottom: '.75rem' }}
+            >
+              <div className="toolbar-actions" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="field">
+                  <label htmlFor={`${lineId}-kind`}>Line type</label>
+                  <select
+                    id={`${lineId}-kind`}
+                    value={kind}
+                    onChange={(e) => setLineKind(index, e.target.value as PurchaseOrderDraftLineKind)}
+                    style={{ width: '10rem' }}
+                  >
+                    <option value="product">Existing product</option>
+                    <option value="custom">New item (add to products)</option>
+                    <option value="lot">Mixed lot (unbox later)</option>
+                  </select>
+                </div>
 
-              {kind === 'product' ? (
-                <select
-                  aria-label="Product"
-                  value={line.productId}
-                  onChange={(e) => {
-                    const product = products.find((p) => p.id === e.target.value)
-                    setLine(index, {
-                      productId: e.target.value,
-                      unitCost: product ? String(product.cost) : line.unitCost,
-                    })
-                  }}
-                >
-                  <option value="">Choose a product…</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.sku})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  aria-label={kind === 'lot' ? 'Lot description' : 'Item name'}
-                  value={line.customName}
-                  onChange={(e) => setLine(index, { customName: e.target.value })}
-                  placeholder={
-                    kind === 'lot'
-                      ? 'e.g. Quantity of health & beauty items to include Remington XR1500'
-                      : 'Item name'
-                  }
-                  style={{ flex: '1 1 14rem' }}
-                />
-              )}
+                {kind === 'product' ? (
+                  <div className="field" style={{ flex: '1 1 14rem' }}>
+                    <label htmlFor={`${lineId}-product`}>Product</label>
+                    <select
+                      id={`${lineId}-product`}
+                      value={line.productId}
+                      onChange={(e) => {
+                        const product = products.find((p) => p.id === e.target.value)
+                        setLine(index, {
+                          productId: e.target.value,
+                          hammerPrice:
+                            product && line.hammerPrice.trim() === ''
+                              ? String(roundCurrency(product.cost * (qty || 1)))
+                              : line.hammerPrice,
+                        })
+                      }}
+                    >
+                      <option value="">Choose a product…</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.sku})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="field" style={{ flex: '1 1 14rem' }}>
+                    <label htmlFor={`${lineId}-name`}>{kind === 'lot' ? 'Lot description' : 'Item name'}</label>
+                    <input
+                      id={`${lineId}-name`}
+                      value={line.customName}
+                      onChange={(e) => setLine(index, { customName: e.target.value })}
+                      placeholder={
+                        kind === 'lot'
+                          ? 'e.g. Quantity of health & beauty items to include Remington XR1500'
+                          : 'e.g. Braun ThermoScan 7 Ear Thermometer'
+                      }
+                    />
+                  </div>
+                )}
+              </div>
 
-              <input
-                aria-label="Quantity"
-                type="number"
-                min={1}
-                value={line.quantity}
-                onChange={(e) => setLine(index, { quantity: e.target.value })}
-                style={{ width: '5rem' }}
-              />
-              <input
-                aria-label={kind === 'lot' ? 'Hammer / lot price' : 'Unit cost'}
-                type="number"
-                min={0}
-                step="0.01"
-                value={line.unitCost}
-                onChange={(e) => setLine(index, { unitCost: e.target.value })}
-                style={{ width: '6rem' }}
-                title={kind === 'lot' ? 'What you paid for the whole lot' : 'Cost per unit'}
-              />
-              <input
-                aria-label="VAT for this line (optional)"
-                type="number"
-                min={0}
-                step="0.01"
-                value={line.vatAmount}
-                onChange={(e) => setLine(index, { vatAmount: e.target.value })}
-                placeholder="VAT"
-                style={{ width: '5rem' }}
-              />
-              {lines.length > 1 && (
-                <button type="button" className="button button-ghost" aria-label="Remove line" onClick={() => removeLine(index)}>
-                  <CloseIcon />
-                </button>
-              )}
+              <div className="toolbar-actions" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="field">
+                  <label htmlFor={`${lineId}-qty`}>Quantity</label>
+                  <input
+                    id={`${lineId}-qty`}
+                    type="number"
+                    min={1}
+                    value={line.quantity}
+                    onChange={(e) => setLine(index, { quantity: e.target.value })}
+                    style={{ width: '5rem' }}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`${lineId}-hammer`}>Hammer price</label>
+                  <input
+                    id={`${lineId}-hammer`}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={line.hammerPrice}
+                    onChange={(e) => setLine(index, { hammerPrice: e.target.value })}
+                    style={{ width: '7rem' }}
+                    title="The hammer price for this whole line, as printed on the invoice (ex VAT)"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`${lineId}-vat`}>VAT</label>
+                  <input
+                    id={`${lineId}-vat`}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={line.vatAmount}
+                    onChange={(e) => setLine(index, { vatAmount: e.target.value })}
+                    style={{ width: '6rem' }}
+                    title="VAT on this line's hammer price, as printed on the invoice"
+                  />
+                </div>
+                <div className="field">
+                  <span className="muted">Line subtotal</span>
+                  <span className="mono" data-testid="po-line-subtotal">
+                    {formatCurrency(roundCurrency(hammer + lineVat))}
+                  </span>
+                </div>
+                {kind !== 'lot' && qty > 0 && (
+                  <div className="field">
+                    <span className="muted">Each (inc VAT)</span>
+                    <span className="mono" data-testid="po-line-each">
+                      {formatCurrency(poLineCostPerItem(hammer, lineVat, qty))}
+                    </span>
+                  </div>
+                )}
+                {lines.length > 1 && (
+                  <button type="button" className="button button-ghost" aria-label="Remove line" onClick={() => removeLine(index)}>
+                    <CloseIcon />
+                  </button>
+                )}
+              </div>
             </div>
           )
         })}
@@ -644,9 +715,9 @@ function NewPurchaseOrderForm({
         </button>
       </fieldset>
 
-      <div className="toolbar-actions">
+      <div className="toolbar-actions" style={{ flexWrap: 'wrap' }}>
         <div className="field">
-          <label htmlFor={`${idPrefix}-delivery`}>Delivery</label>
+          <label htmlFor={`${idPrefix}-delivery`}>Delivery fee</label>
           <input
             id={`${idPrefix}-delivery`}
             type="number"
@@ -654,11 +725,11 @@ function NewPurchaseOrderForm({
             step="0.01"
             value={deliveryCost}
             onChange={(e) => setDeliveryCost(e.target.value)}
-            style={{ width: '6rem' }}
+            style={{ width: '7rem' }}
           />
         </div>
         <div className="field">
-          <label htmlFor={`${idPrefix}-premium`}>Buyer's premium</label>
+          <label htmlFor={`${idPrefix}-premium`}>Net buyer's premium</label>
           <input
             id={`${idPrefix}-premium`}
             type="number"
@@ -666,11 +737,11 @@ function NewPurchaseOrderForm({
             step="0.01"
             value={buyersPremium}
             onChange={(e) => setBuyersPremium(e.target.value)}
-            style={{ width: '6rem' }}
+            style={{ width: '7rem' }}
           />
         </div>
         <div className="field">
-          <label htmlFor={`${idPrefix}-vat`}>Total VAT</label>
+          <label htmlFor={`${idPrefix}-vat`}>Total VAT on hammer &amp; premium</label>
           <input
             id={`${idPrefix}-vat`}
             type="number"
@@ -678,15 +749,32 @@ function NewPurchaseOrderForm({
             step="0.01"
             value={vatAmount}
             onChange={(e) => setVatAmount(e.target.value)}
-            style={{ width: '6rem' }}
+            placeholder={totals.hammerVat.toFixed(2)}
+            style={{ width: '7rem' }}
+            title="Copy this from the invoice. Left blank, it's just the VAT on the lines above."
           />
         </div>
       </div>
 
-      <p className="muted">Subtotal: {formatCurrency(subtotal)}</p>
-      <p className="muted">
-        <strong>Grand total: {formatCurrency(grandTotal)}</strong>
-      </p>
+      <div data-testid="po-totals" style={{ display: 'grid', gap: '.25rem', maxWidth: '24rem' }}>
+        {totalRow('Net hammer price', totals.netHammer)}
+        {totalRow('VAT on hammer', totals.hammerVat)}
+        {totalRow('Subtotal', totals.subtotal)}
+        {totalRow('Delivery fee', totals.deliveryCost)}
+        {totalRow("Net buyer's premium", totals.buyersPremium)}
+        {totalRow('Total VAT on hammer & premium', totals.totalVat)}
+        {totals.premiumVat > 0 && (
+          <span className="muted" style={{ fontSize: '.85em' }}>
+            (of which VAT on premium: {formatCurrency(totals.premiumVat)})
+          </span>
+        )}
+        {totals.totalVat < totals.hammerVat && (
+          <span className="alert" style={{ fontSize: '.85em' }}>
+            Total VAT is less than the VAT on the lines ({formatCurrency(totals.hammerVat)}) — check the invoice.
+          </span>
+        )}
+        {totalRow('Grand total', totals.grandTotal, true, 'po-grand-total')}
+      </div>
 
       <div className="field">
         <label htmlFor={`${idPrefix}-notes`}>Notes (optional)</label>
@@ -945,6 +1033,52 @@ function UnboxLotDialog({
       </div>
     </form>
   )
+}
+
+/**
+ * A "new item" line on a PO is something Mason will buy again, not a
+ * one-off — so before the PO is saved, each one becomes a real catalogue
+ * product (next SKU in sequence, 0 in stock, cost = that line's per-item
+ * cost inc VAT) and the line is linked to it like any existing product.
+ * Receiving the PO then adds the stock the normal way. A name that already
+ * matches a product (case-insensitive — e.g. retrying after an error) is
+ * linked to that product instead of creating a duplicate. Mixed lots are
+ * left alone: they only become products when unboxed.
+ */
+async function saveNewItemsAsProducts(
+  input: NewPurchaseOrderInput,
+  products: Product[],
+  inventory: Inventory,
+): Promise<Result<PurchaseOrderInput>> {
+  const known = [...products]
+  const lines: PurchaseOrderInput['lines'] = []
+  for (const { costPerItem, ...line } of input.lines) {
+    if (line.productId || line.isLot) {
+      lines.push(line)
+      continue
+    }
+    const name = (line.customName ?? '').trim()
+    let product = known.find((p) => p.name.trim().toLowerCase() === name.toLowerCase())
+    if (!product) {
+      const created = await inventory.createProduct({
+        barcode: '',
+        sku: nextSku(known),
+        name,
+        category: '',
+        location: '',
+        variation: '',
+        quantity: 0,
+        reorderLevel: 0,
+        cost: costPerItem,
+        price: 0,
+      })
+      if (!created.ok) return { ok: false, error: `Couldn't add "${name}" to your products: ${created.error}` }
+      product = created.value
+      known.push(product)
+    }
+    lines.push({ productId: product.id, quantity: line.quantity, unitCost: line.unitCost, vatAmount: line.vatAmount })
+  }
+  return { ok: true, value: { ...input, lines } }
 }
 
 export function SuppliersScreen({ inventory, products, supplierDraftStorage, purchaseOrderDraftStorage }: SuppliersScreenProps) {
@@ -1234,7 +1368,9 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
             onCancel={() => setCreatingPo(false)}
             draftStorage={purchaseOrderDraftStorage}
             onSubmit={async (input) => {
-              const result = await inventory.createPurchaseOrder(input)
+              const linked = await saveNewItemsAsProducts(input, products, inventory)
+              if (!linked.ok) return linked
+              const result = await inventory.createPurchaseOrder(linked.value)
               if (result.ok) {
                 setCreatingPo(false)
                 await refreshPurchaseOrders()

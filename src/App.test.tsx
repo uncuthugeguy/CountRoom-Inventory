@@ -1393,8 +1393,8 @@ describe('suppliers and purchase orders', () => {
     await user.selectOptions(screen.getByLabelText('Product'), 'M6 Flat Washer (WSH-M6)')
     await user.clear(screen.getByLabelText('Quantity'))
     await user.type(screen.getByLabelText('Quantity'), '20')
-    await user.clear(screen.getByLabelText('Unit cost'))
-    await user.type(screen.getByLabelText('Unit cost'), '0.01')
+    await user.clear(screen.getByLabelText('Hammer price'))
+    await user.type(screen.getByLabelText('Hammer price'), '0.20')
     await user.click(screen.getByRole('button', { name: /create draft po/i }))
 
     // Same confirmation step for the PO.
@@ -1430,6 +1430,44 @@ describe('suppliers and purchase orders', () => {
     // And it shows up as an ordinary stock-in movement in History.
     await go(user, /history/i)
     expect(screen.getByText(/PO received from Acme Fasteners Ltd/i)).toBeInTheDocument()
+  })
+
+  it('a new item on a PO is saved into products, and the invoice totals add up', async () => {
+    const { user } = await renderApp()
+    await go(user, /suppliers/i)
+
+    await user.click(screen.getByRole('button', { name: /add a supplier/i }))
+    await user.type(screen.getByLabelText(/supplier name/i), 'John Pye Auctions')
+    await user.click(screen.getByRole('button', { name: /^add supplier$/i }))
+    await user.click(await screen.findByRole('button', { name: /yes, save/i }))
+    await screen.findByTestId('supplier-list')
+
+    await user.click(screen.getByRole('button', { name: /new purchase order/i }))
+    await user.selectOptions(screen.getByLabelText(/^supplier$/i), 'John Pye Auctions')
+    await user.selectOptions(screen.getByLabelText('Line type'), 'custom')
+    await user.type(screen.getByLabelText('Item name'), 'Braun ThermoScan 7')
+    await user.clear(screen.getByLabelText('Quantity'))
+    await user.type(screen.getByLabelText('Quantity'), '6')
+    await user.type(screen.getByLabelText('Hammer price'), '60')
+    await user.type(screen.getByLabelText('VAT'), '12')
+    expect(screen.getByTestId('po-line-subtotal')).toHaveTextContent('72.00')
+    expect(screen.getByTestId('po-line-each')).toHaveTextContent('12.00')
+
+    await user.type(screen.getByLabelText(/delivery fee/i), '15')
+    await user.type(screen.getByLabelText(/net buyer's premium/i), '17.50')
+    await user.type(screen.getByLabelText(/total vat on hammer/i), '15.50')
+    // 60 hammer + 15 delivery + 17.50 premium + 15.50 VAT
+    expect(screen.getByTestId('po-grand-total')).toHaveTextContent('108.00')
+
+    await user.click(screen.getByRole('button', { name: /create draft po/i }))
+    expect(await screen.findByText(/will be added to your products/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /yes, create/i }))
+    const poList = await screen.findByTestId('purchase-order-list')
+    expect(poList).toHaveTextContent('108.00')
+
+    await go(user, /products/i)
+    const row = screen.getAllByTestId('product-row').find((r) => r.textContent?.includes('Braun ThermoScan 7'))
+    expect(row).toBeDefined()
   })
 
   it('deleting a supplier removes it from the list', async () => {

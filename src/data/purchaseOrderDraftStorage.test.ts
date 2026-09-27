@@ -14,7 +14,7 @@ const draft: PurchaseOrderDraft = {
   orderDate: '2026-08-30',
   expectedDeliveryDate: '2026-09-01',
   notes: 'Ring before delivery',
-  lines: [{ kind: 'product', productId: 'prod-1', customName: '', isLot: false, quantity: '20', unitCost: '0.01', vatAmount: '' }],
+  lines: [{ kind: 'product', productId: 'prod-1', customName: '', isLot: false, quantity: '20', hammerPrice: '0.20', vatAmount: '' }],
   deliveryCost: '0',
   buyersPremium: '0',
   vatAmount: '0',
@@ -41,6 +41,19 @@ describe('purchaseOrderDraftStorage', () => {
     clearPurchaseOrderDraft(storage)
     expect(storage.getItem(PURCHASE_ORDER_DRAFT_STORAGE_KEY)).toBeNull()
     expect(loadPurchaseOrderDraft(storage)).toBeNull()
+  })
+
+  it('converts an older draft that stored a per-unit cost into a line hammer price', () => {
+    storage.setItem(
+      PURCHASE_ORDER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: '2026-09-01T00:00:00Z',
+        draft: { ...draft, lines: [{ kind: 'product', productId: 'p', customName: '', isLot: false, quantity: '6', unitCost: '2.50', vatAmount: '' }] },
+      }),
+    )
+    expect(loadPurchaseOrderDraft(storage)?.lines[0]).toEqual({
+      kind: 'product', productId: 'p', customName: '', isLot: false, quantity: '6', hammerPrice: '15', vatAmount: '',
+    })
   })
 
   it('ignores corrupt JSON rather than throwing', () => {

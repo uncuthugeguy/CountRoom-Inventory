@@ -14,7 +14,10 @@ export interface PurchaseOrderDraftLine {
   customName: string
   isLot: boolean
   quantity: string
-  unitCost: string
+  /** The line's hammer price as printed on the invoice — the total for the
+   *  whole line (all `quantity` units), ex VAT. */
+  hammerPrice: string
+  /** VAT charged on this line's hammer price, as printed on the invoice. */
   vatAmount: string
 }
 
@@ -27,6 +30,7 @@ export interface PurchaseOrderDraft {
   lines: PurchaseOrderDraftLine[]
   deliveryCost: string
   buyersPremium: string
+  /** Invoice's "total VAT on hammer & premium". Blank = just the line VAT. */
   vatAmount: string
 }
 
@@ -57,7 +61,20 @@ function read(storage: Storage): SavedPurchaseOrderDraft | null {
  * successful "Create draft PO" or by signing out.
  */
 export function loadPurchaseOrderDraft(storage: Storage = localStorage): PurchaseOrderDraft | null {
-  return read(storage)?.draft ?? null
+  const draft = read(storage)?.draft
+  if (!draft) return null
+  // Older drafts stored a per-unit `unitCost` instead of the line's hammer
+  // price — convert so a half-typed PO from before the change isn't lost.
+  const lines = (draft.lines ?? []).map((line) => {
+    const legacy = line as PurchaseOrderDraftLine & { unitCost?: string }
+    if (typeof legacy.hammerPrice === 'string') return line
+    const { unitCost, ...rest } = legacy
+    const qty = Number(rest.quantity) || 0
+    const unit = Number(unitCost)
+    const hammerPrice = unitCost && unitCost.trim() !== '' && Number.isFinite(unit) ? String(Math.round(unit * qty * 100) / 100) : ''
+    return { ...rest, hammerPrice }
+  })
+  return { ...draft, lines }
 }
 
 export function savePurchaseOrderDraft(draft: PurchaseOrderDraft, storage: Storage = localStorage): void {
