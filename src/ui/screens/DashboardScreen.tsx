@@ -13,6 +13,7 @@ import {
 } from '../../domain/types'
 import { formatCurrency, formatDateTime, formatDelta, formatNumber } from '../format'
 import type { Tab } from '../components/Nav'
+import { SaleDetailDialog } from '../components/SaleDetailDialog'
 
 /** How far back the "Top profit makers" / "Not moving" panels look — a
  * rolling window (recomputed every render off the real clock) rather than a
@@ -107,6 +108,7 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
   const deadStock = role === 'manager' ? findDeadStock(products, sales, now, DEAD_STOCK_THRESHOLD_DAYS) : []
 
   const [detail, setDetail] = useState<DetailKey | null>(null)
+  const [viewingSale, setViewingSale] = useState<Sale | null>(null)
   const toggle = (key: DetailKey) => setDetail((current) => (current === key ? null : key))
 
   const byName = (a: Product, b: Product) => a.name.localeCompare(b.name)
@@ -239,6 +241,9 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
                     {role === 'manager' && <span className="muted">profit {formatCurrency(sale.profit)}</span>}
                     <span className="muted">{paymentMethodLabel(sale.paymentMethod)}</span>
                     <span className="muted">{formatDateTime(sale.createdAt)}</span>
+                    <button type="button" className="button button-ghost" onClick={() => setViewingSale(sale)}>
+                      View details
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -369,6 +374,9 @@ export function DashboardScreen({ products, role, movements, sales, onNavigate }
           </ul>
         )}
       </section>
+      {viewingSale && (
+        <SaleDetailDialog sale={viewingSale} isManager={role === 'manager'} onClose={() => setViewingSale(null)} />
+      )}
     </div>
   )
 }

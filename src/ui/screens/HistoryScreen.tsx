@@ -28,7 +28,6 @@ import {
 import {
   ACTIVITY_ACTION_LABELS,
   ACTIVITY_ENTITY_LABELS,
-  PAID_BY_LABELS,
   MOVEMENT_LABELS,
   type ActivityEntityType,
   type ActivityLogEntry,
@@ -41,6 +40,7 @@ import {
 } from '../../domain/types'
 import { Dialog } from '../components/Dialog'
 import { SaleFeesFields } from '../components/SaleFeesFields'
+import { SaleDetailDialog } from '../components/SaleDetailDialog'
 import { downloadCsv, timestampedFilename } from '../csvDownload'
 import { formatCurrency, formatDateTime, formatDelta, formatNumber, formatRelativeTime } from '../format'
 import {
@@ -49,71 +49,6 @@ import {
   loadSaleEditDraftFor,
   saveSaleEditDraft,
 } from '../../data/saleEditDraftStorage'
-
-/** The full itemised receipt for one past sale, opened from a row in the
- * sales list below — the same line-by-line breakdown Checkout shows right
- * after a sale, so it's never lost once you've navigated away. A manager can
- * also jump straight from here into editing it. */
-function ReceiptDialog({
-  sale,
-  isManager,
-  onClose,
-  onEdit,
-}: {
-  sale: Sale
-  isManager: boolean
-  onClose: () => void
-  onEdit: () => void
-}) {
-  return (
-    <Dialog title="Receipt" onClose={onClose}>
-      <p className="muted">{formatDateTime(sale.createdAt)}</p>
-      {sale.updatedAt && <p className="muted">Last edited {formatDateTime(sale.updatedAt)}</p>}
-      <p className="muted">Sold via {sale.channel || 'Unspecified'}</p>
-      <table className="receipt-lines">
-        <tbody>
-          {sale.lines.map((line) => (
-            <tr key={line.id}>
-              <td>
-                {line.quantity} × {line.name} ({line.sku})
-              </td>
-              <td className="receipt-amount">{formatCurrency(line.lineTotal)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="receipt-total">Total: {formatCurrency(sale.subtotal)}</p>
-      <p>Payment: {paymentMethodLabel(sale.paymentMethod)}</p>
-      {isManager &&
-        ((sale.buyerProtectionFee ?? 0) > 0 ||
-          (sale.deliveryCost ?? 0) > 0 ||
-          (sale.vat ?? 0) > 0 ||
-          (sale.advertisingCost ?? 0) > 0 ||
-          (sale.orderTotal !== null && sale.orderTotal !== undefined)) && (
-          <p className="muted" data-testid="receipt-fees">
-            {(sale.buyerProtectionFee ?? 0) > 0 &&
-              `Buyer protection ${formatCurrency(sale.buyerProtectionFee!)} (${PAID_BY_LABELS[sale.buyerProtectionFeePaidBy ?? 'seller']} paid) · `}
-            {(sale.deliveryCost ?? 0) > 0 &&
-              `Delivery ${formatCurrency(sale.deliveryCost!)} (${PAID_BY_LABELS[sale.deliveryPaidBy ?? 'seller']} paid) · `}
-            {(sale.vat ?? 0) > 0 && `VAT ${formatCurrency(sale.vat!)} · `}
-            {(sale.advertisingCost ?? 0) > 0 && `Advertising ${formatCurrency(sale.advertisingCost!)} · `}
-            {sale.orderTotal !== null && sale.orderTotal !== undefined && `Order total ${formatCurrency(sale.orderTotal)}`}
-          </p>
-        )}
-      {isManager && <p className="muted">Profit: {formatCurrency(sale.profit)}</p>}
-      <div className="dialog-actions">
-        {isManager && (
-          <button type="button" className="button" onClick={onEdit}>
-            Edit sale
-          </button>
-        )}
-        <button type="button" className="button button-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
-    </Dialog>
-  )
-}
 
 /** Full edit of a past sale — items, quantities, prices, channel and payment
  * method all reopen for change. Styled after Checkout's cart, but scoped to
@@ -862,7 +797,7 @@ function SalesView({
                     className="button button-ghost"
                     onClick={() => setViewingSale(sale)}
                   >
-                    View receipt
+                    View details
                   </button>
                 </div>
               </li>
@@ -872,7 +807,7 @@ function SalesView({
       )}
 
       {viewingSale && (
-        <ReceiptDialog
+        <SaleDetailDialog
           sale={viewingSale}
           isManager={isManager}
           onClose={() => setViewingSale(null)}

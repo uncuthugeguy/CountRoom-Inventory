@@ -620,7 +620,7 @@ describe('activity log', () => {
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
     const receipt = screen.getByRole('dialog')
     await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
 
@@ -634,6 +634,25 @@ describe('activity log', () => {
     const text = rows.map((r) => r.textContent).join(' | ')
     expect(text).toMatch(/edited.*Sale/)
     expect(text).toMatch(/channel eBay → Vinted/)
+  })
+
+  it('shows the full details of a sale after it has been put through', async () => {
+    const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
+    await seedSale(repository, '5012345678917', 2, 'eBay')
+    const [sale] = await repository.listSales()
+    const { user } = await renderApp(repository)
+
+    await go(user, /history/i)
+    await user.click(screen.getByRole('button', { name: /^sales$/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
+    const detail = await screen.findByTestId('sale-detail')
+    expect(detail).toHaveTextContent('eBay')
+    expect(detail).toHaveTextContent(`2 × ${sale.lines[0].name}`)
+    expect(detail).toHaveTextContent('Price each')
+    expect(detail).toHaveTextContent('Cost each')
+    expect(screen.getByTestId('sale-detail-profit-total')).toHaveTextContent(sale.profit.toFixed(2))
+    await user.click(within(detail).getByRole('button', { name: /^close$/i }))
+    expect(screen.queryByTestId('sale-detail')).toBeNull()
   })
 
   it('records editing a past return case and shows it on the Activity tab', async () => {
@@ -868,7 +887,7 @@ describe('editing a past sale', () => {
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
 
     const receipt = screen.getByRole('dialog')
     await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
@@ -900,7 +919,7 @@ describe('editing a past sale', () => {
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
     const receipt = screen.getByRole('dialog')
     await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
 
@@ -921,7 +940,7 @@ describe('editing a past sale', () => {
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
     const receipt = screen.getByRole('dialog')
     await user.click(within(receipt).getByRole('button', { name: /edit sale/i }))
 
@@ -960,7 +979,7 @@ describe('editing a past sale', () => {
 
     await go(user, /history/i)
     await user.click(screen.getByRole('button', { name: /^sales$/i }))
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edit sale/i }))
 
     fireEvent.change(within(screen.getByRole('dialog')).getByLabelText(/quantity for m6 flat washer/i), {
@@ -975,7 +994,7 @@ describe('editing a past sale', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
     expect(screen.queryByRole('dialog')).toBeNull()
 
-    await user.click(screen.getByRole('button', { name: /view receipt/i }))
+    await user.click(screen.getByRole('button', { name: /view details/i }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edit sale/i }))
 
     const reopened = screen.getByRole('dialog')
