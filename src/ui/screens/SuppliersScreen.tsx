@@ -10,7 +10,7 @@ import type {
   SupplierDraft,
   UnboxedLineItemInput,
 } from '../../domain/suppliers'
-import { calculatePoInvoiceTotals, nextPoNumber, poLineCostPerItem, roundCurrency } from '../../domain/suppliers'
+import { calculatePoInvoiceTotals, nextPoNumber, poLineTrueCostPerItem, roundCurrency } from '../../domain/suppliers'
 import { nextSku } from '../../domain/products'
 import {
   clearSupplierDraft,
@@ -323,8 +323,9 @@ export interface NewPurchaseOrderInput {
     quantity: number
     unitCost: number
     vatAmount?: number
-    /** Per-item cost incl. that line's VAT — used as the catalogue cost when
-     *  a custom item is saved as a new product. */
+    /** True per-item cost: own hammer + VAT, plus an even share of the
+     *  order's delivery, premium and VAT on premium — used as the catalogue
+     *  cost when a new item is saved as a product. */
     costPerItem: number
   }>
   deliveryCost: number
@@ -400,7 +401,11 @@ function NewPurchaseOrderForm({
     return hasSource && Number(line.quantity) > 0
   })
   const totals = calculatePoInvoiceTotals({
-    lines: usableLines.map((line) => ({ hammerPrice: money(line.hammerPrice), vatAmount: money(line.vatAmount) })),
+    lines: usableLines.map((line) => ({
+      hammerPrice: money(line.hammerPrice),
+      vatAmount: money(line.vatAmount),
+      quantity: Math.max(1, Math.round(Number(line.quantity)) || 1),
+    })),
     deliveryCost: money(deliveryCost),
     buyersPremium: money(buyersPremium),
     totalVat: vatAmount.trim() === '' ? undefined : money(vatAmount),
@@ -453,7 +458,7 @@ function NewPurchaseOrderForm({
         // the invoice's line hammer price is split back down per unit here.
         const unitCost = hammer / quantity
         const lineVat = line.vatAmount.trim() === '' ? undefined : money(line.vatAmount)
-        const costPerItem = poLineCostPerItem(hammer, lineVat ?? 0, quantity)
+        const costPerItem = poLineTrueCostPerItem(hammer, lineVat ?? 0, quantity, totals.overheadPerItem)
         return line.kind === 'product'
           ? { productId: line.productId, quantity, unitCost, vatAmount: lineVat, costPerItem }
           : { customName: line.customName.trim(), isLot: line.kind === 'lot', quantity, unitCost, vatAmount: lineVat, costPerItem }
@@ -693,11 +698,13 @@ function NewPurchaseOrderForm({
                     {formatCurrency(roundCurrency(hammer + lineVat))}
                   </span>
                 </div>
-                {kind !== 'lot' && qty > 0 && (
+                {qty > 0 && (
                   <div className="field">
-                    <span className="muted">Each (inc VAT)</span>
+                    <span className="muted" title="Hammer + VAT per item, plus an even share of delivery, buyer's premium and VAT on premium">
+                      {kind === 'lot' ? 'True cost (whole lot)' : 'True cost each'}
+                    </span>
                     <span className="mono" data-testid="po-line-each">
-                      {formatCurrency(poLineCostPerItem(hammer, lineVat, qty))}
+                      {formatCurrency(poLineTrueCostPerItem(hammer, lineVat, qty, totals.overheadPerItem))}
                     </span>
                   </div>
                 )}
@@ -774,6 +781,11 @@ function NewPurchaseOrderForm({
           </span>
         )}
         {totalRow('Grand total', totals.grandTotal, true, 'po-grand-total')}
+        {totals.totalItems > 0 && totals.overheadPerItem > 0 && (
+          <span className="muted" style={{ fontSize: '.85em' }} data-testid="po-overhead-per-item">
+            {`Delivery, premium and VAT on premium split evenly: ${formatCurrency(roundCurrency(totals.overheadPerItem))} added to each of the ${totals.totalItems} item${totals.totalItems === 1 ? '' : 's'}.`}
+          </span>
+        )}
       </div>
 
       <div className="field">

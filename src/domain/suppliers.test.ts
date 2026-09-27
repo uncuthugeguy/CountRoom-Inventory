@@ -3,7 +3,7 @@ import {
   poLineTotal,
   calculatePOSubtotal,
   findBestSupplier,
-  productsNeedingReorder, calculatePoInvoiceTotals, poLineCostPerItem } from './suppliers'
+  productsNeedingReorder, calculatePoInvoiceTotals, poLineCostPerItem, poLineTrueCostPerItem } from './suppliers'
 import type { PurchaseOrderLine, Supplier, SupplierProduct, PurchaseOrder, PurchaseOrderStatus } from './suppliers'
 
 describe('Supplier Domain', () => {
@@ -246,5 +246,28 @@ describe('poLineCostPerItem', () => {
     expect(poLineCostPerItem(60, 12, 6)).toBe(12)
     expect(poLineCostPerItem(10, 0, 3)).toBe(3.33)
     expect(poLineCostPerItem(10, 2, 0)).toBe(0)
+  })
+})
+
+describe('true cost per item', () => {
+  it('splits delivery, premium and VAT on premium evenly across every item', () => {
+    // 6 thermometers (60 hammer, 12 VAT) + 2 kettles (20 hammer, 4 VAT).
+    const totals = calculatePoInvoiceTotals({
+      lines: [
+        { hammerPrice: 60, vatAmount: 12, quantity: 6 },
+        { hammerPrice: 20, vatAmount: 4, quantity: 2 },
+      ],
+      deliveryCost: 8,
+      buyersPremium: 20,
+      totalVat: 20, // 16 on hammer + 4 on premium
+    })
+    expect(totals.totalItems).toBe(8)
+    expect(totals.overheadPerItem).toBe(4) // (8 + 20 + 4) / 8
+    const thermo = poLineTrueCostPerItem(60, 12, 6, totals.overheadPerItem)
+    const kettle = poLineTrueCostPerItem(20, 4, 2, totals.overheadPerItem)
+    expect(thermo).toBe(16) // 12 + 4
+    expect(kettle).toBe(16) // 12 + 4
+    // Every item's true cost adds back up to the grand total.
+    expect(thermo * 6 + kettle * 2).toBe(totals.grandTotal)
   })
 })

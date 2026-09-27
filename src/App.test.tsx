@@ -1458,6 +1458,8 @@ describe('suppliers and purchase orders', () => {
     await user.type(screen.getByLabelText(/total vat on hammer/i), '15.50')
     // 60 hammer + 15 delivery + 17.50 premium + 15.50 VAT
     expect(screen.getByTestId('po-grand-total')).toHaveTextContent('108.00')
+    // True cost each: 12 (hammer+VAT) + (15 + 17.50 + 3.50 premium VAT) / 6 = 18
+    expect(screen.getByTestId('po-line-each')).toHaveTextContent('18.00')
 
     await user.click(screen.getByRole('button', { name: /create draft po/i }))
     expect(await screen.findByText(/will be added to your products/i)).toBeInTheDocument()

@@ -222,7 +222,9 @@ export function calculatePOGrandTotal(totals: {
  * the grand total still adds up while you're part-way through typing.
  */
 export interface PoInvoiceTotalsInput {
-  lines: Array<{ hammerPrice: number; vatAmount: number }>
+  /** `quantity` is used to split delivery/premium evenly per item; lines
+   *  without one count as a single item. */
+  lines: Array<{ hammerPrice: number; vatAmount: number; quantity?: number }>
   deliveryCost: number
   buyersPremium: number
   totalVat?: number
@@ -243,12 +245,19 @@ export interface PoInvoiceTotals {
    *  VAT that must have been charged on the premium (never negative). */
   premiumVat: number
   grandTotal: number
+  /** Total number of items across every line (a lot counts as its own
+   *  quantity, normally 1, since its contents aren't known yet). */
+  totalItems: number
+  /** Delivery + buyer's premium + VAT on premium, split evenly across every
+   *  item on the order (unrounded — round only the final per-item figure). */
+  overheadPerItem: number
 }
 
 export function calculatePoInvoiceTotals(input: PoInvoiceTotalsInput): PoInvoiceTotals {
   const netHammer = roundCurrency(input.lines.reduce((sum, line) => sum + line.hammerPrice, 0))
   const hammerVat = roundCurrency(input.lines.reduce((sum, line) => sum + line.vatAmount, 0))
   const totalVat = roundCurrency(input.totalVat ?? hammerVat)
+  const totalItems = input.lines.reduce((sum, line) => sum + (line.quantity ?? 1), 0)
   return {
     netHammer,
     hammerVat,
@@ -257,6 +266,11 @@ export function calculatePoInvoiceTotals(input: PoInvoiceTotalsInput): PoInvoice
     buyersPremium: roundCurrency(input.buyersPremium),
     totalVat,
     premiumVat: roundCurrency(Math.max(0, totalVat - hammerVat)),
+    totalItems,
+    overheadPerItem:
+      totalItems > 0
+        ? (input.deliveryCost + input.buyersPremium + Math.max(0, totalVat - hammerVat)) / totalItems
+        : 0,
     grandTotal: calculatePOGrandTotal({
       subtotal: netHammer,
       deliveryCost: input.deliveryCost,
@@ -272,6 +286,23 @@ export function calculatePoInvoiceTotals(input: PoInvoiceTotalsInput): PoInvoice
 export function poLineCostPerItem(hammerPrice: number, vatAmount: number, quantity: number): number {
   if (!(quantity > 0)) return 0
   return roundCurrency((hammerPrice + vatAmount) / quantity)
+}
+
+/**
+ * True landed cost of one item on a PO line: its own hammer + VAT per item,
+ * plus an even share of the order's delivery, buyer's premium and VAT on
+ * premium (`overheadPerItem` from `calculatePoInvoiceTotals`). Every item's
+ * true cost × quantity adds back up to the grand total (give or take
+ * penny rounding).
+ */
+export function poLineTrueCostPerItem(
+  hammerPrice: number,
+  vatAmount: number,
+  quantity: number,
+  overheadPerItem: number,
+): number {
+  if (!(quantity > 0)) return 0
+  return roundCurrency((hammerPrice + vatAmount) / quantity + overheadPerItem)
 }
 
 const PO_NUMBER_PATTERN = /^PO-(\d+)$/i
