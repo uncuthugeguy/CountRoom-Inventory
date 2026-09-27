@@ -99,6 +99,7 @@ function buildStaleSkuRepo(): InventoryRepository {
     listSupplierProducts: vi.fn(async () => []),
     listPurchaseOrders: vi.fn(async () => []),
     createPurchaseOrder: vi.fn(),
+    updatePurchaseOrder: vi.fn(),
     sendPurchaseOrder: vi.fn(),
     confirmPurchaseOrder: vi.fn(),
     receivePurchaseOrder: vi.fn(),
@@ -1457,8 +1458,13 @@ describe('suppliers and purchase orders', () => {
     expect(poList).toHaveTextContent('Draft')
     expect(poList).toHaveTextContent('0.20') // 20 * 0.01
 
+    // A not-yet-received PO can be edited — the form opens pre-filled.
+    await user.click(within(poList).getByRole('button', { name: /^edit /i }))
+    expect(await screen.findByRole('button', { name: /^save changes$/i })).toBeInTheDocument()
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+
     // Walk it through the status flow.
-    await user.click(within(poList).getByRole('button', { name: /^send$/i }))
+    await user.click(within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /^send$/i }))
     await waitFor(() => expect(within(screen.getByTestId('purchase-order-list')).getByText('Sent')).toBeInTheDocument())
 
     await user.click(within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /^confirm$/i }))
@@ -1466,9 +1472,9 @@ describe('suppliers and purchase orders', () => {
       expect(within(screen.getByTestId('purchase-order-list')).getByText('Confirmed')).toBeInTheDocument(),
     )
 
-    await user.click(
-      within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /mark received/i }),
-    )
+    // Receiving asks what actually arrived (defaults to the ordered quantity).
+    await user.click(within(screen.getByTestId('purchase-order-list')).getByRole('button', { name: /^receive/i }))
+    await user.click(await screen.findByRole('button', { name: /mark received/i }))
     await waitFor(() =>
       expect(within(screen.getByTestId('purchase-order-list')).getByText('Received')).toBeInTheDocument(),
     )

@@ -335,8 +335,9 @@ export interface NewPurchaseOrderInput {
 
 /**
  * Same autosave + confirm-before-save treatment as SupplierForm above.
- * There's only ever one "new PO" draft slot (no edit-PO form to disambiguate
- * against), so it isn't keyed to anything — see purchaseOrderDraftStorage.ts.
+ * There's only ever one "new PO" draft slot, so it isn't keyed to anything —
+ * see purchaseOrderDraftStorage.ts. When editing an existing PO (`editing`),
+ * the form is seeded from that PO and skips the autosave slot entirely.
  *
  * Laid out like an auction-house invoice (John Pye Auctions is the concrete
  * example): each line has its own hammer price and VAT, with a line
@@ -347,6 +348,30 @@ export interface NewPurchaseOrderInput {
  * can be picked next time), or a mixed "lot" whose contents aren't known
  * until it's unboxed (see the "Unbox" flow on a received PO, further down).
  */
+/** An existing PO turned back into the form's own field state, for editing. */
+const poToDraft = (po: PurchaseOrder): PurchaseOrderDraft => ({
+  supplierId: po.supplierId,
+  poNumber: po.poNumber,
+  orderDate: po.orderDate ?? '',
+  expectedDeliveryDate: po.expectedDeliveryDate ?? '',
+  notes: po.notes ?? '',
+  lines:
+    po.lines.length > 0
+      ? po.lines.map((line) => ({
+          kind: line.isLot ? 'lot' : line.productId ? 'product' : 'custom',
+          productId: line.productId ?? '',
+          customName: line.productId ? '' : (line.customName ?? line.name),
+          isLot: line.isLot === true,
+          quantity: String(line.quantity),
+          hammerPrice: String(roundCurrency(line.lineTotal)),
+          vatAmount: line.vatAmount != null && line.vatAmount > 0 ? String(line.vatAmount) : '',
+        }))
+      : [{ ...EMPTY_PO_LINE }],
+  deliveryCost: po.deliveryCost ? String(po.deliveryCost) : '',
+  buyersPremium: po.buyersPremium ? String(po.buyersPremium) : '',
+  vatAmount: po.vatAmount ? String(po.vatAmount) : '',
+})
+
 function NewPurchaseOrderForm({
   idPrefix,
   suppliers,
@@ -355,6 +380,7 @@ function NewPurchaseOrderForm({
   onSubmit,
   onCancel,
   draftStorage,
+  editing,
 }: {
   idPrefix: string
   suppliers: Supplier[]
@@ -363,10 +389,15 @@ function NewPurchaseOrderForm({
   onSubmit: (input: NewPurchaseOrderInput) => Promise<Result<PurchaseOrder>>
   onCancel: () => void
   draftStorage?: Storage
+  /** When set, the form edits this existing PO instead of creating a new
+   *  one — seeded from it, and it doesn't touch the new-PO autosave slot. */
+  editing?: PurchaseOrder
 }) {
   const fallback = () => emptyPoDraft(suppliers[0]?.id ?? '', nextPoNumber(purchaseOrders))
-  const [restoredDraft] = useState<PurchaseOrderDraft | null>(() => loadPurchaseOrderDraft(draftStorage))
-  const seed = restoredDraft ?? fallback()
+  const [restoredDraft] = useState<PurchaseOrderDraft | null>(() =>
+    editing ? null : loadPurchaseOrderDraft(draftStorage),
+  )
+  const seed = editing ? poToDraft(editing) : (restoredDraft ?? fallback())
   const [supplierId, setSupplierId] = useState(seed.supplierId)
   const [poNumber, setPoNumber] = useState(seed.poNumber)
   const [orderDate, setOrderDate] = useState(seed.orderDate)
@@ -416,11 +447,12 @@ function NewPurchaseOrderForm({
   // ProductFormDialog: survives a tab switch or an accidental close, cleared
   // only by a successful "Create draft PO" or by signing out (see App.tsx).
   useEffect(() => {
+    if (editing) return
     savePurchaseOrderDraft(
       { supplierId, poNumber, orderDate, expectedDeliveryDate, notes, lines, deliveryCost, buyersPremium, vatAmount },
       draftStorage,
     )
-  }, [supplierId, poNumber, orderDate, expectedDeliveryDate, notes, lines, deliveryCost, buyersPremium, vatAmount, draftStorage])
+  }, [supplierId, poNumber, orderDate, expectedDeliveryDate, notes, lines, deliveryCost, buyersPremium, vatAmount, draftStorage, editing])
 
   useEffect(() => {
     if (confirming) confirmButtonRef.current?.focus()
@@ -480,7 +512,7 @@ function NewPurchaseOrderForm({
       setError(result.error)
       return
     }
-    clearPurchaseOrderDraft(draftStorage)
+    if (!editing) clearPurchaseOrderDraft(draftStorage)
     setConfirming(null)
   }
 
@@ -495,7 +527,7 @@ function NewPurchaseOrderForm({
     return (
       <div className="form">
         <p className="dialog-message">
-          {`Create ${confirming.poNumber || 'this purchase order'} for ${supplierName || 'this supplier'} — ${itemCount} line${itemCount === 1 ? '' : 's'}, grand total ${formatCurrency(totals.grandTotal)}?`}
+          {`${editing ? 'Save changes to' : 'Create'} ${confirming.poNumber || 'this purchase order'} for ${supplierName || 'this supplier'} — ${itemCount} line${itemCount === 1 ? '' : 's'}, grand total ${formatCurrency(totals.grandTotal)}?`}
         </p>
         {newProducts.length > 0 && (
           <p className="muted">
@@ -520,7 +552,7 @@ function NewPurchaseOrderForm({
             onClick={confirmSave}
             disabled={saving}
           >
-            {saving ? 'Saving…' : 'Yes, create'}
+            {saving ? 'Saving…' : editing ? 'Yes, save changes' : 'Yes, create'}
           </button>
         </div>
       </div>
@@ -809,7 +841,7 @@ function NewPurchaseOrderForm({
           Cancel
         </button>
         <button type="submit" className="button button-primary" disabled={!supplierId || usableLines.length === 0}>
-          Create draft PO
+          {editing ? 'Save changes' : 'Create draft PO'}
         </button>
       </div>
     </form>
@@ -820,8 +852,9 @@ function NewPurchaseOrderForm({
  * Manager-only. Suppliers you buy from, and the purchase orders you send
  * them — deliberately kept to the simple loop a small shop actually needs:
  * add a supplier, draft a PO against it, walk it through sent → confirmed →
- * received (which adds the stock), or cancel it. No per-line partial
- * receiving and no supplier-specific cost catalogue yet — a PO's line cost
+ * received (which adds the stock), or cancel it. A PO can be edited until
+ * it's received, and receiving asks how many of each line actually arrived
+ * (0 = didn't turn up). No supplier-specific cost catalogue yet — a PO's line cost
  * is just typed in each time, prefilled from the product's own cost as a
  * starting point. Both are easy to add later if the simple version isn't
  * enough; see the project notes for why this was cut for the first pass.
@@ -1054,6 +1087,91 @@ function UnboxLotDialog({
  * rebuilt from what was stored. A line's hammer price is its stored
  * `lineTotal`; delivery, premium and total VAT come from the PO header.
  */
+/**
+ * Mark a PO received, entering how many of each line actually arrived —
+ * defaults to the ordered quantity; set a line to 0 if it never turned up.
+ * Only what's entered here is added to stock. Lot lines are skipped (they're
+ * added to stock by unboxing instead).
+ */
+function ReceivePurchaseOrderDialog({
+  po,
+  onSubmit,
+  onCancel,
+}: {
+  po: PurchaseOrder
+  onSubmit: (lineQuantities: Map<string, number>) => Promise<Result<PurchaseOrder>>
+  onCancel: () => void
+}) {
+  const receivable = po.lines.filter((line) => !line.isLot)
+  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
+    Object.fromEntries(receivable.map((line) => [line.id, String(line.quantity)])),
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const parsed = (lineId: string) => Math.max(0, Math.round(Number(quantities[lineId]) || 0))
+  const short = receivable.filter((line) => parsed(line.id) < line.quantity)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    const map = new Map(receivable.map((line) => [line.id, parsed(line.id)]))
+    const result = await onSubmit(map)
+    setSaving(false)
+    if (!result.ok) setError(result.error)
+  }
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <p className="muted">
+        Enter how many of each item actually arrived. Set it to 0 if something didn't turn up — only what you
+        enter here is added to stock.
+      </p>
+      <ul className="plain-list">
+        {receivable.map((line) => (
+          <li key={line.id} className="low-stock-item">
+            <span className="low-stock-name">{line.name || line.sku}</span>
+            <span className="muted">Ordered {line.quantity}</span>
+            <div className="field" style={{ maxWidth: '8rem' }}>
+              <label htmlFor={`receive-${line.id}`}>Arrived</label>
+              <input
+                id={`receive-${line.id}`}
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={quantities[line.id] ?? ''}
+                onChange={(e) => setQuantities((q) => ({ ...q, [line.id]: e.target.value }))}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+      {po.lines.some((line) => line.isLot) && (
+        <p className="muted">Lot lines aren't counted here — unbox them after receiving to add their contents to stock.</p>
+      )}
+      {short.length > 0 && (
+        <p className="hint" role="status">
+          {`${short.length} line${short.length === 1 ? ' is' : 's are'} short of what was ordered.`}
+        </p>
+      )}
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="dialog-actions">
+        <button type="button" className="button button-ghost" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="submit" className="button button-primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Mark received (adds stock)'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
 function PurchaseOrderDetail({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const totals = calculatePoInvoiceTotals({
     lines: po.lines.map((line) => ({
@@ -1200,6 +1318,8 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
   const [busyId, setBusyId] = useState<string | null>(null)
   const [unboxing, setUnboxing] = useState<{ po: PurchaseOrder; line: PurchaseOrderLine } | null>(null)
   const [viewingPo, setViewingPo] = useState<PurchaseOrder | null>(null)
+  const [editingPo, setEditingPo] = useState<PurchaseOrder | null>(null)
+  const [receivingPo, setReceivingPo] = useState<PurchaseOrder | null>(null)
 
   const refreshSuppliers = async () => setSuppliers(await inventory.listSuppliers())
   const refreshPurchaseOrders = async () => setPurchaseOrders(await inventory.listPurchaseOrders())
@@ -1345,6 +1465,16 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
                   >
                     View
                   </button>
+                  {(po.status === 'draft' || po.status === 'sent' || po.status === 'confirmed') && (
+                    <button
+                      type="button"
+                      className="button button-ghost"
+                      aria-label={`Edit ${po.poNumber || 'purchase order'}`}
+                      onClick={() => setEditingPo(po)}
+                    >
+                      Edit
+                    </button>
+                  )}
                   {po.status === 'draft' && (
                     <button
                       type="button"
@@ -1382,17 +1512,10 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
                       type="button"
                       className="button button-primary"
                       disabled={busyId === po.id}
-                      title="Adds this PO's full ordered quantity to stock right away."
-                      onClick={async () => {
-                        setBusyId(po.id)
-                        const lineQuantities = new Map(po.lines.map((line) => [line.id, line.quantity]))
-                        const result = await inventory.receivePurchaseOrder(po.id, lineQuantities)
-                        if (!result.ok) setError(result.error)
-                        else await refreshPurchaseOrders()
-                        setBusyId(null)
-                      }}
+                      title="Enter what actually arrived, then add it to stock."
+                      onClick={() => setReceivingPo(po)}
                     >
-                      Mark received (adds stock)
+                      Receive…
                     </button>
                   )}
                   {(po.status === 'draft' || po.status === 'sent' || po.status === 'confirmed') && (
@@ -1490,6 +1613,46 @@ export function SuppliersScreen({ inventory, products, supplierDraftStorage, pur
               const result = await inventory.createPurchaseOrder(linked.value)
               if (result.ok) {
                 setCreatingPo(false)
+                await refreshPurchaseOrders()
+              }
+              return result
+            }}
+          />
+        </Dialog>
+      )}
+
+      {editingPo && suppliers && (
+        <Dialog title={`Edit ${editingPo.poNumber || 'purchase order'}`} onClose={() => setEditingPo(null)}>
+          <NewPurchaseOrderForm
+            idPrefix={`${idPrefix}-edit-po`}
+            suppliers={suppliers}
+            products={products}
+            purchaseOrders={purchaseOrders ?? []}
+            editing={editingPo}
+            onCancel={() => setEditingPo(null)}
+            onSubmit={async (input) => {
+              const linked = await saveNewItemsAsProducts(input, products, inventory)
+              if (!linked.ok) return linked
+              const result = await inventory.updatePurchaseOrder(editingPo.id, linked.value)
+              if (result.ok) {
+                setEditingPo(null)
+                await refreshPurchaseOrders()
+              }
+              return result
+            }}
+          />
+        </Dialog>
+      )}
+
+      {receivingPo && (
+        <Dialog title={`Receive ${receivingPo.poNumber || 'purchase order'}`} onClose={() => setReceivingPo(null)}>
+          <ReceivePurchaseOrderDialog
+            po={receivingPo}
+            onCancel={() => setReceivingPo(null)}
+            onSubmit={async (lineQuantities) => {
+              const result = await inventory.receivePurchaseOrder(receivingPo.id, lineQuantities)
+              if (result.ok) {
+                setReceivingPo(null)
                 await refreshPurchaseOrders()
               }
               return result

@@ -1056,6 +1056,66 @@ describe('purchase orders — custom items, mixed lots, and unboxing', () => {
     expect(result.value.grandTotal).toBeCloseTo(87.68, 2)
   })
 
+  it('edits a not-yet-received PO — lines, costs and totals — and refuses once received', async () => {
+    const repo = createLocalRepository({ storage, seed: false })
+    const supplier = await makeSupplier(repo)
+    const created = await repo.createPurchaseOrder({
+      supplierId: supplier.id,
+      poNumber: 'PO-0009',
+      orderDate: '2026-09-27',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [
+        { customName: 'Phone cases', quantity: 5, unitCost: 2 },
+        { customName: 'Added by mistake', quantity: 1, unitCost: 50 },
+      ],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    if (!created.ok) throw new Error(created.error)
+    expect(created.value.subtotal).toBe(60)
+
+    const edited = await repo.updatePurchaseOrder(created.value.id, {
+      supplierId: supplier.id,
+      poNumber: 'PO-0009',
+      orderDate: '2026-09-27',
+      expectedDeliveryDate: '2026-10-01',
+      notes: 'Removed the mistaken line',
+      lines: [{ customName: 'Phone cases', quantity: 3, unitCost: 2 }],
+      deliveryCost: 4,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    expect(edited.ok).toBe(true)
+    if (!edited.ok) return
+    expect(edited.value.id).toBe(created.value.id)
+    expect(edited.value.status).toBe('draft')
+    expect(edited.value.lines).toHaveLength(1)
+    expect(edited.value.lines[0]).toMatchObject({ name: 'Phone cases', quantity: 3 })
+    expect(edited.value.subtotal).toBe(6)
+    expect(edited.value.grandTotal).toBe(10)
+    expect((await repo.listPurchaseOrders()).find((po) => po.id === created.value.id)?.notes).toBe(
+      'Removed the mistaken line',
+    )
+
+    await repo.sendPurchaseOrder(created.value.id)
+    await repo.confirmPurchaseOrder(created.value.id)
+    await repo.receivePurchaseOrder(created.value.id, new Map())
+    const afterReceive = await repo.updatePurchaseOrder(created.value.id, {
+      supplierId: supplier.id,
+      poNumber: 'PO-0009',
+      orderDate: '2026-09-27',
+      expectedDeliveryDate: '',
+      notes: '',
+      lines: [{ customName: 'Phone cases', quantity: 1, unitCost: 2 }],
+      deliveryCost: 0,
+      buyersPremium: 0,
+      vatAmount: 0,
+    })
+    expect(afterReceive.ok).toBe(false)
+  })
+
   it('rejects a line with neither a product nor a name', async () => {
     const repo = createLocalRepository({ storage, seed: false })
     const supplier = await makeSupplier(repo)

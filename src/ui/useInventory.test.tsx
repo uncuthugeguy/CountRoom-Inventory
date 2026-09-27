@@ -150,6 +150,7 @@ describe('useInventory', () => {
       listSupplierProducts: async () => [],
       listPurchaseOrders: async () => [],
       createPurchaseOrder: vi.fn(),
+      updatePurchaseOrder: vi.fn(),
       sendPurchaseOrder: vi.fn(),
       confirmPurchaseOrder: vi.fn(),
       receivePurchaseOrder: vi.fn(),

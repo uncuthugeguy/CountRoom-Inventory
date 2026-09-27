@@ -200,6 +200,12 @@ export interface InventoryRepository {
   listPurchaseOrders(): Promise<PurchaseOrder[]>
   /** Manager-only. Creates a new PO in draft status. */
   createPurchaseOrder(input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
+  /**
+   * Manager-only. Edits a PO that hasn't been received or cancelled yet —
+   * supplier, reference, dates, notes, costs, and its lines (add, remove,
+   * change quantity/price). Its status is unchanged.
+   */
+  updatePurchaseOrder(id: string, input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
   /** Manager-only. Sends a draft PO to the supplier (changes status to 'sent'). */
   sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   /** Manager-only. Marks a sent PO as confirmed by the supplier. */

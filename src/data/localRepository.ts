@@ -210,6 +210,50 @@ export function createLocalRepository(
     return entry
   }
 
+  /** Builds a PO's lines from line inputs — shared by create/update. */
+  const buildLocalPoLines = (
+    poId: string,
+    inputLines: PurchaseOrderInput['lines'],
+  ): Result<PurchaseOrderLine[]> => {
+    const lines: PurchaseOrderLine[] = []
+    for (const line of inputLines) {
+      if (line.productId) {
+        const product = state.products.find((p) => p.id === line.productId)
+        if (!product) return { ok: false, error: NOT_FOUND }
+        lines.push({
+          id: newId(),
+          poId,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unitCost: line.unitCost,
+          lineTotal: line.quantity * line.unitCost,
+          vatAmount: line.vatAmount,
+        })
+      } else {
+        // A custom-named line (a one-off item not yet in the catalogue) or
+        // a mixed lot — neither has a real product until it's received
+        // (ordinary line) or unboxed (lot line).
+        const name = (line.customName ?? '').trim()
+        if (!name) return { ok: false, error: 'Each line needs either a product or a name.' }
+        lines.push({
+          id: newId(),
+          poId,
+          sku: '',
+          name,
+          customName: name,
+          isLot: line.isLot === true,
+          quantity: line.quantity,
+          unitCost: line.unitCost,
+          lineTotal: line.quantity * line.unitCost,
+          vatAmount: line.vatAmount,
+        })
+      }
+    }
+    return { ok: true, value: lines }
+  }
+
   return {
     kind: 'local',
     // No second real login exists in offline demo mode — see Role's doc
@@ -910,42 +954,9 @@ export function createLocalRepository(
       if (!supplier) return { ok: false, error: NOT_FOUND }
 
       const poId = newId()
-      const lines: PurchaseOrderLine[] = []
-      for (const line of input.lines) {
-        if (line.productId) {
-          const product = state.products.find((p) => p.id === line.productId)
-          if (!product) return { ok: false, error: NOT_FOUND }
-          lines.push({
-            id: newId(),
-            poId,
-            productId: product.id,
-            sku: product.sku,
-            name: product.name,
-            quantity: line.quantity,
-            unitCost: line.unitCost,
-            lineTotal: line.quantity * line.unitCost,
-            vatAmount: line.vatAmount,
-          })
-        } else {
-          // A custom-named line (a one-off item not yet in the catalogue) or
-          // a mixed lot — neither has a real product until it's received
-          // (ordinary line) or unboxed (lot line).
-          const name = (line.customName ?? '').trim()
-          if (!name) return { ok: false, error: 'Each line needs either a product or a name.' }
-          lines.push({
-            id: newId(),
-            poId,
-            sku: '',
-            name,
-            customName: name,
-            isLot: line.isLot === true,
-            quantity: line.quantity,
-            unitCost: line.unitCost,
-            lineTotal: line.quantity * line.unitCost,
-            vatAmount: line.vatAmount,
-          })
-        }
-      }
+      const built = buildLocalPoLines(poId, input.lines)
+      if (!built.ok) return built
+      const lines = built.value
 
       const subtotal = calculatePOSubtotal(lines)
       const deliveryCost = input.deliveryCost || 0
@@ -973,6 +984,46 @@ export function createLocalRepository(
       state.purchaseOrders.push(po)
       persist()
       return { ok: true, value: po }
+    },
+
+    async updatePurchaseOrder(id: string, input: PurchaseOrderInput): Promise<Result<PurchaseOrder>> {
+      const idx = state.purchaseOrders.findIndex((po) => po.id === id)
+      if (idx === -1) return { ok: false, error: NOT_FOUND }
+      const po = state.purchaseOrders[idx]
+      if (po.status !== 'draft' && po.status !== 'sent' && po.status !== 'confirmed') {
+        return { ok: false, error: "Only a PO that hasn't been received or cancelled can be edited." }
+      }
+      const supplier = state.suppliers.find((s) => s.id === input.supplierId)
+      if (!supplier) return { ok: false, error: NOT_FOUND }
+      const built = buildLocalPoLines(id, input.lines)
+      if (!built.ok) return built
+      const lines = built.value
+      if (lines.length === 0) return { ok: false, error: 'A purchase order needs at least one line.' }
+
+      const subtotal = calculatePOSubtotal(lines)
+      const deliveryCost = input.deliveryCost || 0
+      const buyersPremium = input.buyersPremium || 0
+      const vatAmount = input.vatAmount || 0
+      const updated: PurchaseOrder = {
+        ...po,
+        supplierId: input.supplierId,
+        supplierName: supplier.name,
+        poNumber: input.poNumber,
+        orderDate: input.orderDate,
+        expectedDeliveryDate: input.expectedDeliveryDate,
+        notes: input.notes,
+        lines,
+        subtotal,
+        deliveryCost,
+        buyersPremium,
+        vatAmount,
+        grandTotal:
+          input.grandTotal ?? calculatePOGrandTotal({ subtotal, deliveryCost, buyersPremium, vatAmount }),
+        updatedAt: new Date().toISOString(),
+      }
+      state.purchaseOrders[idx] = updated
+      persist()
+      return { ok: true, value: updated }
     },
 
     async sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>> {

@@ -87,6 +87,7 @@ export interface Inventory {
   deleteSupplier(id: string): Promise<Result<true>>
   listPurchaseOrders(): Promise<PurchaseOrder[]>
   createPurchaseOrder(input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
+  updatePurchaseOrder(id: string, input: PurchaseOrderInput): Promise<Result<PurchaseOrder>>
   sendPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   confirmPurchaseOrder(id: string): Promise<Result<PurchaseOrder>>
   /** Adds stock for every line and marks the PO received — refreshes the
@@ -452,6 +453,16 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     }
   }, [])
 
+  const updatePurchaseOrder = useCallback(async (id: string, input: PurchaseOrderInput) => {
+    const repo = repoRef.current
+    if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
+    try {
+      return await repo.updatePurchaseOrder(id, input)
+    } catch (cause) {
+      return { ok: false as const, error: message(cause) }
+    }
+  }, [])
+
   const sendPurchaseOrder = useCallback(async (id: string) => {
     const repo = repoRef.current
     if (!repo) return { ok: false as const, error: 'Inventory is still loading.' }
@@ -538,6 +549,7 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     deleteSupplier,
     listPurchaseOrders,
     createPurchaseOrder,
+    updatePurchaseOrder,
     sendPurchaseOrder,
     confirmPurchaseOrder,
     receivePurchaseOrder,
