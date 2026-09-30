@@ -234,6 +234,9 @@ export interface Sale extends SaleFeesFields {
   /** The marketplace's own order/transaction number (e.g. an eBay order
    *  number like 25-15190-68717), as recorded by CountRoom Register. */
   orderNumber?: string
+  /** The receipt reference Register prints as a sale receipt's barcode when
+   * there's no order number (sales.client_ref) — so a scanned receipt finds it. */
+  clientRef?: string
   lines: SaleLine[]
 }
 
@@ -256,19 +259,67 @@ export const RETURN_ACTION_LABELS: Record<ReturnAction, string> = {
   goodwill: 'Goodwill gesture',
 }
 
-/** What happens to a returned item once it's back in hand. */
-export type StockDisposition = 'restock' | 'writeoff'
+/** What happens to a returned item once it's back in hand — the same three
+ * choices CountRoom Register offers, stored in the shared return_lines
+ * table. 'inspect' keeps it out of stock until someone inspects it (see
+ * "Awaiting inspection" on the Returns screen) and restocks or writes it off. */
+export type StockDisposition = 'restock' | 'inspect' | 'writeoff'
 
-export const STOCK_DISPOSITIONS: StockDisposition[] = ['restock', 'writeoff']
+/** In the order both apps offer them — "Inspect first" is the default. */
+export const STOCK_DISPOSITIONS: StockDisposition[] = ['inspect', 'restock', 'writeoff']
 
-/** 'inspect' is written only by CountRoom Register: the item is back but
- * held out of stock until someone inspects it there and restocks or writes
- * it off. Inventory never offers it (it isn't in STOCK_DISPOSITIONS), it
- * just needs a label so such a line displays properly here. */
-export const STOCK_DISPOSITION_LABELS: Record<StockDisposition | 'inspect', string> = {
+/** How a recorded line reads afterwards (history, detail, CSV). */
+export const STOCK_DISPOSITION_LABELS: Record<StockDisposition, string> = {
   restock: 'Back into stock',
   writeoff: 'Written off',
-  inspect: 'Awaiting inspection (in Register)',
+  inspect: 'Awaiting inspection',
+}
+
+/** Button wording when choosing — matches Register's own labels exactly. */
+export const STOCK_DISPOSITION_CHOICE_LABELS: Record<StockDisposition, string> = {
+  inspect: 'Inspect first',
+  restock: 'Restock',
+  writeoff: 'Write off',
+}
+
+// --- Staged returns (shared with CountRoom Register) ------------------------
+//
+// A return can be worked in three stages, paused in between:
+//   1. label sent (postage cost + expected items)   -> 'awaiting_item'
+//   2. item arrived (inspect / restock / write off) -> 'awaiting_refund'
+//   3. refund issued (refund / goodwill / replace)  -> 'completed'
+// or processed all at once ('completed' straight away). Stock only moves
+// when the item arrives. A return still waiting for its item can be
+// cancelled ('cancelled' — the label cost stays recorded).
+
+export type ReturnStatus = 'awaiting_item' | 'awaiting_refund' | 'completed' | 'cancelled'
+
+export const RETURN_STATUS_LABELS: Record<ReturnStatus, string> = {
+  awaiting_item: 'Label sent — awaiting item',
+  awaiting_refund: 'Item arrived — awaiting refund',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+}
+
+/** An item the customer is sending back, logged at stage 1. */
+export interface ExpectedReturnItem {
+  productId: string
+  sku: string
+  name: string
+  quantity: number
+}
+
+/** Goodwill types — the same keys Register saves to returns.goodwill_type.
+ * Older Inventory cases hold free text there, which still displays as-is. */
+export const GOODWILL_TYPES = ['credit_note', 'discount_voucher', 'other'] as const
+export type GoodwillType = (typeof GOODWILL_TYPES)[number]
+export const GOODWILL_TYPE_LABELS: Record<GoodwillType, string> = {
+  credit_note: 'Credit note',
+  discount_voucher: 'Discount voucher',
+  other: 'Other',
+}
+export function goodwillTypeLabel(type: string): string {
+  return (GOODWILL_TYPE_LABELS as Record<string, string>)[type] ?? type
 }
 
 /** One physical item coming back from a customer — the item itself for a
@@ -291,6 +342,10 @@ export interface ReturnLine {
   quantity: number
   disposition: StockDisposition
   unitCost: number
+  /** When an 'inspect' line was resolved (restocked or written off). */
+  inspectedAt?: string
+  /** When the line was recorded — how long an item has waited for inspection. */
+  createdAt?: string
 }
 
 /** One item going back out to the customer — the "new" side of a
@@ -352,6 +407,17 @@ export interface ReturnCase {
   createdAt: string
   /** Set once this case has been edited after the fact — absent otherwise. */
   updatedAt?: string
+  /** Where a staged return is up to. Missing on local/demo records, which
+   * are always complete. */
+  status?: ReturnStatus
+  /** The returns-receipt number printed as the receipt's barcode (shared
+   * with Register — returns.receipt_ref). */
+  receiptRef?: string
+  /** Items logged at stage 1 of a staged return. */
+  expectedItems?: ExpectedReturnItem[]
+  labelSentAt?: string
+  itemReceivedAt?: string
+  completedAt?: string
 }
 
 // --- Account settings: personal/employee details ---------------------------

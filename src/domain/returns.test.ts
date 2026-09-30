@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Product, ReturnCase } from './types'
+import type { Product, ReturnCase, Sale } from './types'
 import {
   addReplacementLine,
   addReturnLine,
@@ -20,6 +20,13 @@ import {
   validateReplacementLineInput,
   validateReturnCaseInput,
   validateReturnLineInput,
+  canEditReturn,
+  deriveReturnActions,
+  normaliseReturnActions,
+  openReturns,
+  pendingInspections,
+  registerActionsFor,
+  searchReturns,
   type ReturnCaseDraft,
 } from './returns'
 
@@ -56,9 +63,9 @@ const baseDraft: ReturnCaseDraft = {
 }
 
 describe('return cart', () => {
-  it('adds a line at quantity 1, restocking by default', () => {
+  it('adds a line at quantity 1, set to "Inspect first" by default (same as Register)', () => {
     const cart = addReturnLine(emptyReturnCart(), bolt)
-    expect(cart).toEqual([{ product: bolt, quantity: 1, disposition: 'restock' }])
+    expect(cart).toEqual([{ product: bolt, quantity: 1, disposition: 'inspect' }])
   })
 
   it('does not duplicate a product already in the cart', () => {
@@ -153,7 +160,7 @@ describe('buildReturnCaseInput', () => {
     expect(input.saleId).toBe('sale-1')
     expect(input.channel).toBe('eBay')
     expect(input.reason).toBe('Faulty')
-    expect(input.returnLines).toEqual([{ productId: bolt.id, quantity: 1, disposition: 'restock' }])
+    expect(input.returnLines).toEqual([{ productId: bolt.id, quantity: 1, disposition: 'inspect' }])
     expect(input.replacementLines).toEqual([{ productId: washer.id, quantity: 1 }])
   })
 
@@ -286,6 +293,7 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       totalCost: 11,
       itemsRestocked: 2,
       itemsWrittenOff: 0,
+      itemsAwaitingInspection: 0,
     })
   })
 
@@ -301,6 +309,7 @@ describe('summariseReturns / returnsSince / breakdownByAction', () => {
       totalCost: 0,
       itemsRestocked: 0,
       itemsWrittenOff: 0,
+      itemsAwaitingInspection: 0,
     })
   })
 
@@ -323,5 +332,96 @@ describe('return postage', () => {
   })
   it('rejects a negative return postage cost', () => {
     expect(validateReturnCaseInput({ actions: ['refund'], returnPostageCost: -1 }).ok).toBe(false)
+  })
+})
+
+describe('shared with Register', () => {
+  it('normalises Register action words to the four Inventory shows', () => {
+    expect(normaliseReturnActions(['refund', 'replace', 'restock', 'writeoff', 'goodwill'])).toEqual([
+      'refund',
+      'replacement',
+      'return',
+      'goodwill',
+    ])
+    expect(normaliseReturnActions(['return', 'replacement', 'unknown'])).toEqual(['return', 'replacement'])
+    expect(normaliseReturnActions(null)).toEqual([])
+  })
+
+  it('works out actions from what is filled in', () => {
+    expect(deriveReturnActions({ returnLines: [1], refundAmount: 5 })).toEqual(['refund', 'return'])
+    expect(deriveReturnActions({ replacementLines: [1], goodwillValue: 2 })).toEqual(['replacement', 'goodwill'])
+    expect(deriveReturnActions({})).toEqual([])
+  })
+
+  it("builds Register's action words for the shared RPC", () => {
+    expect(
+      registerActionsFor({
+        actions: [],
+        refundAmount: 3,
+        goodwillType: 'credit_note',
+        goodwillValue: 2,
+        returnLines: [
+          { productId: 'p1', quantity: 1, disposition: 'restock' },
+          { productId: 'p2', quantity: 1, disposition: 'inspect' },
+        ],
+        replacementLines: [{ productId: 'p3', quantity: 1 }],
+      }),
+    ).toEqual(['refund', 'goodwill', 'replace', 'restock'])
+  })
+
+  const inspectLine = {
+    id: 'l9',
+    returnId: 'r9',
+    productId: 'p1',
+    sku: 'BLT-M6',
+    name: 'M6 Bolt',
+    quantity: 1,
+    disposition: 'inspect' as const,
+    unitCost: 2,
+    createdAt: '2026-02-03T00:00:00.000Z',
+  }
+
+  it('lists returns in progress and items awaiting inspection', () => {
+    const cases = [
+      returnCase({ id: 'a', status: 'awaiting_item', labelSentAt: '2026-02-02T00:00:00.000Z' }),
+      returnCase({ id: 'b', status: 'awaiting_refund', labelSentAt: '2026-02-01T00:00:00.000Z' }),
+      returnCase({ id: 'c', status: 'completed', returnLines: [inspectLine] }),
+      returnCase({ id: 'd', status: 'cancelled' }),
+    ]
+    expect(openReturns(cases).map((rc) => rc.id)).toEqual(['b', 'a'])
+    expect(pendingInspections(cases)).toEqual([
+      expect.objectContaining({ lineId: 'l9', returnId: 'c', quantity: 1, returnedAt: '2026-02-03T00:00:00.000Z' }),
+    ])
+  })
+
+  it('only lets a finished case with nothing awaiting inspection be edited', () => {
+    expect(canEditReturn(returnCase({ id: 'x' }))).toBe(true)
+    expect(canEditReturn(returnCase({ id: 'x', status: 'awaiting_refund' }))).toBe(false)
+    expect(canEditReturn(returnCase({ id: 'x', returnLines: [inspectLine] }))).toBe(false)
+  })
+
+  it('finds returns by receipt number, order number, barcode, SKU or customer', () => {
+    const sale = { id: 's1', orderNumber: '25-15190-68717', clientRef: '260930101010123456' } as Sale
+    const cases = [
+      returnCase({
+        id: 'r1',
+        receiptRef: '260930120000654321',
+        saleId: 's1',
+        customerRef: 'jane_buyer',
+        expectedItems: [{ productId: 'p1', sku: 'BLT-M6', name: 'M6 Bolt', quantity: 1 }],
+      }),
+      returnCase({ id: 'r2', receiptRef: '260101000000000001' }),
+    ]
+    const withBarcode = [product({ ...bolt, barcode: '5012345678917' })]
+    const ids = (q: string) => searchReturns(cases, q, withBarcode, [sale]).map((rc) => rc.id)
+    expect(ids('260930120000654321')).toEqual(['r1'])
+    expect(ids('654321')).toEqual(['r1'])
+    expect(ids('2515190')).toEqual(['r1'])
+    expect(ids('260930101010123456')).toEqual(['r1'])
+    expect(ids('5012345678917')).toEqual(['r1'])
+    expect(ids('blt-m6')).toEqual(['r1'])
+    expect(ids('JANE')).toEqual(['r1'])
+    expect(ids('nothing-here')).toEqual([])
+    expect(ids('  ')).toEqual(['r1', 'r2'])
   })
 })

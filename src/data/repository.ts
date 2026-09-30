@@ -18,6 +18,8 @@ import type {
   StockMovement,
 } from '../domain/types'
 import type { QuickCode } from '../domain/quickCodes'
+import type { CompleteReturnInput, ReceivedReturnLine } from '../domain/returns'
+import type { ExpectedReturnItem } from '../domain/types'
 import type { BarcodeLabelLayout } from '../printing/barcodeLabelLayout'
 import type {
   Supplier,
@@ -133,6 +135,30 @@ export interface InventoryRepository {
    * original case's stock effect and reapplying the edited one.
    */
   updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>>
+
+  // --- The same return flow as CountRoom Register --------------------------
+  // Each step runs through the shared, PIN-checked server functions
+  // (create/start/receive/complete/cancel_register_return and
+  // resolve_return_inspection), so a return started in one app can be
+  // finished in the other and both record exactly the same thing.
+
+  /** Processes a whole return in one go (PIN-approved). */
+  recordReturnWithPin(input: ReturnCaseInput, pin: string): Promise<Result<ReturnCase>>
+  /** Stage 1 — return label sent; the return waits for the item. */
+  startStagedReturn(input: StagedReturnStartInput, pin: string): Promise<Result<ReturnCase>>
+  /** Stage 2 — the item arrived: inspect first, restock or write off. */
+  receiveStagedReturn(id: string, lines: ReceivedReturnLine[], pin: string): Promise<Result<ReturnCase>>
+  /** Stage 3 — refund / goodwill / replacement (or close with no refund). */
+  completeStagedReturn(id: string, input: CompleteReturnInput, pin: string): Promise<Result<ReturnCase>>
+  /** Cancels a return whose item never arrived; the label cost stays recorded. */
+  cancelStagedReturn(id: string, note: string, pin: string): Promise<Result<ReturnCase>>
+  /** Restocks or writes off a returned item that was waiting for inspection. */
+  resolveReturnInspection(
+    lineId: string,
+    disposition: 'restock' | 'writeoff',
+    pin: string,
+    note?: string,
+  ): Promise<Result<true>>
   /** The account owner plus every invited employee, active or still pending. */
   listTeam(): Promise<TeamMember[]>
   /** Manager-only. Invites (or re-links) an employee by email. */
@@ -278,6 +304,17 @@ export const EMPTY_SALE = 'Add at least one item before checking out.'
 export const EMPTY_RETURN = 'Add at least one action, item, refund, or note before saving.'
 export const SALE_NOT_FOUND = 'Sale not found.'
 export const RETURN_NOT_FOUND = 'Return not found.'
+
+/** What stage 1 of a staged return records. */
+export interface StagedReturnStartInput {
+  saleId?: string
+  channel?: string
+  customerRef?: string
+  reason?: string
+  notes?: string
+  returnPostageCost?: number
+  expectedItems: ExpectedReturnItem[]
+}
 export const TEAM_NOT_SUPPORTED = 'Team accounts need the Supabase backend — this device is running the offline demo store.'
 export const ACCOUNT_DELETION_NOT_SUPPORTED =
   'Deleting your account needs the Supabase backend — this device is running the offline demo store.'

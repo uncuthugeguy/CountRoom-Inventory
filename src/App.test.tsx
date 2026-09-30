@@ -65,6 +65,12 @@ function buildStaleSkuRepo(): InventoryRepository {
     },
     recordReturn: vi.fn(),
     updateReturn: vi.fn(),
+    recordReturnWithPin: vi.fn(),
+    startStagedReturn: vi.fn(),
+    receiveStagedReturn: vi.fn(),
+    completeStagedReturn: vi.fn(),
+    cancelStagedReturn: vi.fn(),
+    resolveReturnInspection: vi.fn(),
     async listTeam() {
       return [{ id: 'you', email: 'You', role: 'manager' as const, status: 'active' as const, isYou: true }]
     },
@@ -670,12 +676,15 @@ describe('activity log', () => {
 
     await user.type(screen.getByLabelText(/search products to return/i), 'washer')
     await user.click(screen.getByRole('button', { name: /^add$/i }))
-    await screen.findByTestId('return-cart-row')
+    const cartRow = await screen.findByTestId('return-cart-row')
+    await user.click(within(cartRow).getByRole('button', { name: /^restock$/i }))
 
-    await user.click(screen.getByRole('button', { name: 'Refund' }))
     await user.type(screen.getByLabelText(/refund amount/i), '2.50')
     await user.type(screen.getByLabelText(/^channel$/i), 'eBay')
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    const prompt = await screen.findByTestId('pin-dialog')
+    await user.type(within(prompt).getByLabelText(/^pin$/i), '1234')
+    await user.click(within(prompt).getByRole('button', { name: /approve/i }))
     await screen.findByTestId('last-return')
 
     const row = screen.getByTestId('return-case-row')
@@ -1240,33 +1249,45 @@ describe('login email', () => {
   })
 })
 
+/** Approves the open PIN prompt — the offline demo store accepts any 4–6 digit PIN. */
+const approvePin = async (user: ReturnType<typeof userEvent.setup>, confirm: RegExp = /approve/i) => {
+  const prompt = await screen.findByTestId('pin-dialog')
+  await user.type(within(prompt).getByLabelText(/^pin$/i), '1234')
+  await user.click(within(prompt).getByRole('button', { name: confirm }))
+  await waitFor(() => expect(screen.queryByTestId('pin-dialog')).toBeNull())
+}
+
+const addWasherToReturn = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.type(screen.getByLabelText(/search products to return/i), 'washer')
+  await user.click(screen.getByRole('button', { name: /^add$/i }))
+  return screen.findByTestId('return-cart-row')
+}
+
+const washerStock = () =>
+  screen.getAllByTestId('product-row').find((r) => r.textContent?.includes('M6 Flat Washer'))
+
 describe('returns', () => {
-  it('records a refunded return, restocks the item and shows it in the case list', async () => {
+  it('processes a refunded return with a PIN, restocks the item and shows it in the case list', async () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.type(screen.getByLabelText(/search products to return/i), 'washer')
-    await user.click(screen.getByRole('button', { name: /^add$/i }))
-
-    const row = await screen.findByTestId('return-cart-row')
+    const row = await addWasherToReturn(user)
     expect(row).toHaveTextContent('M6 Flat Washer')
+    await user.click(within(row).getByRole('button', { name: /^restock$/i }))
 
-    await user.click(screen.getByRole('button', { name: 'Refund' }))
     await user.type(screen.getByLabelText(/refund amount/i), '2.50')
     await user.type(screen.getByLabelText(/^channel$/i), 'eBay')
     await user.type(screen.getByLabelText(/^reason$/i), 'Wrong size')
 
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
 
     expect(await screen.findByTestId('last-return')).toHaveTextContent('Refund')
     expect(screen.getByTestId('last-return')).toHaveTextContent('2.50')
 
     await go(user, /products/i)
-    const productRow = screen
-      .getAllByTestId('product-row')
-      .find((r) => r.textContent?.includes('M6 Flat Washer'))
     // 64 in stock, +1 restocked from the default return quantity.
-    expect(productRow).toHaveTextContent('65')
+    expect(washerStock()).toHaveTextContent('65')
 
     await go(user, /returns/i)
     expect(screen.getByTestId('returns-case-count')).toHaveTextContent('1')
@@ -1274,50 +1295,134 @@ describe('returns', () => {
     expect(screen.getByTestId('return-case-row')).toHaveTextContent('eBay')
   })
 
-  it('records a return postage label cost and prints a refund receipt', async () => {
+  it('defaults a returned item to "Inspect first": no stock change until it is inspected', async () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.click(screen.getByRole('button', { name: 'Refund' }))
-    await user.type(screen.getByLabelText(/refund amount/i), '10')
+    const row = await addWasherToReturn(user)
+    expect(within(row).getByRole('button', { name: /inspect first/i })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
+
+    await go(user, /products/i)
+    expect(washerStock()).toHaveTextContent('64')
+
+    await go(user, /returns/i)
+    const inspection = screen.getByTestId('inspection-row')
+    expect(inspection).toHaveTextContent('M6 Flat Washer')
+    expect(screen.getByTestId('returns-awaiting-inspection')).toHaveTextContent('1')
+    await user.click(within(inspection).getByRole('button', { name: /^restock$/i }))
+    await approvePin(user, /^restock$/i)
+    await waitFor(() => expect(screen.queryByTestId('inspection-row')).toBeNull())
+
+    await go(user, /products/i)
+    expect(washerStock()).toHaveTextContent('65')
+  })
+
+  it('works a return through all three stages: label sent, item arrived, refund issued', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await addWasherToReturn(user)
     await user.type(screen.getByLabelText(/return postage label cost/i), '3.20')
     await user.type(screen.getByLabelText(/^customer$/i), 'jane_buyer')
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /stage 1: label sent/i }))
+    await approvePin(user, /log label/i)
 
-    expect(await screen.findByTestId('last-return')).toHaveTextContent('3.20')
-    await user.click(screen.getByRole('button', { name: /view \/ print receipt/i }))
-    expect(screen.getByTestId('return-postage')).toHaveTextContent('3.20')
+    // Paused: nothing has moved yet.
+    const open = await screen.findByTestId('open-return-row')
+    expect(open).toHaveTextContent('Label sent — awaiting item')
+    await go(user, /products/i)
+    expect(washerStock()).toHaveTextContent('64')
+    await go(user, /returns/i)
+
+    // Stage 2 — the item arrives and goes straight back on the shelf.
+    await user.click(within(screen.getByTestId('open-return-row')).getByRole('button', { name: /continue/i }))
+    const received = screen.getByTestId('received-row')
+    await user.click(within(received).getByRole('button', { name: /^restock$/i }))
+    await user.click(screen.getByRole('button', { name: /item arrived/i }))
+    await approvePin(user)
+    expect(await screen.findByTestId('open-return-row')).toHaveTextContent('Item arrived — awaiting refund')
+    await go(user, /products/i)
+    expect(washerStock()).toHaveTextContent('65')
+    await go(user, /returns/i)
+
+    // Stage 3 — refund.
+    await user.click(within(screen.getByTestId('open-return-row')).getByRole('button', { name: /continue/i }))
+    await user.type(screen.getByLabelText(/refund amount/i), '10')
+    await user.click(screen.getByRole('button', { name: /issue refund & complete/i }))
+    await approvePin(user)
+
+    await waitFor(() => expect(screen.queryByTestId('open-return-row')).toBeNull())
+    expect(screen.getByTestId('returns-refund-total')).toHaveTextContent('10.00')
+    await user.click(within(screen.getByTestId('last-return')).getByRole('button', { name: /view \/ print receipt/i }))
     const receipt = screen.getByTestId('refund-receipt')
     expect(receipt).toHaveTextContent('Refund receipt')
     expect(receipt).toHaveTextContent('jane_buyer')
+    expect(receipt).toHaveTextContent('1 × M6 Flat Washer')
     expect(receipt).toHaveTextContent('10.00')
-    expect(receipt).not.toHaveTextContent('3.20') // internal cost stays off the customer's receipt
+    expect(receipt).not.toHaveTextContent('3.20') // internal label cost stays off the customer's receipt
+    expect(screen.getByTestId('return-postage')).toHaveTextContent('3.20')
+  })
+
+  it('cancels a staged return whose item never arrived', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await addWasherToReturn(user)
+    await user.click(screen.getByRole('button', { name: /stage 1: label sent/i }))
+    await approvePin(user, /log label/i)
+    await user.click(within(await screen.findByTestId('open-return-row')).getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /cancel return…/i }))
+    await user.click(screen.getByRole('button', { name: /cancel return \(pin\)/i }))
+    await approvePin(user, /^cancel return$/i)
+
+    await waitFor(() => expect(screen.queryByTestId('open-return-row')).toBeNull())
+    expect(screen.getByTestId('return-case-row')).toHaveTextContent('Cancelled')
+  })
+
+  it('prints a returns receipt with a scannable return number, and finds the return by it', async () => {
+    const { user } = await renderApp()
+    await go(user, /returns/i)
+
+    await user.type(screen.getByLabelText(/refund amount/i), '10')
+    await user.type(screen.getByLabelText(/^customer$/i), 'jane_buyer')
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
+
+    await user.click(await within(screen.getByTestId('last-return')).findByRole('button', { name: /view \/ print receipt/i }))
+    const receipt = screen.getByTestId('refund-receipt')
+    const code = receipt.querySelector('[data-scan-value]')?.getAttribute('data-scan-value') ?? ''
+    expect(code).toMatch(/^\d{18}$/)
+    expect(receipt).toHaveTextContent(`Return no. ${code}`)
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
-    await user.click(screen.getByRole('button', { name: /print refund receipt/i }))
+    await user.click(screen.getByRole('button', { name: /print returns receipt/i }))
     expect(print).toHaveBeenCalled()
     print.mockRestore()
+    await user.keyboard('{Escape}')
+
+    // Scanning the receipt (a wedge scanner types the number + Enter) opens it again.
+    await user.type(screen.getByLabelText(/search returns/i), `${code}{Enter}`)
+    expect(within(screen.getByRole('dialog')).getByText(`Return no. ${code}`)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.clear(screen.getByLabelText(/search returns/i))
+    await user.type(screen.getByLabelText(/search returns/i), 'no-such-return')
+    expect(screen.getByText(/no returns match/i)).toBeInTheDocument()
   })
 
   it('writes off a returned item with no stock change and tracks the loss', async () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.type(screen.getByLabelText(/search products to return/i), 'washer')
-    await user.click(screen.getByRole('button', { name: /^add$/i }))
-
-    const row = await screen.findByTestId('return-cart-row')
-    await user.click(within(row).getByRole('button', { name: /written off/i }))
-
-    await user.click(screen.getByRole('button', { name: 'Return' }))
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    const row = await addWasherToReturn(user)
+    await user.click(within(row).getByRole('button', { name: /write off/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
 
     await waitFor(() => expect(screen.queryByTestId('return-cart-row')).toBeNull())
 
     await go(user, /products/i)
-    const productRow = screen
-      .getAllByTestId('product-row')
-      .find((r) => r.textContent?.includes('M6 Flat Washer'))
-    expect(productRow).toHaveTextContent('64')
+    expect(washerStock()).toHaveTextContent('64')
 
     await go(user, /returns/i)
     // Cost 0.01 per unit written off.
@@ -1330,58 +1435,54 @@ describe('returns', () => {
 
     await user.type(screen.getByLabelText(/search products to send out/i), 'washer')
     await user.click(screen.getByRole('button', { name: /^add$/i }))
-
     expect(await screen.findByTestId('replacement-cart-row')).toHaveTextContent('M6 Flat Washer')
 
-    await user.click(screen.getByRole('button', { name: 'Replacement' }))
-    await user.click(screen.getByRole('button', { name: /save case/i }))
-
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
     await waitFor(() => expect(screen.queryByTestId('replacement-cart-row')).toBeNull())
 
     await go(user, /products/i)
-    const productRow = screen
-      .getAllByTestId('product-row')
-      .find((r) => r.textContent?.includes('M6 Flat Washer'))
-    expect(productRow).toHaveTextContent('63')
+    expect(washerStock()).toHaveTextContent('63')
   })
 
   it('accepts a goodwill-only case with no item or sale involved', async () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.click(screen.getByRole('button', { name: /goodwill gesture/i }))
-    await user.type(screen.getByLabelText(/goodwill type/i), 'Voucher')
+    await user.selectOptions(screen.getByLabelText(/goodwill type/i), 'Credit note')
     await user.type(screen.getByLabelText(/goodwill value/i), '10')
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
 
     expect(await screen.findByTestId('last-return')).toHaveTextContent('Goodwill gesture')
+    expect(screen.getByTestId('last-return')).toHaveTextContent('Credit note')
     expect(screen.getByTestId('returns-goodwill-total')).toHaveTextContent('10.00')
   })
 
-  it('rejects an empty case with nothing recorded', async () => {
+  it('rejects an empty case with nothing recorded, before asking for a PIN', async () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/at least one action/i)
+    expect(screen.queryByTestId('pin-dialog')).toBeNull()
   })
 
-  it('links a case to an existing till sale', async () => {
+  it('finds the original sale by scanning an item barcode and links the case to it', async () => {
     const repository = createLocalRepository({ storage: memoryStorage(), seed: true })
     await seedSale(repository, '5012345678917', 1, 'eBay')
     const { user } = await renderApp(repository)
 
     await go(user, /returns/i)
-    const saleSelect = screen.getByLabelText(/original sale/i)
-    const saleOption = within(saleSelect).getAllByRole('option')[1]
-    await user.selectOptions(saleSelect, saleOption)
-    // Linking a sale auto-fills the channel from it.
+    await user.type(screen.getByLabelText(/find the original sale/i), '5012345678917{Enter}')
+    // Linking a sale auto-fills the channel from it and lists its items.
+    const linked = await screen.findByTestId('linked-sale')
     expect(screen.getByLabelText(/^channel$/i)).toHaveValue('eBay')
+    await user.click(within(linked).getByRole('button', { name: /return this/i }))
+    expect(await screen.findByTestId('return-cart-row')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /goodwill gesture/i }))
-    await user.type(screen.getByLabelText(/goodwill type/i), 'Sorry card')
-    await user.click(screen.getByRole('button', { name: /save case/i }))
-
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
     expect(await screen.findByTestId('last-return')).toBeInTheDocument()
   })
 
@@ -1389,18 +1490,16 @@ describe('returns', () => {
     const { user } = await renderApp()
     await go(user, /returns/i)
 
-    await user.type(screen.getByLabelText(/search products to return/i), 'washer')
-    await user.click(screen.getByRole('button', { name: /^add$/i }))
-    await screen.findByTestId('return-cart-row')
-
-    await user.click(screen.getByRole('button', { name: 'Refund' }))
+    const row = await addWasherToReturn(user)
+    await user.click(within(row).getByRole('button', { name: /^restock$/i }))
     await user.type(screen.getByLabelText(/refund amount/i), '2.50')
     await user.type(screen.getByLabelText(/^channel$/i), 'eBay')
-    await user.click(screen.getByRole('button', { name: /save case/i }))
+    await user.click(screen.getByRole('button', { name: /process whole return now/i }))
+    await approvePin(user)
     await screen.findByTestId('last-return')
 
-    const row = screen.getByTestId('return-case-row')
-    await user.click(within(row).getByRole('button', { name: /view details/i }))
+    const caseRow = screen.getByTestId('return-case-row')
+    await user.click(within(caseRow).getByRole('button', { name: /view details/i }))
 
     const detail = screen.getByRole('dialog')
     expect(detail).toHaveTextContent('Refund')

@@ -525,4 +525,10 @@ describe('searchSales', () => {
   it('returns everything for a blank search', () => {
     expect(searchSales(all, '  ')).toHaveLength(2)
   })
+  it("finds a sale by a scanned Register receipt reference or an item's barcode", () => {
+    const withRef = [...all, sale({ id: 'ccc333', clientRef: '260930101010123456', lines: [{ ...lines('Lamp', 'SKU-030')[0], productId: 'lamp' }] })]
+    expect(searchSales(withRef, '260930101010123456').map((s) => s.id)).toEqual(['ccc333'])
+    const products = [{ id: 'lamp', barcode: '5012345678917' }] as Product[]
+    expect(searchSales(withRef, '5012345678917', products).map((s) => s.id)).toEqual(['ccc333'])
+  })
 })

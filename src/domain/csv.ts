@@ -1,7 +1,7 @@
 import { paymentMethodLabel } from './paymentMethods'
 import { isLowStock } from './inventory'
 import { returnImpact } from './returns'
-import { PAID_BY_LABELS, RETURN_ACTION_LABELS } from './types'
+import { PAID_BY_LABELS, RETURN_ACTION_LABELS, RETURN_STATUS_LABELS } from './types'
 import type { Product, ReturnCase, Sale, StockMovement } from './types'
 
 const NEEDS_QUOTING = /[",\r\n]/
@@ -120,6 +120,8 @@ export function returnsToCsv(cases: ReturnCase[]): string {
     { label: 'Net Cost to Profit', value: (r) => returnImpact(r).totalCost.toFixed(2) },
     { label: 'Reason', value: (r) => r.reason },
     { label: 'Notes', value: (r) => r.notes },
+    { label: 'Return No.', value: (r) => r.receiptRef ?? '' },
+    { label: 'Status', value: (r) => RETURN_STATUS_LABELS[r.status ?? 'completed'] },
   ]
   return toCsv(columns, cases)
 }

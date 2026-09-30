@@ -1,6 +1,8 @@
 import type {
+  ExpectedReturnItem,
   PaymentMethod,
   Product,
+  Sale,
   ReplacementLineInput,
   Result,
   ReturnAction,
@@ -35,7 +37,8 @@ export const emptyReturnCart = (): ReturnCart => []
 
 export function addReturnLine(cart: ReturnCart, product: Product): ReturnCart {
   if (cart.some((line) => line.product.id === product.id)) return cart
-  return [...cart, { product, quantity: 1, disposition: 'restock' }]
+  // "Inspect first" is the default, same as Register.
+  return [...cart, { product, quantity: 1, disposition: 'inspect' }]
 }
 
 export function removeReturnLine(cart: ReturnCart, productId: string): ReturnCart {
@@ -317,6 +320,7 @@ export interface ReturnsSummary {
   totalCost: number
   itemsRestocked: number
   itemsWrittenOff: number
+  itemsAwaitingInspection: number
 }
 
 const EMPTY_SUMMARY: ReturnsSummary = {
@@ -330,6 +334,7 @@ const EMPTY_SUMMARY: ReturnsSummary = {
   totalCost: 0,
   itemsRestocked: 0,
   itemsWrittenOff: 0,
+  itemsAwaitingInspection: 0,
 }
 
 export function summariseReturns(cases: ReturnCase[]): ReturnsSummary {
@@ -350,6 +355,9 @@ export function summariseReturns(cases: ReturnCase[]): ReturnsSummary {
       itemsWrittenOff:
         totals.itemsWrittenOff +
         rc.returnLines.filter((l) => l.disposition === 'writeoff').reduce((n, l) => n + l.quantity, 0),
+      itemsAwaitingInspection:
+        totals.itemsAwaitingInspection +
+        rc.returnLines.filter((l) => l.disposition === 'inspect').reduce((n, l) => n + l.quantity, 0),
     }
   }, EMPTY_SUMMARY)
 }
@@ -368,4 +376,196 @@ export function breakdownByAction(cases: ReturnCase[]): Record<ReturnAction, num
     }
   }
   return counts
+}
+
+// --- Shared with CountRoom Register ----------------------------------------
+//
+// Both apps write to the same returns tables. Register records actions as
+// refund / goodwill / replace / restock / writeoff; Inventory's older
+// process_return used refund / return / replacement / goodwill. Everything
+// read back is normalised to Inventory's four so the two display the same.
+
+const ACTION_ALIASES: Record<string, ReturnAction> = {
+  refund: 'refund',
+  goodwill: 'goodwill',
+  return: 'return',
+  restock: 'return',
+  writeoff: 'return',
+  inspect: 'return',
+  replacement: 'replacement',
+  replace: 'replacement',
+}
+
+export function normaliseReturnActions(raw: readonly string[] | null | undefined): ReturnAction[] {
+  const out: ReturnAction[] = []
+  for (const a of raw ?? []) {
+    const mapped = ACTION_ALIASES[a]
+    if (mapped && !out.includes(mapped)) out.push(mapped)
+  }
+  return out
+}
+
+/** The action list for a case, worked out from what's actually in it
+ * rather than ticked by hand — the way Register does it. */
+export function deriveReturnActions(input: {
+  returnLines?: unknown[]
+  replacementLines?: unknown[]
+  refundAmount?: number
+  goodwillValue?: number
+}): ReturnAction[] {
+  const actions: ReturnAction[] = []
+  if ((input.refundAmount ?? 0) > 0) actions.push('refund')
+  if ((input.returnLines?.length ?? 0) > 0) actions.push('return')
+  if ((input.replacementLines?.length ?? 0) > 0) actions.push('replacement')
+  if ((input.goodwillValue ?? 0) > 0) actions.push('goodwill')
+  return actions
+}
+
+/** Register's own action words for the shared create_register_return RPC. */
+export function registerActionsFor(input: ReturnCaseInput): string[] {
+  const actions: string[] = []
+  if ((input.refundAmount ?? 0) > 0) actions.push('refund')
+  if (input.goodwillType && (input.goodwillValue ?? 0) > 0) actions.push('goodwill')
+  if ((input.replacementLines?.length ?? 0) > 0) actions.push('replace')
+  if (input.returnLines?.some((l) => l.disposition === 'restock')) actions.push('restock')
+  if (input.returnLines?.some((l) => l.disposition === 'writeoff')) actions.push('writeoff')
+  return actions
+}
+
+/** Status of a case — records with no status (demo/local) are complete. */
+export const caseStatus = (rc: ReturnCase) => rc.status ?? 'completed'
+
+export const isOpenReturn = (rc: ReturnCase) =>
+  caseStatus(rc) === 'awaiting_item' || caseStatus(rc) === 'awaiting_refund'
+
+/** Returns still part-way through the three stages, oldest label first. */
+export function openReturns(cases: ReturnCase[]): ReturnCase[] {
+  return cases
+    .filter(isOpenReturn)
+    .sort((a, b) => (a.labelSentAt ?? a.createdAt).localeCompare(b.labelSentAt ?? b.createdAt))
+}
+
+export interface PendingInspection {
+  lineId: string
+  returnId: string
+  productId: string
+  sku: string
+  name: string
+  quantity: number
+  returnedAt: string
+  receiptRef?: string
+}
+
+/** Returned items marked "Inspect first" that nobody has restocked or
+ * written off yet — whichever app they came back through. */
+export function pendingInspections(cases: ReturnCase[]): PendingInspection[] {
+  const out: PendingInspection[] = []
+  for (const rc of cases) {
+    for (const line of rc.returnLines) {
+      if (line.disposition !== 'inspect') continue
+      out.push({
+        lineId: line.id,
+        returnId: rc.id,
+        productId: line.productId,
+        sku: line.sku,
+        name: line.name,
+        quantity: line.quantity,
+        returnedAt: line.createdAt ?? rc.itemReceivedAt ?? rc.createdAt,
+        receiptRef: rc.receiptRef,
+      })
+    }
+  }
+  return out.sort((a, b) => a.returnedAt.localeCompare(b.returnedAt))
+}
+
+/** Only a finished case with nothing waiting for inspection can go through
+ * the manager "Edit case" rebuild — the edit reverses and reapplies stock,
+ * which doesn't apply to a return that's still in progress. */
+export function canEditReturn(rc: ReturnCase): boolean {
+  return caseStatus(rc) === 'completed' && !rc.returnLines.some((l) => l.disposition === 'inspect')
+}
+
+/** The items a case is about: what came back, or (before it arrives) what's expected. */
+export function caseItems(rc: ReturnCase): { sku: string; name: string; quantity: number; productId: string }[] {
+  if (rc.returnLines.length > 0) return rc.returnLines
+  return rc.expectedItems ?? []
+}
+
+/**
+ * Finds return cases by returns-receipt number (typed or scanned — spaces
+ * and dashes ignored, partial numbers match), the original sale's order
+ * number or receipt reference, an item's barcode, SKU or name, or the
+ * customer. Searches everything passed in, regardless of date range.
+ * Register's returns search (apps/register/src/lib/returns.ts) matches the
+ * same fields.
+ */
+export function searchReturns(
+  cases: ReturnCase[],
+  query: string,
+  products: Product[] = [],
+  sales: Sale[] = [],
+): ReturnCase[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return cases
+  const compact = (value: string) => value.toLowerCase().replace(/[\s-]/g, '')
+  const qc = compact(q)
+  const saleById = new Map(sales.map((sale) => [sale.id, sale]))
+  const barcodeByProduct = new Map(products.map((p) => [p.id, compact(p.barcode ?? '')]))
+
+  return cases.filter((rc) => {
+    if (qc && rc.receiptRef && compact(rc.receiptRef).includes(qc)) return true
+    if (rc.id.toLowerCase().startsWith(q)) return true
+    const sale = rc.saleId ? saleById.get(rc.saleId) : undefined
+    if (qc && sale?.orderNumber && compact(sale.orderNumber).includes(qc)) return true
+    if (qc && sale?.clientRef && compact(sale.clientRef).includes(qc)) return true
+    if (rc.customerRef.toLowerCase().includes(q)) return true
+    const items: { productId: string; sku: string; name: string }[] = [
+      ...rc.returnLines,
+      ...rc.replacementLines,
+      ...(rc.expectedItems ?? []),
+    ]
+    return items.some(
+      (item) =>
+        (qc !== '' && barcodeByProduct.get(item.productId) === qc) ||
+        item.sku.toLowerCase().includes(q) ||
+        item.name.toLowerCase().includes(q),
+    )
+  })
+}
+
+// --- Stage inputs ------------------------------------------------------------
+
+export interface ReceivedReturnLine {
+  productId: string
+  quantity: number
+  disposition: StockDisposition
+}
+
+export interface CompleteReturnInput {
+  refundAmount?: number
+  refundMethod?: PaymentMethod
+  goodwillType?: string
+  goodwillValue?: number
+  notes?: string
+  replacementLines?: ReplacementLineInput[]
+}
+
+export function expectedItemsFrom(cart: ReturnCart): ExpectedReturnItem[] {
+  return cart.map((line) => ({
+    productId: line.product.id,
+    sku: line.product.sku,
+    name: line.product.name,
+    quantity: line.quantity,
+  }))
+}
+
+/** True when a finished case was changed after it was finished (the manager
+ * "Edit case" rebuild) — not when it merely moved through its stages or had
+ * an item inspected, which also touch updatedAt. */
+export function wasEdited(rc: ReturnCase): boolean {
+  if (!rc.updatedAt || caseStatus(rc) !== 'completed') return false
+  const marks = [rc.createdAt, rc.completedAt, ...rc.returnLines.map((l) => l.inspectedAt)]
+    .filter((v): v is string => !!v)
+    .map((v) => new Date(v).getTime())
+  return new Date(rc.updatedAt).getTime() > Math.max(...marks)
 }

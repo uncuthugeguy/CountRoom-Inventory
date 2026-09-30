@@ -368,17 +368,6 @@ function AuthenticatedApp({
     setToast(result.ok ? `${product.name} label sent to the printer.` : `Print failed: ${result.error}`)
   }
 
-  const recordReturn = async (input: ReturnCaseInput) => {
-    const result = await inventory.recordReturn(input)
-    if (result.ok) {
-      const summary = result.value.actions.length
-        ? result.value.actions.join(', ')
-        : 'note only'
-      setToast(`Return case saved — ${summary}.`)
-    }
-    return result
-  }
-
   const updateSale = async (id: string, input: SaleInput) => {
     const result = await inventory.updateSale(id, input)
     if (result.ok) {
@@ -527,7 +516,7 @@ function AuthenticatedApp({
             role={role}
             sales={inventory.sales}
             returns={inventory.returns}
-            onRecordReturn={recordReturn}
+            returnFlow={inventory.returnFlow}
             onUpdateReturn={updateReturn}
           />
         )}

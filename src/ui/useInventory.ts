@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CompleteReturnInput, ReceivedReturnLine } from '../domain/returns'
 import type { AppliedMovement } from '../domain/movements'
 import type {
   ActivityLogEntry,
@@ -22,6 +23,7 @@ import type {
   InventoryRepository,
   Role,
   TeamMember,
+  StagedReturnStartInput,
 } from '../data/repository'
 import type { PurchaseOrder, PurchaseOrderInput, Supplier, SupplierDraft, UnboxedLineItemInput } from '../domain/suppliers'
 
@@ -52,6 +54,8 @@ export interface Inventory {
   recordReturn(input: ReturnCaseInput): Promise<Result<ReturnCase>>
   /** Manager-only. Fully replaces a past return case. */
   updateReturn(id: string, input: ReturnCaseInput): Promise<Result<ReturnCase>>
+  /** The shared, PIN-checked return flow (same as CountRoom Register). */
+  returnFlow: ReturnFlow
   /** Returns the freshly fetched catalogue, so callers can act on it directly
    *  rather than reading `products` from a stale render closure. */
   reload(): Promise<Product[]>
@@ -219,6 +223,19 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
 
   const updateReturn = useCallback(
     (id: string, input: ReturnCaseInput) => run((repo) => repo.updateReturn(id, input)),
+    [run],
+  )
+
+  const returnFlow = useMemo<ReturnFlow>(
+    () => ({
+      recordWithPin: (input, pin) => run((repo) => repo.recordReturnWithPin(input, pin)),
+      start: (input, pin) => run((repo) => repo.startStagedReturn(input, pin)),
+      receive: (id, lines, pin) => run((repo) => repo.receiveStagedReturn(id, lines, pin)),
+      complete: (id, input, pin) => run((repo) => repo.completeStagedReturn(id, input, pin)),
+      cancel: (id, note, pin) => run((repo) => repo.cancelStagedReturn(id, note, pin)),
+      resolveInspection: (lineId, disposition, pin, note) =>
+        run((repo) => repo.resolveReturnInspection(lineId, disposition, pin, note)),
+    }),
     [run],
   )
 
@@ -528,6 +545,7 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     updateSale,
     recordReturn,
     updateReturn,
+    returnFlow,
     reload,
     listTeam,
     inviteEmployee,
@@ -556,4 +574,19 @@ export function useInventory(open: () => Promise<InventoryRepository>): Inventor
     unboxPurchaseOrderLine,
     cancelPurchaseOrder,
   }
+}
+
+/** Every step of the shared return flow — each needs a PIN (checked server-side). */
+export interface ReturnFlow {
+  recordWithPin(input: ReturnCaseInput, pin: string): Promise<Result<ReturnCase>>
+  start(input: StagedReturnStartInput, pin: string): Promise<Result<ReturnCase>>
+  receive(id: string, lines: ReceivedReturnLine[], pin: string): Promise<Result<ReturnCase>>
+  complete(id: string, input: CompleteReturnInput, pin: string): Promise<Result<ReturnCase>>
+  cancel(id: string, note: string, pin: string): Promise<Result<ReturnCase>>
+  resolveInspection(
+    lineId: string,
+    disposition: 'restock' | 'writeoff',
+    pin: string,
+    note?: string,
+  ): Promise<Result<true>>
 }

@@ -9,7 +9,7 @@ import {
 } from '../domain/activity'
 import { applyMovement } from '../domain/movements'
 import { validateDraft, nextSku } from '../domain/products'
-import { validateReturnCaseInput } from '../domain/returns'
+import { validateReturnCaseInput, type CompleteReturnInput, type ReceivedReturnLine } from '../domain/returns'
 import { saleFeeTotal } from '../domain/sales'
 import type { AppliedMovement } from '../domain/movements'
 import type {
@@ -60,10 +60,27 @@ import {
   TEAM_NOT_SUPPORTED,
   type AccountDeletionPreview,
   type InventoryRepository,
+  type StagedReturnStartInput,
   type TeamMember,
 } from './repository'
 
 export const STORAGE_KEY = 'stockflow.v1'
+
+const PIN_NEEDED = 'A PIN is needed to approve returns.'
+const isPin = (pin: string) => /^\d{4,6}$/.test(pin)
+
+/** Same shape as the shared returns.receipt_ref default: YYMMDDHHmmss + 6 random digits. */
+const localReceiptRef = (now: Date = new Date()): string => {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp =
+    pad(now.getFullYear() % 100) +
+    pad(now.getMonth() + 1) +
+    pad(now.getDate()) +
+    pad(now.getHours()) +
+    pad(now.getMinutes()) +
+    pad(now.getSeconds())
+  return stamp + String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')
+}
 
 interface Snapshot {
   products: Product[]
@@ -644,9 +661,12 @@ export function createLocalRepository(
         goodwillType: actions.includes('goodwill') ? (input.goodwillType ?? '') : '',
         goodwillValue: actions.includes('goodwill') ? (input.goodwillValue ?? 0) : 0,
         returnPostageCost: input.returnPostageCost ?? 0,
-        returnLines,
+        returnLines: returnLines.map((l) => ({ ...l, createdAt: at })),
         replacementLines,
         createdAt: at,
+        status: 'completed',
+        receiptRef: localReceiptRef(),
+        completedAt: at,
       }
 
       state = {
@@ -798,6 +818,245 @@ export function createLocalRepository(
       if (returnDetail) pushActivity('return', 'edited', updated.id, returnEntityLabel(updated), returnDetail)
       persist()
       return { ok: true, value: updated }
+    },
+
+    // The staged, PIN-approved return flow — the offline twin of the shared
+    // create/start/receive/complete/cancel_register_return functions that
+    // the online account (and CountRoom Register) use. There are no staff
+    // PINs in this demo store, so any 4–6 digit PIN is accepted.
+    async recordReturnWithPin(input: ReturnCaseInput, pin: string): Promise<Result<ReturnCase>> {
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+      return this.recordReturn(input)
+    },
+
+    async startStagedReturn(input: StagedReturnStartInput, pin: string): Promise<Result<ReturnCase>> {
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+      if (input.expectedItems.length === 0) {
+        return { ok: false, error: 'Pick at least one item the customer is sending back.' }
+      }
+      const postage = input.returnPostageCost ?? 0
+      if (!Number.isFinite(postage) || postage < 0) {
+        return { ok: false, error: 'Return postage cost must be zero or greater.' }
+      }
+      const at = new Date().toISOString()
+      const rc: ReturnCase = {
+        id: newId(),
+        saleId: input.saleId ?? '',
+        channel: input.channel ?? '',
+        customerRef: input.customerRef ?? '',
+        reason: input.reason ?? '',
+        notes: input.notes ?? '',
+        actions: [],
+        refundAmount: 0,
+        refundMethod: null,
+        goodwillType: '',
+        goodwillValue: 0,
+        returnPostageCost: postage,
+        returnLines: [],
+        replacementLines: [],
+        createdAt: at,
+        status: 'awaiting_item',
+        receiptRef: localReceiptRef(),
+        expectedItems: input.expectedItems.map((i) => ({ ...i })),
+        labelSentAt: at,
+      }
+      state = { ...state, returns: [rc, ...state.returns] }
+      persist()
+      return { ok: true, value: rc }
+    },
+
+    async receiveStagedReturn(id: string, lines: ReceivedReturnLine[], pin: string): Promise<Result<ReturnCase>> {
+      const existing = state.returns.find((r) => r.id === id)
+      if (!existing) return { ok: false, error: RETURN_NOT_FOUND }
+      if ((existing.status ?? 'completed') !== 'awaiting_item') {
+        return { ok: false, error: "This return isn't waiting for its item." }
+      }
+      if (lines.length === 0) return { ok: false, error: 'Mark at least one item as arrived.' }
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+
+      const at = new Date().toISOString()
+      const nextProducts = [...state.products]
+      const newMovements: StockMovement[] = []
+      const returnLines: ReturnLine[] = []
+      const noted = existing.reason.trim() ? `: ${existing.reason.trim()}` : ''
+      for (const line of lines) {
+        if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+          return { ok: false, error: 'Returned item quantity must be greater than zero.' }
+        }
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) return { ok: false, error: NOT_FOUND }
+        const product = nextProducts[idx]
+        if (line.disposition === 'restock') {
+          const applied = applyMovement(
+            product,
+            { type: 'in', quantity: line.quantity, reason: `Return — restock${noted}` },
+            { id: newId(), at },
+          )
+          if (!applied.ok) return applied
+          nextProducts[idx] = applied.value.product
+          newMovements.push(applied.value.movement)
+        }
+        returnLines.push({
+          id: newId(),
+          returnId: existing.id,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          disposition: line.disposition,
+          unitCost: product.cost,
+          createdAt: at,
+        })
+      }
+      const updated: ReturnCase = {
+        ...existing,
+        returnLines: [...existing.returnLines, ...returnLines],
+        actions: existing.actions.includes('return') ? existing.actions : [...existing.actions, 'return'],
+        status: 'awaiting_refund',
+        itemReceivedAt: at,
+        updatedAt: at,
+      }
+      state = {
+        ...state,
+        products: nextProducts,
+        movements: [...newMovements, ...state.movements],
+        returns: state.returns.map((r) => (r.id === id ? updated : r)),
+      }
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async completeStagedReturn(id: string, input: CompleteReturnInput, pin: string): Promise<Result<ReturnCase>> {
+      const existing = state.returns.find((r) => r.id === id)
+      if (!existing) return { ok: false, error: RETURN_NOT_FOUND }
+      if ((existing.status ?? 'completed') !== 'awaiting_refund') {
+        return { ok: false, error: "This return isn't ready for a refund yet." }
+      }
+      const refund = input.refundAmount ?? 0
+      const goodwill = input.goodwillType ? (input.goodwillValue ?? 0) : 0
+      if (!Number.isFinite(refund) || refund < 0 || !Number.isFinite(goodwill) || goodwill < 0) {
+        return { ok: false, error: 'Amounts must be zero or greater.' }
+      }
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+
+      const at = new Date().toISOString()
+      const nextProducts = [...state.products]
+      const newMovements: StockMovement[] = []
+      const replacementLines: ReplacementLine[] = []
+      for (const line of input.replacementLines ?? []) {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) return { ok: false, error: NOT_FOUND }
+        const product = nextProducts[idx]
+        if (product.quantity < line.quantity) {
+          return { ok: false, error: `Only ${product.quantity} in stock for ${product.name}.` }
+        }
+        const applied = applyMovement(
+          product,
+          { type: 'out', quantity: line.quantity, reason: 'Return — replacement' },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+        replacementLines.push({
+          id: newId(),
+          returnId: existing.id,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: line.quantity,
+          unitCost: product.cost,
+        })
+      }
+      const actions = [...existing.actions]
+      if (refund > 0 && !actions.includes('refund')) actions.push('refund')
+      if (replacementLines.length > 0 && !actions.includes('replacement')) actions.push('replacement')
+      if (goodwill > 0 && !actions.includes('goodwill')) actions.push('goodwill')
+      const note = input.notes?.trim()
+      const updated: ReturnCase = {
+        ...existing,
+        actions,
+        refundAmount: refund,
+        refundMethod: refund > 0 ? (input.refundMethod ?? null) : null,
+        goodwillType: goodwill > 0 ? (input.goodwillType ?? '') : '',
+        goodwillValue: goodwill,
+        replacementLines: [...existing.replacementLines, ...replacementLines],
+        notes: note ? (existing.notes ? `${existing.notes}\n${note}` : note) : existing.notes,
+        status: 'completed',
+        completedAt: at,
+        updatedAt: at,
+      }
+      state = {
+        ...state,
+        products: nextProducts,
+        movements: [...newMovements, ...state.movements],
+        returns: state.returns.map((r) => (r.id === id ? updated : r)),
+      }
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async cancelStagedReturn(id: string, note: string, pin: string): Promise<Result<ReturnCase>> {
+      const existing = state.returns.find((r) => r.id === id)
+      if (!existing || (existing.status ?? 'completed') !== 'awaiting_item') {
+        return { ok: false, error: 'Only a return still waiting for its item can be cancelled.' }
+      }
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+      const at = new Date().toISOString()
+      const trimmed = note.trim()
+      const updated: ReturnCase = {
+        ...existing,
+        status: 'cancelled',
+        completedAt: at,
+        updatedAt: at,
+        notes: trimmed ? (existing.notes ? `${existing.notes}\n${trimmed}` : trimmed) : existing.notes,
+      }
+      state = { ...state, returns: state.returns.map((r) => (r.id === id ? updated : r)) }
+      persist()
+      return { ok: true, value: updated }
+    },
+
+    async resolveReturnInspection(
+      lineId: string,
+      disposition: 'restock' | 'writeoff',
+      pin: string,
+    ): Promise<Result<true>> {
+      const rc = state.returns.find((r) => r.returnLines.some((l) => l.id === lineId))
+      const line = rc?.returnLines.find((l) => l.id === lineId)
+      if (!rc || !line) return { ok: false, error: 'Returned item not found.' }
+      if (line.disposition !== 'inspect') return { ok: false, error: 'This item has already been inspected.' }
+      if (!isPin(pin)) return { ok: false, error: PIN_NEEDED }
+
+      const at = new Date().toISOString()
+      const nextProducts = [...state.products]
+      const newMovements: StockMovement[] = []
+      if (disposition === 'restock') {
+        const idx = nextProducts.findIndex((p) => p.id === line.productId)
+        if (idx === -1) {
+          return { ok: false, error: "This product no longer exists, so it can't be restocked — write it off instead." }
+        }
+        const applied = applyMovement(
+          nextProducts[idx],
+          { type: 'in', quantity: line.quantity, reason: 'Return — restock after inspection' },
+          { id: newId(), at },
+        )
+        if (!applied.ok) return applied
+        nextProducts[idx] = applied.value.product
+        newMovements.push(applied.value.movement)
+      }
+      const updated: ReturnCase = {
+        ...rc,
+        returnLines: rc.returnLines.map((l) => (l.id === lineId ? { ...l, disposition, inspectedAt: at } : l)),
+        updatedAt: at,
+      }
+      state = {
+        ...state,
+        products: nextProducts,
+        movements: [...newMovements, ...state.movements],
+        returns: state.returns.map((r) => (r.id === rc.id ? updated : r)),
+      }
+      persist()
+      return { ok: true, value: true }
     },
 
     async listTeam(): Promise<TeamMember[]> {

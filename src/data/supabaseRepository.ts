@@ -11,6 +11,12 @@ import {
   saleEntityLabel,
 } from '../domain/activity'
 import { applyMovement } from '../domain/movements'
+import {
+  normaliseReturnActions,
+  registerActionsFor,
+  type CompleteReturnInput,
+  type ReceivedReturnLine,
+} from '../domain/returns'
 import { MANAGER_ONLY, isManager, productEditNeedsManager } from '../domain/permissions'
 import { validateDraft, nextSku } from '../domain/products'
 import type { AppliedMovement } from '../domain/movements'
@@ -29,10 +35,11 @@ import type {
   ProfileUpdateOutcome,
   ReplacementLine,
   Result,
-  ReturnAction,
+  ExpectedReturnItem,
   ReturnCase,
   ReturnCaseInput,
   ReturnLine,
+  ReturnStatus,
   Sale,
   SaleInput,
   SaleLine,
@@ -65,6 +72,7 @@ import {
   type AccountSettingsSync,
   type InventoryRepository,
   type Role,
+  type StagedReturnStartInput,
   type TeamMember,
 } from './repository'
 
@@ -123,6 +131,7 @@ interface SaleRow {
   backdated?: boolean | null
   // Added to sales_view 2026-09-27 (supabase/sales_view_order_number_migration.sql).
   order_number?: string | null
+  client_ref?: string | null
 }
 
 interface SaleItemRow {
@@ -145,7 +154,8 @@ interface ReturnRow {
   customer_ref: string
   reason: string
   notes: string
-  actions: ReturnAction[]
+  /** Raw — Register writes replace/restock/writeoff too; normalised on read. */
+  actions: string[] | null
   refund_amount: number
   refund_method: PaymentMethod | null
   goodwill_type: string
@@ -154,6 +164,14 @@ interface ReturnRow {
   return_postage_cost?: number | null
   created_at: string
   updated_at?: string | null
+  // Staged returns, shared with Register (register_staged_returns migration).
+  status?: ReturnStatus | null
+  expected_items?: ExpectedReturnItem[] | null
+  label_sent_at?: string | null
+  item_received_at?: string | null
+  completed_at?: string | null
+  // supabase/returns_receipt_ref_migration.sql (2026-09-30).
+  receipt_ref?: string | null
 }
 
 interface ReturnLineRow {
@@ -165,6 +183,8 @@ interface ReturnLineRow {
   quantity: number
   disposition: StockDisposition
   unit_cost: number
+  created_at?: string | null
+  inspected_at?: string | null
 }
 
 interface ReplacementLineRow {
@@ -315,6 +335,7 @@ const toSale = (row: SaleRow, lines: SaleLine[]): Sale => ({
   saleDate: row.sale_date ?? undefined,
   backdated: row.backdated ?? undefined,
   orderNumber: row.order_number ?? undefined,
+  clientRef: row.client_ref ?? undefined,
   lines,
 })
 
@@ -327,6 +348,8 @@ const toReturnLine = (row: ReturnLineRow): ReturnLine => ({
   quantity: row.quantity,
   disposition: row.disposition,
   unitCost: row.unit_cost,
+  createdAt: row.created_at ?? undefined,
+  inspectedAt: row.inspected_at ?? undefined,
 })
 
 const toActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
@@ -361,7 +384,7 @@ const toReturnCase = (
   customerRef: row.customer_ref,
   reason: row.reason,
   notes: row.notes,
-  actions: row.actions ?? [],
+  actions: normaliseReturnActions(row.actions),
   refundAmount: row.refund_amount,
   refundMethod: row.refund_method,
   goodwillType: row.goodwill_type,
@@ -371,6 +394,12 @@ const toReturnCase = (
   replacementLines,
   createdAt: row.created_at,
   updatedAt: row.updated_at ?? undefined,
+  status: row.status ?? 'completed',
+  receiptRef: row.receipt_ref ?? undefined,
+  expectedItems: row.expected_items ?? [],
+  labelSentAt: row.label_sent_at ?? undefined,
+  itemReceivedAt: row.item_received_at ?? undefined,
+  completedAt: row.completed_at ?? undefined,
 })
 
 const toSupplier = (row: SupplierRow): Supplier => ({
@@ -603,6 +632,43 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
     } catch (cause) {
       console.error('Failed to record activity log entry:', cause)
     }
+  }
+
+  /** One return case with its lines, as every screen reads it. */
+  const fetchReturnCase = async (id: string): Promise<Result<ReturnCase>> => {
+    const [{ data: row, error }, { data: lineRows, error: linesError }, { data: replacementRows, error: replacementError }] =
+      await Promise.all([
+        db.from('returns').select('*').eq('id', id).single(),
+        db.from('return_lines_view').select('*').eq('return_id', id),
+        db.from('replacement_lines_view').select('*').eq('return_id', id),
+      ])
+    if (error) return { ok: false, error: error.message }
+    if (linesError) return { ok: false, error: linesError.message }
+    if (replacementError) return { ok: false, error: replacementError.message }
+    return {
+      ok: true,
+      value: toReturnCase(
+        row as ReturnRow,
+        ((lineRows ?? []) as ReturnLineRow[]).map(toReturnLine),
+        ((replacementRows ?? []) as ReplacementLineRow[]).map(toReplacementLine),
+      ),
+    }
+  }
+
+  /** Runs one of the shared, PIN-checked return RPCs that return the updated
+   * `returns` row, then reads the whole case back and logs the step. */
+  const runReturnStep = async (
+    rpc: string,
+    args: Record<string, unknown>,
+    log: { action: ActivityAction; detail: (rc: ReturnCase) => string },
+  ): Promise<Result<ReturnCase>> => {
+    const { data, error } = await db.rpc(rpc, args)
+    if (error) return { ok: false, error: error.message }
+    const returned = await fetchReturnCase((data as ReturnRow).id)
+    if (returned.ok) {
+      await logActivityBestEffort('return', log.action, returned.value.id, returnEntityLabel(returned.value), log.detail(returned.value))
+    }
+    return returned
   }
 
   const fetchUnboxedItemsForLines = async (
@@ -1214,6 +1280,115 @@ export async function createSupabaseRepository(url: string, anonKey: string): Pr
       }
 
       return { ok: true, value: updated }
+    },
+
+    async recordReturnWithPin(input: ReturnCaseInput, pin: string): Promise<Result<ReturnCase>> {
+      return runReturnStep(
+        'create_register_return',
+        {
+          payload: {
+            saleId: input.saleId ?? '',
+            channel: input.channel ?? '',
+            customerRef: input.customerRef ?? '',
+            reason: input.reason ?? '',
+            notes: input.notes ?? '',
+            actions: registerActionsFor(input),
+            refundAmount: input.refundAmount ?? '',
+            refundMethod: (input.refundAmount ?? 0) > 0 ? (input.refundMethod ?? null) : null,
+            goodwillType: input.goodwillType ?? '',
+            goodwillValue: input.goodwillValue ?? '',
+            returnPostageCost: input.returnPostageCost ?? '',
+            returnLines: input.returnLines ?? [],
+            replacementLines: input.replacementLines ?? [],
+          },
+          approver_pin: pin,
+        },
+        { action: 'added', detail: () => 'Return processed in one go' },
+      )
+    },
+
+    async startStagedReturn(input: StagedReturnStartInput, pin: string): Promise<Result<ReturnCase>> {
+      return runReturnStep(
+        'start_register_return',
+        {
+          payload: {
+            saleId: input.saleId ?? '',
+            channel: input.channel ?? '',
+            customerRef: input.customerRef ?? '',
+            reason: input.reason ?? '',
+            notes: input.notes ?? '',
+            returnPostageCost: input.returnPostageCost ?? '',
+            expectedItems: input.expectedItems,
+          },
+          p_approver_pin: pin,
+        },
+        {
+          action: 'added',
+          detail: (rc) =>
+            `Stage 1: label sent — expecting ${(rc.expectedItems ?? []).map((i) => `${i.quantity}x ${i.sku}`).join(', ')}`,
+        },
+      )
+    },
+
+    async receiveStagedReturn(id: string, lines: ReceivedReturnLine[], pin: string): Promise<Result<ReturnCase>> {
+      return runReturnStep(
+        'receive_register_return',
+        { p_return_id: id, p_lines: lines, p_approver_pin: pin },
+        {
+          action: 'edited',
+          detail: (rc) =>
+            `Stage 2: item arrived — ${rc.returnLines.map((l) => `${l.quantity}x ${l.sku} (${l.disposition})`).join(', ')}`,
+        },
+      )
+    },
+
+    async completeStagedReturn(id: string, input: CompleteReturnInput, pin: string): Promise<Result<ReturnCase>> {
+      return runReturnStep(
+        'complete_register_return',
+        {
+          p_return_id: id,
+          payload: {
+            refundAmount: input.refundAmount ?? '',
+            refundMethod: (input.refundAmount ?? 0) > 0 ? (input.refundMethod ?? null) : null,
+            goodwillType: input.goodwillType ?? '',
+            goodwillValue: input.goodwillValue ?? '',
+            notes: input.notes ?? '',
+            replacementLines: input.replacementLines ?? [],
+          },
+          p_approver_pin: pin,
+        },
+        {
+          action: 'edited',
+          detail: (rc) =>
+            rc.refundAmount > 0 || rc.goodwillValue > 0
+              ? `Stage 3: refund issued — ${rc.refundAmount.toFixed(2)} refund, ${rc.goodwillValue.toFixed(2)} goodwill`
+              : 'Stage 3: completed with no refund',
+        },
+      )
+    },
+
+    async cancelStagedReturn(id: string, note: string, pin: string): Promise<Result<ReturnCase>> {
+      return runReturnStep(
+        'cancel_register_return',
+        { p_return_id: id, p_note: note || null, p_approver_pin: pin },
+        { action: 'edited', detail: () => `Cancelled before the item arrived${note ? `: ${note}` : ''}` },
+      )
+    },
+
+    async resolveReturnInspection(
+      lineId: string,
+      disposition: 'restock' | 'writeoff',
+      pin: string,
+      note?: string,
+    ): Promise<Result<true>> {
+      const { error } = await db.rpc('resolve_return_inspection', {
+        p_line_id: lineId,
+        p_disposition: disposition,
+        p_approver_pin: pin,
+        p_note: note || null,
+      })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true, value: true }
     },
 
     async listTeam(): Promise<TeamMember[]> {

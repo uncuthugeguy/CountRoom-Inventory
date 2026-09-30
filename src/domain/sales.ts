@@ -362,16 +362,27 @@ export function breakdownByProduct(sales: Sale[]): ProductBreakdownRow[] {
  * A blank query returns every sale. Searches every sale passed in — callers
  * pass all sales, not just a date range, so an old transaction still turns up.
  */
-export function searchSales(sales: Sale[], query: string): Sale[] {
+export function searchSales(sales: Sale[], query: string, products: Product[] = []): Sale[] {
   const q = query.trim().toLowerCase()
   if (!q) return sales
   const compact = (value: string) => value.toLowerCase().replace(/[\s-]/g, '')
   const qCompact = compact(q)
+  // A scanned manufacturer barcode finds every sale that included that product.
+  const barcodeProductIds = new Set(
+    products.filter((p) => p.barcode && compact(p.barcode) === qCompact).map((p) => p.id),
+  )
   return sales.filter((sale) => {
     if (qCompact && sale.orderNumber && compact(sale.orderNumber).includes(qCompact)) return true
+    // Register prints client_ref as the receipt barcode when there's no order number.
+    if (qCompact && sale.clientRef && compact(sale.clientRef).includes(qCompact)) return true
     if (sale.id.toLowerCase().startsWith(q)) return true
     if ((sale.channel ?? '').toLowerCase().includes(q)) return true
     if (sale.subtotal.toFixed(2) === q || (sale.orderTotal != null && sale.orderTotal.toFixed(2) === q)) return true
-    return sale.lines.some((line) => line.name.toLowerCase().includes(q) || line.sku.toLowerCase().includes(q))
+    return sale.lines.some(
+      (line) =>
+        barcodeProductIds.has(line.productId) ||
+        line.name.toLowerCase().includes(q) ||
+        line.sku.toLowerCase().includes(q),
+    )
   })
 }
